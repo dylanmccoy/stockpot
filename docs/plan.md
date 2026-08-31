@@ -126,7 +126,7 @@ A post-de-scope adversarial review (`NO-SHIP`) raised 8 core-loop findings; all
 | R3 | Concurrent cooks could lose a deduction despite "one transaction": `BEGIN DEFERRED` + a shared read → both compute from the same stale value → the second commits over the first. `busy_timeout` only waits. | **Fixed.** Mutating transactions (cook, grocery `submit`) run `BEGIN IMMEDIATE` (write lock acquired before the first read) via a `database.py` hook. Adds `test_concurrency.py` (file-backed SQLite, two connections: one cook-race, one submit-race) — the in-memory `StaticPool` fixture cannot exercise this. #H3's 409-on-`busy_timeout` stands. |
 | R4 | Stripping `fresh`/`dried`/`ground` in `normalize.py` silently merged identity-distinct foods; and one inventory `match_name` cannot express two recipe labels. | **Partially fixed.** `normalize.py` stoplist keeps cut-style (`diced`, `chopped`, …) and size/quality (`large`, `ripe`, …) descriptors but **no longer strips state/process words** (`fresh`, `dried`, `ground`, and none of `cooked`/`raw`/`smoked` added) — those are identity-bearing. Recipe-side aliasing stays a documented v1 limitation (see above); `FoodItem` is the v2 fix. |
 | R5 | `submit` auto-archived when "every line applied or unchecked" — but the same list was promised to accept a later `submit` of newly-checked lines, which the `status='active'` guard would 409. A no-op `submit` also archived. | **Fixed.** `submit` never changes list status. A list stays `active` until an explicit `POST /api/grocery/{id}/archive` (guarded `WHERE status='active'`). `submit` with nothing checked is an explicit no-op (200, empty result), not a state change. |
-| R6 | Availability filtered inventory to the required bucket only, so `clove`-need vs `bulb`-stock returned `missing`, never `have_uncertain` — that status was near-unreachable. | **Fixed.** Availability and `deduct` load **all** inventory rows for the `match_name`, then partition: compatible-bucket rows → do the math; else if any other-bucket row exists → `have_uncertain` + `nettable=false`; `missing` only when no row for the name exists at all. *(Refined by #P4: only **positive-stock** rows count; a row at `quantity_base = 0` is treated as absent, so `missing` also covers "only zero rows".)* |
+| R6 | Availability filtered inventory to the required bucket only, so `clove`-need vs `bulb`-stock returned `missing`, never `have_uncertain` — that status was near-unreachable. | **Fixed.** Availability and `deduct` load **all** inventory rows for the `match_name`, then partition: compatible-bucket rows → do the math; else if any other-bucket row exists → `have_uncertain` + `nettable=false`; `missing` only when no row for the name exists at all. *(Refined by #P4: only **positive-stock** rows count; a row at `quantity_base = 0` is treated as absent, so `missing` also covers "only zero rows". Refined by #N3: a compatible-bucket **partial** short with other-bucket stock also present is now `have_uncertain` + `nettable=false`, not `short` + `nettable=true`.)* |
 | R7 | Aggregated availability emitted one line per member ingredient, each carrying the *group's* `need`/`have`/`short` — a client summing per-line `need` double-counts. | **Fixed.** One line per ingredient still, but per-line `need`/`need_unit` = that row's own quantity ×M; group totals move to new `group_key` / `group_need` / `group_have` / `group_short` fields (identical across members). `status` and `all_available` unchanged. *(Refined by #P5: all figures canonical, `group_unit` added, legacy per-line `have`/`have_unit`/`short` removed.)* |
 | R8 | The verification script starts a default server (registration disabled) and calls `/register` — a guaranteed 403 — and omits the `code`. | **Fixed.** Verification step 1 sets `RECIPE_ALLOW_REGISTRATION=true` + `RECIPE_REGISTRATION_CODE=devcode`, passes `code`, and restarts without those vars afterward. |
 
@@ -146,13 +146,55 @@ Only recipe-ingredient rows (the author's own words) and request bodies
 
 | # | Finding | Treatment |
 |---|---|---|
-| P1 | `inventory_items.quantity` / `unit` stored "the amount+unit of the most recent add" — a value with no meaning after the next cook — and `POST` vs `PATCH` semantics were never distinguished. | **Fixed.** A row stores `quantity_base` (source of truth) + `display_unit` (a *preferred unit only*); the human-facing quantity is `from_base(quantity_base, dim, display_unit)` recomputed on **every read**, never persisted. `POST /api/inventory` = **additive upsert** (`quantity_base += …` within the `(match_name, unit_bucket)` row). `PATCH /api/inventory/{id}` = **absolute replacement** of that row (sets `quantity_base` outright from the given amount+unit). `PATCH` is **within-bucket only** — a `unit` that would change `unit_bucket` → **422** ("remove and re-add"). A `PATCH` that sets `match_name` such that the row's new `(match_name, unit_bucket)` is already held by another row → **409** (no auto-merge in v1); `POST` cannot collide (it upserts on that key by definition). Tests: add → cook → GET (display recomputed from base), `PATCH` absolute reduction, `PATCH` display-unit change within a bucket, 409 collision. |
+| P1 | `inventory_items.quantity` / `unit` stored "the amount+unit of the most recent add" — a value with no meaning after the next cook — and `POST` vs `PATCH` semantics were never distinguished. | **Fixed.** A row stores `quantity_base` (source of truth) + `display_unit` (a *preferred unit only*); the human-facing quantity is `from_base(quantity_base, dim, display_unit)` recomputed on **every read**, never persisted. `POST /api/inventory` = **additive upsert** (`quantity_base += …` within the `(match_name, unit_bucket)` row). `PATCH /api/inventory/{id}` = **absolute replacement** of that row (sets `quantity_base` outright from the given amount+unit). `PATCH` is **within-bucket only** — a `unit` that would change `unit_bucket` → **422** ("remove and re-add"). A `PATCH` that sets `match_name` such that the row's new `(match_name, unit_bucket)` is already held by another row → **409** (no auto-merge in v1); `POST` cannot collide (it upserts on that key by definition). *(Refined by #S2: a `PATCH` that sets `quantity` must also carry `unit`, else 422.)* Tests: add → cook → GET (display recomputed from base), `PATCH` absolute reduction (with `unit`), `PATCH` display-unit change within a bucket, `PATCH {quantity}` with no `unit` → 422, 409 collision. |
 | P2 | `conftest.py` needed a second, independent DB-wiring mechanism (`dependency_overrides[get_db]`) on top of the injected `test_engine` — two ways to point the app at a database, kept in sync by hand. | **Fixed.** `create_app(settings, engine)` **derives and installs an app-local session dependency** closed over the injected `engine` (on `app.state`, exposed as `get_db` / `SessionDep`); there is no importable module-global session factory to override. Injected settings are reachable via a `get_settings(request)` dependency (`request.app.state.settings`) and directly as `app.state.settings`. `security.py` / `get_current_user` consume **those** dependencies, not module globals. `conftest.py` builds the app with `create_app(test_settings, test_engine)` and **overrides nothing** — the injected engine is the only DB wiring. |
 | P3 | Only `cook` + grocery `submit` ran `BEGIN IMMEDIATE`; every other request (auth `last_used_at` bump, GETs, inventory/recipe CRUD) used `BEGIN DEFERRED`. A DEFERRED transaction that lazily upgrades to a write (a GET that also bumps `last_used_at`) can still deadlock a concurrent writer, and the policy was left implicit. | **Fixed (explicit simple policy).** **All** request-scoped SQLite transactions `BEGIN IMMEDIATE` — auth and GETs included — via the `database.py` hook. The "short auth session, then a mutation session" alternative is rejected as unnecessary complexity for a two-user LAN app. **Trade-off documented:** every request now serializes on the single SQLite write lock; for the intended concurrency (≤2 members) the added contention is immaterial and lost updates are impossible everywhere, not just on the two mutating paths. Exercised through authenticated HTTP requests in `test_concurrency.py` (not only the low-level races). |
-| P4 | Availability / deduct partitioned inventory into compatible vs. other-bucket by **row existence**, so a row cooked down to `quantity_base = 0` still forced `have_uncertain` (incompatible bucket) or blocked `missing` (compatible bucket) — a stale empty row poisoned the result. | **Fixed.** Only **positive-stock** rows (`quantity_base > 0`) are considered. Partition: positive-compatible rows → do the math (`ok` / `short`); else any positive-incompatible row → `have_uncertain` + `nettable=false`; otherwise → `missing`. A zero-stock row is treated exactly as if it did not exist, so `cook`-to-zero yields `missing` in availability and a full-need grocery line. Test: cook a food to `quantity_base = 0`, then assert availability `missing` and a grocery line for the whole requirement. |
+| P4 | Availability / deduct partitioned inventory into compatible vs. other-bucket by **row existence**, so a row cooked down to `quantity_base = 0` still forced `have_uncertain` (incompatible bucket) or blocked `missing` (compatible bucket) — a stale empty row poisoned the result. | **Fixed.** Only **positive-stock** rows (`quantity_base > 0`) are considered. Partition: positive-compatible rows → do the math (`ok` / `short`); else any positive-incompatible row → `have_uncertain` + `nettable=false`; otherwise → `missing`. A zero-stock row is treated exactly as if it did not exist, so `cook`-to-zero yields `missing` in availability and a full-need grocery line. Test: cook a food to `quantity_base = 0`, then assert availability `missing` and a grocery line for the whole requirement. *(Refined by #N3: `short` / `nettable=true` requires that **no** positive incompatible-bucket row exists; with one present a partial short is `have_uncertain` and the emitted grocery line is `nettable=false`.)* |
 | P5 | `AvailabilityLine.group_need` / `group_have` / `group_short` were converted "`from_base` back to `g.unit`" — an undefined per-group unit — and shipped as bare floats with no unit field; the pre-#R7 per-line `have` / `have_unit` / `short` fields survived in the schema with no writer. | **Fixed.** Add **`group_unit`**; `group_need` / `group_have` / `group_short` are in that canonical unit (`g` / `ml` / `unit` / opaque string), identical across every member line. **Remove** per-line `have` / `have_unit` / `short`. Per-line `need` / `need_unit` are also canonical now — the row's own `quantity × M` converted to base — so `need_unit == group_unit` and a client summing per-line `need` still gets the group total (the #R7 double-count fix holds; only its unit changes). |
 | P6 | `get_current_user(authorization: str = Header(...))` made the header **required**, so a missing token returned FastAPI's 422, and malformed / wrong-scheme / expired tokens had no stated handling. | **Fixed.** `authorization: str \| None = Header(default=None)`. The dependency returns **401** explicitly for all five: missing header, malformed value (not exactly `<scheme> <token>`), wrong scheme (not `Bearer`, case-insensitive), token not found, token row past `expires_at`. All five are asserted in `test_auth.py`. |
 | P7 | `CookLog.deductions[].deducted` was the canonical delta converted back to the undefined per-group `unit`, while `before` / `after` stayed canonical — mixed scales in one dict, no `deducted_unit`, and `requested` undefined for a group whose members use different units. | **Fixed.** `requested` and `deducted` are both in the bucket's **canonical unit**; add **`deducted_unit`**, with `requested_unit == deducted_unit == inventory_unit`. `requested` = the group's summed need in canonical units (order-independent, hence deterministic regardless of member unit mix). `before − deducted == after` now holds within every entry. Test: stock held in `g`, recipe asks in `kg` (and vice versa) — assert the recorded `requested` / `deducted` / `before` / `after` are all canonical and self-consistent. |
+
+## Revisions — review pass 6 (2026-08-31)
+
+Review pass 6 (`docs/issues.md`) raised three blockers (`#N1`–`#N3`) plus one
+High finding (`#N4`) that is subsumed by the `#N2` fix. All four are folded in
+here; `docs/issues.md` is the source record.
+
+| # | Finding | Treatment |
+|---|---|---|
+| N1 | One `InventoryItemIn {item, quantity, unit, match_name}` was the stated input for **both** `POST` and `PATCH /{id}`. Required `item`/`quantity` ⇒ `PATCH {quantity:200}` and `PATCH {unit:"kg"}` 422; all-nullable ⇒ explicit `item:null` / `match_name:null` reaches non-null columns or the wrong 409, and omission-vs-explicit-null was undefined. | **Fixed.** Two schemas. **`InventoryItemCreate {item (req), quantity: float ≥0 finite (req), unit: str\|None, match_name: str\|None}`** for `POST`. **`InventoryItemUpdate {item: str\|None, match_name: str\|None, quantity: float\|None, unit: str\|None}`** for `PATCH /{id}` — every field omittable; the router uses `body.model_fields_set` to act only on supplied fields. Explicit `null` for `item`, `match_name`, or `quantity` (i.e. name in `model_fields_set` **and** value `None`) → **422**. `unit` may be omitted or explicitly `null`; a supplied `unit` (null included) whose `bucket_of(...)` ≠ the row's `unit_bucket` → **422** ("remove and re-add", so `unit:null` is accepted only on a COUNT row); a `match_name` collision on `(match_name, unit_bucket)` → **409** (#P1). Empty `PATCH {}` → **200** no-op. *(Refined by #S2: `PATCH {quantity:…}` without `unit` → 422.)* Tests: `PATCH {quantity:200, unit:"g"}`, `PATCH {quantity:200}` alone → 422, `PATCH {unit:"kg"}` within bucket, `PATCH {unit:null}` on COUNT vs non-COUNT (422), `PATCH {item:null}` / `{quantity:null}` / `{match_name:null}` → 422, empty body → 200, `POST` missing `item` or `quantity` → 422. |
+| N2 | "Module layout" kept a module-level `engine/SessionLocal` while "#P2 / Schema management" said there is no module-global session factory and that `create_app` installs `get_db` on `app.state` — but routers/`CurrentUser` bind `Depends(...)` **statically at import**, so a generator stuffed on `app.state` is never consulted, and a retained global `SessionLocal` points the factory at two databases. | **Fixed.** `database.py` keeps **one** module-level default `engine` (built from `settings`, used only by the uvicorn entrypoint) and **no** `SessionLocal`. It defines the importable `get_db(request: Request)` — reads `request.app.state.session_factory`, opens a session, `yield`s, then `commit()` on clean return / `rollback()` on exception / always close — and `SessionDep = Annotated[Session, Depends(get_db)]`. `create_app(settings, engine)` stores `make_session_factory(engine)` as `app.state.session_factory` and `settings` as `app.state.settings` (+ `get_settings(request)` dep); that is the **only** DB wiring. Static `Depends(get_db)` works because `request` is per-request — `request.app` is the running app. `conftest.py` builds `create_app(test_settings, test_engine)` and overrides nothing. |
+| N3 | Once **any** compatible-bucket stock existed, availability/grocery used compatible stock only and reported `short` / `nettable=true`, ignoring positive stock in an incompatible bucket that might cover part of the shortfall (`need 3 can` / have `1 can` + `1 jar` → confident `2 can` buy). | **Fixed.** Three-way partition of **positive** rows for the `match_name`: `compat` (same `unit_bucket`), `incomp` (any other bucket), none. Availability: compat ≥ need → `ok`; compat < need **and** `incomp` non-empty → `have_uncertain` + `nettable=false`, `group_have` = compat stock, `group_short` = the compat-bucket remainder; compat < need with `incomp` empty → `short` + `nettable=true`; no compat but `incomp` non-empty → `have_uncertain` + `nettable=false`, `group_have=0`; nothing → `missing`. Grocery generation mirrors it: emit the compat-bucket remainder with `nettable = (not incomp)`; a pure-incompatible requirement emits full need with `nettable = (not pos)`. Cook is unchanged — it already draws down `compat` only and logs `incomp` as `reason:"have uncertain (incompatible unit)"`, so the audit trail now matches availability. Tests: `need 3 can / have 1 can + 1 jar` → availability `have_uncertain` + `nettable=false` and a grocery line `2 can nettable=false`; `have 1 can` only → `short` + `nettable=true` and `2 can nettable=true`; `need 2 can / have 3 can + 1 jar` → `ok`, no line. |
+| N4 | `get_current_user` bumps `last_used_at` (a write) but a read handler never commits, so closing the session rolls it back; if `get_current_user` commits itself, an authenticated mutation spans two transactions. | **Fixed via #N2.** `get_db` owns a single unit of work per request: `commit()` after a clean yield, `rollback()` on any exception. Routers `flush()` for IDs but never commit. The auth bump and the route mutation are therefore one `BEGIN IMMEDIATE` transaction (#P3), and `last_used_at` persists on ordinary authenticated GETs. `IntegrityError` / lock / `busy_timeout` → **409** before `get_db` commits (#H3). |
+
+## Revisions — spec pass 7 (2026-08-31)
+
+`docs/spec.md` (the execution spec derived from this plan) resolved seven points
+that diverged from, or were left implicit by, this plan. The plan is updated to
+match. **`docs/spec.md` is authoritative for v1 build detail**; this plan retains
+rationale and the v2 roadmap.
+
+| # | Change | Rationale |
+|---|---|---|
+| S1 | **Recipe ingredient input accepts pasted strings.** `RecipeCreate/Update.ingredients` is `list[RecipeIngredientIn \| str]`: a **string** element is run through `services/ingredient_parse.py` and its verbatim text stored in `recipe_ingredients.raw_text`; an **object** element is structured (`raw_text = NULL`). Blank string elements are skipped. `raw_text` is an **active v1 column**, no longer "reserved for v2". `parse_ingredient` is wired into `routers/recipes.py` in Phase 3 (still built + unit-tested pure in Phase 1). | User wants to paste an ingredient list. The parser already existed; only the wiring + the active column are new. |
+| S2 | **Inventory `PATCH` with `quantity` requires `unit`** in the same request → else **422** ("unit is required when setting quantity"). Bare `PATCH {quantity: 200}` is no longer valid. `PATCH {unit: "kg"}` alone (display-unit change, `quantity_base` untouched) is still valid. The `(quantity, unit)` pair is converted to canonical base on write. | Removes the "200 could mean 200 kg" ambiguity in the old pseudocode (`cur_unit = row.display_unit or canon`). |
+| S3 | **Username uniqueness and login lookup are case-insensitive** — `UNIQUE` index on `lower(username)`; login matches `lower(username) = lower(:input)`. Original casing is preserved in storage and responses. | `Alice` and `alice` must not become two accounts. |
+| S4 | **Aggregated display label = first-writer-wins.** When consolidating requirements (availability aggregate, grocery generation), iterate recipes in `recipe_ids` order and ingredients in `position` order; the **first** ingredient row seen for a `normalized_name` sets the display `item`, later rows never overwrite (was `r.display_item = ing.item`, last-writer-wins). | Deterministic given input order. |
+| S5 | **New endpoint `DELETE /api/grocery/{list_id}/items/{item_id}`** → **204** on an unfrozen line; **409** if the line is frozen (`added_to_inventory`) or the list is `archived`. | The plan had add + `PATCH` + list-delete but no per-line delete. |
+| S6 | **`inventory_items.unit_bucket` widened `str(20)` → `str(30)`.** | `opaque:` + a long unknown unit token can exceed 20 chars. |
+| S7 | **Re-archiving a grocery list returns `409`**, not an idempotent `200`. `POST /api/grocery/{id}/archive` runs `UPDATE … WHERE id=? AND status='active'`; `rowcount == 0` → `409 "list is not active"`. | Consistent with "`PATCH` / `submit` on an archived list → 409". |
+
+Gap-fills folded in at the same time (the plan was silent, the spec decided):
+`to_taste` availability lines carry `need_unit = <group canonical unit>` and
+`group_need`/`group_have`/`group_short` `= null` (`group_key` still set); cook
+draws down compatible rows **FIFO by inventory-row `id`**; every
+`CookLog.deductions` entry carries the **full key set** (`null` where a branch
+does not populate one), though the column stays `list[dict]` (⚠ N7 still open as
+a typed schema); manual grocery items are added via `POST /api/grocery/{id}/items`;
+`GET /api/grocery` takes an optional `?status=active|archived`; `GET /api/cook-logs`
+defaults `limit=50` (`1..200`), `offset=0`; list endpoints have explicit
+orderings; the registration `code` is compared with `secrets.compare_digest`;
+`IntegrityError` / `database is locked` → `409` via global exception handlers.
 
 ## Done criteria
 
@@ -163,19 +205,23 @@ Only recipe-ingredient rows (the author's own words) and request bodies
    #15) and log in, receiving a bearer token. Every data endpoint except
    `/api/health` and the public auth routes returns **401** for a missing,
    malformed, wrong-scheme, unknown, or expired token (#P6).
-2. **Structured recipes.** `POST/PUT /api/recipes` accept nested ingredient rows
-   (`quantity` nullable, `unit` nullable, `item`, `note`), ordered `steps`,
-   `tags`, `cuisine`, `prep_time`, `cook_time`, `servings`, `source_url`,
-   `notes`. `GET` returns them nested and ordered. PUT fully replaces nested rows.
+2. **Structured recipes.** `POST/PUT /api/recipes` accept an `ingredients` array
+   whose elements are **either** a structured row (`quantity` nullable, `unit`
+   nullable, `item`, `note`) **or** a bare string that the server parses via
+   `services/ingredient_parse.py`, keeping the original line in `raw_text` (#S1);
+   plus ordered `steps`, `tags`, `cuisine`, `prep_time`, `cook_time`, `servings`,
+   `source_url`, `notes`. Blank string elements are skipped. `GET` returns
+   ingredients nested and ordered. PUT fully replaces nested rows.
    `normalized_name` is computed server-side on every ingredient.
 3. **Inventory.** `/api/inventory` supports list / add / edit / remove of
    `{item, quantity ≥ 0, unit}` items, one row per `(match_name, unit_bucket)`
    (#2); `match_name` is editable to correct matching. `POST` is an **additive
    upsert** into the matching `(match_name, unit_bucket)` row; `PATCH /{id}` is an
    **absolute replacement** of that row — within its bucket only (a
-   bucket-changing `unit` → 422; a colliding `match_name` → 409) (#P1). Each row
-   stores `quantity_base` + a `display_unit`; the shown quantity is computed from
-   base on every read (#P1).
+   bucket-changing `unit` → 422; a colliding `match_name` → 409) (#P1), and
+   setting `quantity` requires `unit` in the same request → else 422 (#S2). Each
+   row stores `quantity_base` + a `display_unit`; the shown quantity is computed
+   from base on every read (#P1).
 4. **Missing-ingredient check.** `GET /api/recipes/{id}/availability?multiplier=M`
    returns per-ingredient `status` in
    `{ok, short, missing, to_taste, have_uncertain}` with unit conversion applied
@@ -183,9 +229,14 @@ Only recipe-ingredient rows (the author's own words) and request bodies
    lines for the same food are aggregated before comparison (#4); each line
    carries its **own** `need` / `need_unit` plus the group totals in `group_need`
    / `group_have` / `group_short` / `group_unit` / `group_key` (#R7/#P5) — all in
-   the bucket's **canonical unit** (#P5). `have_uncertain` is returned whenever
-   the food is in **positive** stock only in an incompatible bucket; a row at
-   `quantity_base = 0` counts as absent, so cook-to-zero → `missing` (#R6/#P4).
+   the bucket's **canonical unit** (#P5). `have_uncertain` + `nettable=false` is
+   returned whenever positive stock in an **incompatible** bucket could still
+   cover part of the need: either there is no compatible-bucket stock, **or**
+   compatible stock covers the need only partially (#R6/#P4/#N3). A compatible
+   partial short with **no** incompatible-bucket stock is `short` + `nettable=true`;
+   a `have_uncertain` line reports `group_have` = the compatible stock found (0 if
+   none) and `group_short` = the known compatible-bucket remainder. A row at
+   `quantity_base = 0` counts as absent, so cook-to-zero → `missing` (#P4).
    `all_available` is true only when every quantified line is `ok`.
 5. **Cook deducts stock, or just logs it.** `POST /api/recipes/{id}/cook
    {multiplier, deduct?}` — `deduct=true` (default) subtracts ingredients from
@@ -197,15 +248,21 @@ Only recipe-ingredient rows (the author's own words) and request bodies
    after its recipe is deleted (#H5).
 6. **Grocery list.** `POST /api/grocery {recipe_ids, multipliers?}` creates a
    persisted list whose lines are consolidated requirements across the selected
-   recipes minus current stock; only shortfalls appear; unit-incompatible lines
-   are flagged `nettable=false`, not dropped. Manual one-off items can be added.
+   recipes minus current stock; only shortfalls appear. A line is
+   `nettable=false` (never dropped) whenever the true shortfall is uncertain —
+   the requirement uses only incompatible units, **or** positive stock sits in an
+   incompatible bucket alongside the compatible-bucket short (#N3); such a line
+   carries the **known compatible-bucket remainder** as its quantity. Manual
+   one-off items are added via `POST /api/grocery/{id}/items`.
    `PATCH` on a line toggles `checked` and edits its fields — **no inventory
-   effect** (#6). `POST /api/grocery/{id}/submit` adds every checked, quantified,
-   not-yet-applied line to inventory in one `BEGIN IMMEDIATE` transaction (#R3)
-   and freezes those lines (forward-only; a later `PATCH` on a frozen line →
-   409). `submit` **never archives** the list (#R5); re-submitting picks up only
-   newly-checked lines, and a `submit` with nothing checked is a 200 no-op. A
-   list stays `active` until an explicit `POST /api/grocery/{id}/archive`.
+   effect** (#6); `DELETE /api/grocery/{id}/items/{item_id}` removes an unfrozen
+   line (409 if frozen or the list is archived, #S5). `POST /api/grocery/{id}/submit`
+   adds every checked, quantified, not-yet-applied line to inventory in one
+   `BEGIN IMMEDIATE` transaction (#R3) and freezes those lines (forward-only; a
+   later `PATCH` on a frozen line → 409). `submit` **never archives** the list
+   (#R5); re-submitting picks up only newly-checked lines, and a `submit` with
+   nothing checked is a 200 no-op. A list stays `active` until an explicit
+   `POST /api/grocery/{id}/archive` (re-archiving a non-active list → 409, #S7).
 7. **Unit conversion** is a standalone pure module with a documented supported-
    unit set and defined behavior for unknown / incompatible pairs.
 8. **Tests green.** `uv run pytest` passes: units, ingredient parser, inventory
@@ -214,8 +271,9 @@ Only recipe-ingredient rows (the author's own words) and request bodies
    with nested rows, availability (incl. cook-to-zero → `missing`, #P4), cook
    (both `deduct` modes; canonical `requested` / `deducted` / `deducted_unit`,
    kg-from-g stock, #P7) + cook-log reads (#H5), inventory CRUD (additive `POST`
-   vs absolute `PATCH`, bucket-change 422, collision 409, #P1), grocery
-   generation + submit.
+   vs absolute `PATCH`, `PATCH {quantity}` without `unit` → 422 #S2, bucket-change
+   422, collision 409, #P1), recipe ingredient paste (string elements parsed,
+   `raw_text` stored, #S1), grocery generation + submit + line delete (#S5).
 9. **Docs.** `README.md`, `CLAUDE.md`, `backend/.env.example` updated for the
    new architecture, env vars, and the `rm backend/recipe.db` reset procedure.
 
@@ -226,11 +284,11 @@ Layering with new modules:
 
 | Table | Columns (type — notes) |
 | --- | --- |
-| **users** | `id` PK · `username` str(50) unique, regex `^[A-Za-z0-9_.-]{3,50}$` · `password_hash` str(255) argon2 · `created_at` dt(tz) |
+| **users** | `id` PK · `username` str(50), regex `^[A-Za-z0-9_.-]{3,50}$`, **`UNIQUE` on `lower(username)`** (case-insensitive; login also matches case-insensitively; original casing stored, #S3) · `password_hash` str(255) argon2 · `created_at` dt(tz) |
 | **sessions** | `id` PK · `token` str(64) unique indexed (`secrets.token_urlsafe(32)`) · `user_id` FK users CASCADE · `created_at` · `last_used_at` · `expires_at` (= created + `SESSION_TTL_DAYS`, default 30) |
 | **recipes** | `id` PK · `title` str(200) min_len 1 · `notes` Text="" · `prep_time` int? ≥0 · `cook_time` int? ≥0 · `servings` float? >0 · `cuisine` str(100)? · `source_url` str(500)? · `photo_path` str(500)? *(reserved for v2 photo upload — nullable, unused in v1)* · `tags` JSON `list[str]`=[] · `steps` JSON `list[str]`=[] · `created_at` · `updated_at` (`onupdate`) · `created_by_id` FK users? (no cascade) |
-| **recipe_ingredients** | `id` PK · `recipe_id` FK recipes CASCADE · `position` int 0-based · `quantity` float? (null = to taste) · `unit` str(30)? · `item` str(200) · `note` str(200)? · `normalized_name` str(200) indexed, **server-computed** · `raw_text` str(300)? *(reserved for v2 import — nullable, unused in v1)* · index `(recipe_id, position)` |
-| **inventory_items** | `id` PK · `item` str(200) display · `normalized_name` str(200) indexed, server-computed · `match_name` str(200) indexed (defaults to `normalized_name`, **user-editable** — the recipe↔inventory match key, #2/#7) · `unit_bucket` str(20) (`mass`/`volume`/`count`/`opaque:<canonical unit>`, #2) · `quantity_base` float ≥0 finite default 0, `CHECK(quantity_base >= 0)` — **source of truth**, in the bucket's canonical unit (g / ml / count / exact opaque amount), #R2 · `display_unit` str(30)? — a **preferred display unit only** (#P1); the shown quantity is `from_base(quantity_base, dim, display_unit)` computed on every read, never stored; `None`/opaque → canonical unit · `updated_at` · `created_by_id` FK users? · **unique `(match_name, unit_bucket)`** (`POST` add = atomic `quantity_base += excluded.quantity_base` upsert within a bucket; `PATCH /{id}` = absolute set of `quantity_base`, within-bucket only, #P1) |
+| **recipe_ingredients** | `id` PK · `recipe_id` FK recipes CASCADE · `position` int 0-based · `quantity` float? (null = to taste) · `unit` str(30)? · `item` str(200) · `note` str(200)? · `normalized_name` str(200) indexed, **server-computed** · `raw_text` str(300)? — **active in v1**: verbatim source line when the row came from a pasted string element, else `NULL` (#S1) · index `(recipe_id, position)` |
+| **inventory_items** | `id` PK · `item` str(200) display · `normalized_name` str(200) indexed, server-computed · `match_name` str(200) indexed (defaults to `normalized_name`, **user-editable** — the recipe↔inventory match key, #2/#7) · `unit_bucket` str(30) (`mass`/`volume`/`count`/`opaque:<canonical unit>`, #2/#S6) · `quantity_base` float ≥0 finite default 0, `CHECK(quantity_base >= 0)` — **source of truth**, in the bucket's canonical unit (g / ml / count / exact opaque amount), #R2 · `display_unit` str(30)? — a **preferred display unit only** (#P1); the shown quantity is `from_base(quantity_base, dim, display_unit)` computed on every read, never stored; `None`/opaque → canonical unit · `updated_at` · `created_by_id` FK users? · **unique `(match_name, unit_bucket)`** (`POST` add = atomic `quantity_base += excluded.quantity_base` upsert within a bucket; `PATCH /{id}` = absolute set of `quantity_base`, within-bucket only, #P1) |
 | **grocery_lists** | `id` PK · `name` str(200) default `"Groceries <date>"` · `status` str(20) `active`/`archived` · `source_recipe_ids` JSON `list[int]`=[] (informational, no FK) · `created_at` · `created_by_id` FK users? |
 | **grocery_list_items** | `id` PK · `grocery_list_id` FK CASCADE · `item` str(200) · `normalized_name` str(200) indexed · `quantity` float? >0 finite when set · `unit` str(30)? · `checked` bool=false · `checked_at` dt? · `submitted_at` dt? (#6) · `source` str(20) `generated`/`manual` · `nettable` bool=true · `added_to_inventory` bool=false (idempotency guard + freeze flag, #6) · `applied_quantity` float? · `applied_unit` str(30)? (snapshot of what `submit` actually added, #6) |
 | **cook_logs** | `id` PK · `recipe_id` FK recipes SET NULL · `recipe_title` str(200) snapshot · `multiplier` float=1 >0 · `deducted` bool=true (false = logged without touching stock) · `cooked_at` · `cooked_by_id` FK users? · `deductions` JSON=[] (`[{item, normalized_name, requested, requested_unit, deducted, deducted_unit, inventory_unit, before, after, applied, reason}]` — `requested`/`deducted`/`before`/`after` all in the bucket's canonical unit, `requested_unit == deducted_unit == inventory_unit`; empty when `deducted=false`; #16/#P7) |
@@ -294,14 +352,21 @@ limitation noted in §Revisions — hardening pass 3.
 
 ```
 config.py     + allow_registration (default false, #15), registration_code?, session_ttl_days
-database.py   make_engine(url) + make_session_factory(engine) helpers (#H2); default module-level
-                engine/SessionLocal kept for the default app; on-connect listener:
-                PRAGMA foreign_keys=ON, PRAGMA busy_timeout=5000 (#14/#8);
+database.py   make_engine(url) + make_session_factory(engine) helpers (#H2); a module-level
+                default `engine` ONLY (built from settings, consumed by the uvicorn entrypoint) —
+                NO module-level `SessionLocal` (#N2). The importable request dependency
+                `get_db(request: Request)` reads `request.app.state.session_factory`, so routers
+                bind `Depends(get_db)` statically and still hit the right app's engine;
+                `SessionDep = Annotated[Session, Depends(get_db)]` is defined here too.
+                `get_db` owns the unit of work: `commit()` after a clean yield, `rollback()` on
+                any exception; routers only `flush()` for IDs, never commit (#N2/#N4).
+                on-connect listener: PRAGMA foreign_keys=ON, PRAGMA busy_timeout=5000 (#14/#8);
                 BEGIN IMMEDIATE emitted for EVERY request-scoped transaction (#P3)
 normalize.py  normalize_name()  (incl. descriptor stripping, #7)  [pure]
 units.py      unit table + conversions                           [pure, no deps]
-security.py   hash/verify_password (pwdlib), issue_token, get_current_user dep (consumes the
-                app-local session + get_settings deps, #P2; optional header, 5 explicit 401s, #P6),
+security.py   hash/verify_password (pwdlib), issue_token, get_current_user dep (takes `SessionDep`
+                + `get_settings` — no module globals, #P2/#N2; optional header, 5 explicit 401s, #P6;
+                the `last_used_at` bump rides the request's single get_db transaction, #N4),
                 CurrentUser alias
 models.py     all tables
 schemas/      package: common.py, auth.py, recipe.py, inventory.py, grocery.py  (__init__ re-exports)
@@ -310,14 +375,17 @@ services/
   inventory_math.py     check_availability, generate_lines, add_to_inventory_calc, deduct_calc  [pure, dataclasses in/out — PROPOSE an adjustment, never mutate, #H3]
 routers/
   auth.py       /api/auth      register, login, logout, me
-  recipes.py    /api/recipes   CRUD + /{id}/availability + /{id}/cook + /{id}/cook-logs
-  cook_logs.py  /api/cook-logs  list (paginated, all recipes) + get by id (#H5)
-  inventory.py  /api/inventory  CRUD — POST additive upsert, PATCH /{id} absolute replace (#P1)
-  grocery.py    /api/grocery    lists + items (PATCH state only) + /{id}/submit (#6) + /{id}/archive (#R5) + delete
-main.py       create_app(settings, engine) -> FastAPI (#H2): derive & install an app-local session
-              dependency from the injected engine + stash settings on app.state / get_settings (#P2);
-              include 5 routers; /api/health; lifespan create_all on the injected engine.
-              Module-level `app = create_app(settings, engine)` for uvicorn.
+  recipes.py    /api/recipes   CRUD (ingredients array = objects and/or pasted strings, #S1)
+                               + /{id}/availability + /{id}/cook + /{id}/cook-logs
+  cook_logs.py  /api/cook-logs  list (paginated: limit=50 [1..200], offset=0; all recipes) + get by id (#H5)
+  inventory.py  /api/inventory  CRUD — POST additive upsert, PATCH /{id} absolute replace (unit required with quantity, #P1/#S2)
+  grocery.py    /api/grocery    lists (GET ?status=active|archived) + POST /{id}/items + PATCH item (state only)
+                               + DELETE /{id}/items/{item_id} (#S5) + /{id}/submit (#6) + /{id}/archive (#R5/#S7) + delete list
+main.py       create_app(settings, engine) -> FastAPI (#H2): store `make_session_factory(engine)`
+              as `app.state.session_factory` and `settings` as `app.state.settings` (also read via
+              a `get_settings(request)` dep) — that is the ONLY DB wiring, no module globals, no
+              `dependency_overrides` (#P2/#N2); include 5 routers; /api/health; lifespan create_all
+              on the injected engine. Module-level `app = create_app(settings, engine)` for uvicorn.
 ```
 
 **Rule (documented in CLAUDE.md):** `services/` functions take/return plain
@@ -385,20 +453,27 @@ lists flour twice can't see full stock twice. Every figure below (`need`,
 `group_*`) is canonical and labelled with `group_unit` (#P5).
 ```
 canon  = canon_unit(g.bucket)   # "g" | "ml" | "unit" | "<opaque unit>"
-groups = aggregate(recipe.ingredients, M)   # -> {(norm, bucket): {need_base, members:[(ing_id, own_qty_base)]}}
+groups = aggregate(recipe.ingredients, M)   # -> {(norm, bucket): {need_base, display_item (FIRST member by position, #S4),
+                                            #                      members:[(ing_id, own_qty_base)], to_taste_ids}}
 for g in groups:
-    to_taste members -> one line(status="to_taste", need=None) each; skip quantified math for those
+    # to_taste members -> one vacuous line each: status="to_taste", need=None,
+    #   need_unit=canon, group_key set, group_need/have/short=None, nettable=false; skip quantified math for those
     pos    = [r for r in inventory if r.match_name == g.norm and r.quantity_base > 0]   # POSITIVE stock only (#P4)
     compat = [r for r in pos if r.unit_bucket == g.bucket]                              # same bucket
+    incomp = [r for r in pos if r.unit_bucket != g.bucket]                              # positive stock, other bucket (#N3)
     if compat:
         stock = sum(r.quantity_base for r in compat)          # already canonical — NO to_base (#R1/#R2)
         short = g.need_base - stock
-        group_status = "ok" if short <= 0 else "short"
-        group_have, group_short = stock, max(short, 0)
-    elif pos:                          -> group_status = "have_uncertain", nettable=false,          # positive stock, wrong bucket (#R6/#P4)
-                                          group_have = 0, group_short = g.need_base
-    else:                              -> group_status = "missing", group_have = 0,                 # no row, or only zero rows (#P4)
-                                          group_short = g.need_base
+        if short <= 0:                  -> group_status, nettable       = "ok", true         # compat covers it
+                                          group_have, group_short       = stock, 0
+        elif incomp:                    -> group_status, nettable       = "have_uncertain", false   # (#N3) incompatible stock may cover part
+                                          group_have, group_short       = stock, short             #   report the KNOWN compat remainder
+        else:                           -> group_status, nettable       = "short", true      # no other-bucket stock -> safe to net
+                                          group_have, group_short       = stock, short
+    elif incomp:                       -> group_status, nettable = "have_uncertain", false,         # positive stock, wrong bucket only (#R6/#P4/#N3)
+                                          group_have, group_short = 0, g.need_base
+    else:                              -> group_status, nettable = "missing", false,                # no row, or only zero rows (#P4)
+                                          group_have, group_short = 0, g.need_base
     # one AvailabilityLine per member ingredient_id:
     #   need / need_unit  = THAT member's own quantity * M, in canonical units (#R7/#P5)
     #   group_key         = f"{g.norm}|{g.bucket}"        ;   group_unit = canon
@@ -412,10 +487,12 @@ report.all_available = every quantified line's group_status == "ok"
 ### grocery generation — `POST /api/grocery {name?, recipe_ids, multipliers?}`
 ```
 reqs = {}   # normalized_name -> {quantities:[Quantity], display_item, sources:set, to_taste:bool}
-for rid in recipe_ids:
+for rid in recipe_ids:                                # recipe_ids order (stable)
     M = multipliers.get(rid, 1)
-    for ing in recipe(rid).ingredients:
-        r = reqs[ing.normalized_name]; r.display_item = ing.item; r.sources.add(recipe.title)
+    for ing in recipe(rid).ingredients:              # position order (stable)
+        r = reqs[ing.normalized_name]
+        r.display_item = r.display_item or ing.item   # FIRST writer wins (#S4)
+        r.sources.add(recipe.title)
         if ing.quantity is None: r.to_taste = true; continue
         r.quantities.append(Quantity(ing.quantity * M, ing.unit))
 
@@ -426,6 +503,7 @@ for norm, r in reqs.items():
         canon  = canon_unit(bucket)               # "g" | "ml" | "unit" | "<opaque unit>"
         pos    = [iv for iv in inventory if iv.match_name == norm and iv.quantity_base > 0]   # POSITIVE only (#P4)
         compat = [iv for iv in pos if iv.unit_bucket == bucket]
+        incomp = [iv for iv in pos if iv.unit_bucket != bucket]              # positive stock, other bucket (#N3)
         need_base = (q.amount if bucket.startswith("opaque:") or q.unit is None
                      else to_base(q.amount, q.unit).amt)         # canonical; opaque = raw amount (#R1)
         if q.amount is None:                                     # opaque/None with no amount -> surface as written
@@ -435,8 +513,8 @@ for norm, r in reqs.items():
         else:
             stock = sum(iv.quantity_base for iv in compat)       # already canonical — NO to_base (#R2)
             short = need_base - stock
-            if short <= 0: continue                              # fully in stock -> no line
-            emit, nettable = Quantity(short, canon), true        # shortfall in canonical units (#P5)
+            if short <= 0: continue                              # compat stock covers it -> no line
+            emit, nettable = Quantity(short, canon), (not incomp)    # (#N3) known compat remainder; nettable ONLY if no other-bucket stock exists
         items.append(GLItem(item=r.display_item, normalized_name=norm,
                             quantity=emit.amount, unit=emit.unit, nettable=nettable, source="generated"))
     if r.to_taste and norm not already emitted:
@@ -480,13 +558,15 @@ stored `applied_quantity`/`applied_unit` snapshot keeps the audit record honest.
 
 ### archive a grocery list — `POST /api/grocery/{list}/archive` (#R5)
 ```
-UPDATE grocery_lists SET status='archived' WHERE id=? AND status='active'   # guarded, idempotent
--> 200 GroceryListRead ; 404 if the list does not exist
+UPDATE grocery_lists SET status='archived' WHERE id=? AND status='active'   # guarded
+-> rowcount == 1: 200 GroceryListRead
+-> rowcount == 0: 409 "list is not active"   (already archived, #S7)
+-> 404 if the list does not exist
 ```
 The **only** path to `archived`. `submit` never triggers it, so incremental
 submit (shop today, finish tomorrow) works: the list is still `active` when the
-second `submit` lands. Archiving is terminal — a `PATCH` / `submit` on an
-archived list → 409.
+second `submit` lands. Archiving is terminal — a `PATCH` / `submit` / item
+`DELETE` / item `POST` / a second `archive` on an archived list → 409.
 
 ### add_to_inventory(match_name, display, amount, unit) -> Quantity actually added (canonical)
 `POST /api/inventory` and grocery `submit` both go through here — the
@@ -512,19 +592,28 @@ RETURNING quantity_base
 return Quantity(amt_base, canon)            # canonical contribution (for the grocery applied_* snapshot, #P7)
 ```
 
-### edit an inventory row — `PATCH /api/inventory/{id} {item?, match_name?, quantity?, unit?}` (#P1)
-Absolute replacement of the addressed row — **not** additive.
+### edit an inventory row — `PATCH /api/inventory/{id}` — body `InventoryItemUpdate` (#P1/#N1)
+Absolute replacement of the addressed row — **not** additive. `S = body.model_fields_set`;
+`"x" in S` means the client sent key `x` (value may be `None`).
 ```
-row      = get_or_404(id)
-cur_unit = unit if "unit" in body else (row.display_unit or canon_unit(row.unit_bucket))
-if bucket_of(cur_unit) != row.unit_bucket: 422      # bucket change not allowed here — remove the row and re-add (#P1)
-if "match_name" in body and exists_other_row(body.match_name, row.unit_bucket, exclude=id): 409   # collision, no merge (#P1)
-if "quantity" in body:
-    row.quantity_base = (max(body.quantity, 0) if row.unit_bucket.startswith("opaque:") or cur_unit is None
-                         else to_base(max(body.quantity, 0), cur_unit).amt)   # ABSOLUTE set, canonical
-if "unit" in body:        row.display_unit = cur_unit        # preference only; quantity_base already set above (or unchanged)
-if "match_name" in body:  row.match_name  = body.match_name
-if "item" in body:        row.item = body.item; row.normalized_name = normalize_name(body.item)
+row = get_or_404(id)
+if not S: return InventoryItemRead(row)            # empty PATCH -> 200 no-op
+# N1: reject explicit null for the fields that map to non-null columns / identity
+for f in ("item", "match_name", "quantity"):
+    if f in S and getattr(body, f) is None: 422    # "<f> cannot be null"
+if "quantity" in S and "unit" not in S: 422        # unit is required when setting quantity (#S2)
+if "unit" in S and bucket_of(normalize_unit_token(body.unit)) != row.unit_bucket:
+    422    # bucket change (incl. unit:null off a non-COUNT row) not allowed — remove & re-add (#P1)
+if "match_name" in S:
+    nm = body.match_name.strip()                   # N5 open: strip only, not normalize_name
+    if exists_other_row(nm, row.unit_bucket, exclude=id): 409   # collision, no merge (#P1)
+if "quantity" in S:                                # ABSOLUTE set, canonical; body.unit is present (checked above)
+    a = max(body.quantity, 0)
+    row.quantity_base = (a if row.unit_bucket.startswith("opaque:") or normalize_unit_token(body.unit) is None
+                         else to_base(a, body.unit).amt)
+if "unit" in S:        row.display_unit = body.unit        # preference only
+if "match_name" in S:  row.match_name  = nm
+if "item" in S:        row.item = body.item; row.normalized_name = normalize_name(body.item)
 row.updated_at = now
 # one BEGIN IMMEDIATE transaction like every request (#P3); IntegrityError on the composite unique -> 409 (#H3)
 return InventoryItemRead(row)               # display quantity recomputed from quantity_base
@@ -539,32 +628,47 @@ with ONE transaction (BEGIN IMMEDIATE — write lock before the first read, #R3)
   for (norm, bucket), need_base in aggregate(recipe.ingredients, M):   # aggregate like availability (#4)
     canon = canon_unit(bucket)   # "g" | "ml" | "unit" | "<opaque unit>"  (#P7)
     #   need_base is canonical: g/ml/count for known dims, raw amount for opaque (#R1)
-    to_taste members -> log.deductions += {item, requested:null, requested_unit:null, applied:false, reason:"to taste"}
+    # to_taste members -> one entry each, FULL key set, nulls where N/A (#P7 + spec pass 7 gap-fill):
+    to_taste members -> log.deductions += {item, normalized_name:null, requested:null, requested_unit:null,
+                           deducted:null, deducted_unit:null, inventory_unit:null, before:null, after:null,
+                           applied:false, reason:"to taste"}
     pos    = [r for r in inventory if r.match_name == norm and r.quantity_base > 0]   # POSITIVE stock only (#P4)
-    compat = [r for r in pos if r.unit_bucket == bucket]
+    compat = sorted([r for r in pos if r.unit_bucket == bucket], key=lambda r: r.id)  # FIFO, oldest row first
     if not compat and not pos:
-        log.deductions += {item, requested:need_base, requested_unit:canon, deducted:0, deducted_unit:canon,
-                           inventory_unit:canon, applied:false, reason:"not in inventory"}; continue
+        log.deductions += {item, normalized_name:norm, requested:need_base, requested_unit:canon,
+                           deducted:0, deducted_unit:canon, inventory_unit:canon, before:null, after:null,
+                           applied:false, reason:"not in inventory"}; continue
     if not compat:
-        log.deductions += {item, requested:need_base, requested_unit:canon, deducted:0, deducted_unit:canon,
-                           inventory_unit:canon, applied:false, reason:"have uncertain (incompatible unit)"}; continue   # (#R6/#P4)
+        log.deductions += {item, normalized_name:norm, requested:need_base, requested_unit:canon,
+                           deducted:0, deducted_unit:canon, inventory_unit:canon, before:null, after:null,
+                           applied:false, reason:"have uncertain (incompatible unit)"}; continue   # (#R6/#P4)
     remaining = need_base
-    for r in compat:                                 # draw down compatible rows in order, clamp at 0 (#16)
+    for i, r in enumerate(compat):                   # draw down compatible rows FIFO by id, clamp at 0 (#16)
         before = r.quantity_base
         take   = min(remaining, r.quantity_base)     # all canonical — NO to_base, NO display_amt (#R1/#R2/#P7)
         r.quantity_base = before - take; r.updated_at = now
         remaining -= take
         log.deductions += {item, normalized_name:norm,
-                           requested: (need_base if r is compat[0] else null), requested_unit: canon,
+                           requested: (need_base if i == 0 else null), requested_unit: canon,
                            deducted: take, deducted_unit: canon, inventory_unit: canon,
                            before, after: r.quantity_base,
                            applied: true, reason: ("ok" if remaining <= 0 else "clamped to 0")}
 save(log)
 ```
+Every `deductions` entry carries the **full 11-key set** (`item`,
+`normalized_name`, `requested`, `requested_unit`, `deducted`, `deducted_unit`,
+`inventory_unit`, `before`, `after`, `applied`, `reason`), `null` where the
+branch does not populate one — the JSON contract clients code against, even
+though the column stays `list[dict]` (⚠ N7 still open as a typed schema).
 Every amount in a deduction entry is canonical — `requested`, `deducted`,
 `before`, `after` all in `inventory_unit`, so `before − deducted == after` holds
 and there is no `display_amt` round-trip (#P7). Cook is intentionally lossy
-(clamp at 0, skip incompatible buckets, skip zero-stock rows — #P4).
+(clamp at 0, skip incompatible buckets, skip zero-stock rows — #P4). Cook does
+**not** adopt the #N3 uncertainty split: it draws down compatible-bucket stock
+and clamps, logging `reason:"clamped to 0"` for any remainder even when
+incompatible-bucket stock also exists. That is deliberate — a cook must not
+silently deduct a `jar` when the recipe asked for `can`s — and it stays
+consistent with availability, which already reported that food `have_uncertain`.
 `deductions` records `requested` vs the **actual** `deducted` amount and
 `before`/`after` per row (#16), so a future "undo" = `add_to_inventory` of each
 entry's `deducted` amount (already canonical).
@@ -629,6 +733,9 @@ Two household members can act at once. Contract:
 
 - **Hashing:** `pwdlib[argon2]` (`hash_password`/`verify_password` in
   `security.py`). Dummy-verify on unknown username to blunt timing enumeration.
+- **Usernames are case-insensitive (#S3):** `UNIQUE` index on `lower(username)`;
+  `/login` matches `lower(username) = lower(:input)`; register 409s on a
+  case-insensitive collision. Original casing is stored and echoed back.
 - **Sessions:** opaque `secrets.token_urlsafe(32)` in the `sessions` table, TTL
   `RECIPE_SESSION_TTL_DAYS` (default 30). No JWT, no signing secret to manage.
   `get_current_user(authorization: str | None = Header(default=None))` (optional,
@@ -647,8 +754,9 @@ Two household members can act at once. Contract:
 - **Registration (#15):** `RECIPE_ALLOW_REGISTRATION` defaults **`false`**. To
   add accounts, the household sets it `true` (and normally also sets
   `RECIPE_REGISTRATION_CODE`), registers, then sets it back `false`. When
-  `RECIPE_REGISTRATION_CODE` is set, `/register` requires a matching `code` or
-  returns 403.
+  `RECIPE_REGISTRATION_CODE` is set, `/register` requires a `code` matching under
+  `secrets.compare_digest` or returns 403. Check order: body 422 → disabled 403 →
+  bad code 403 → dup 409.
 - **Endpoints (`/api/auth`):** `POST /register {username, password, code?}` → 201
   `{token,user}` (409 dup / 403 disabled-or-bad-code / 422 short pw); `POST
   /login` (JSON, not OAuth2 form, to keep the fetch wrapper uniform) →
@@ -680,15 +788,30 @@ v1.
 Stay on `create_all`:
 - **App factory (#H2/#P2).** `create_app(settings, engine)` is the single build
   path. It (a) runs `Base.metadata.create_all(bind=engine)` in its lifespan on
-  the **injected** engine; (b) builds a `sessionmaker` bound to that engine and
-  installs an **app-local** `get_db` dependency (a generator yielding a
-  request-scoped session) on `app.state` — there is no importable module-global
-  session factory that tests must monkeypatch; (c) stashes `settings` on
+  the **injected** engine; (b) builds `make_session_factory(engine)` and stores
+  it as `app.state.session_factory` — there is **no** module-global session
+  factory. The **importable** dependency `get_db(request: Request)` (defined in
+  `database.py`, together with `SessionDep = Annotated[Session, Depends(get_db)]`)
+  reads `request.app.state.session_factory` on each request, so routers and
+  `security.py` bind `Depends(get_db)` / `SessionDep` **statically at import
+  time** and every request still resolves to the running app's engine — the
+  `app.state`-vs-static-`Depends` mismatch #N2 flagged does not arise because the
+  `request` object is per-request (#P2/#N2); (c) stashes `settings` on
   `app.state.settings`, exposed through a `get_settings(request)` dependency. The
-  module-level `app = create_app(settings, engine)` is what uvicorn imports;
+  module-level `app = create_app(settings, engine)` is what uvicorn imports (its
+  `engine` is the one module-level default engine, built from `settings`);
   `conftest.py` calls `create_app(test_settings, test_engine)` and **overrides
-  nothing further** — the injected engine is the only DB wiring (#P2). No "set
-  env vars before importing `app`" ordering hack.
+  nothing** — the injected engine is the only DB wiring (#P2). No "set env vars
+  before importing `app`" ordering hack.
+- **Unit of work (#N2/#N4).** `get_db` is a generator dependency that opens a
+  session, `yield`s it, then on a clean return `commit()`s once and on any
+  exception `rollback()`s, always closing. Routers never call `commit()`
+  themselves — they `flush()` when they need generated IDs. This makes a
+  request's `get_current_user` `last_used_at` bump and its route mutation **one**
+  transaction (the request's single `BEGIN IMMEDIATE`, #P3), so `last_used_at`
+  actually persists on ordinary authenticated GETs. `IntegrityError` and
+  SQLite lock / `busy_timeout` timeouts are translated to **409** in an
+  exception handler / router-level `try` before `get_db` sees them (#H3).
 - `database.py` exposes `make_engine(url)` / `make_session_factory(engine)` and
   registers a `connect` event listener issuing `PRAGMA foreign_keys=ON` and
   `PRAGMA busy_timeout=5000` on every SQLite connection (#14/#8) — without it
@@ -717,12 +840,16 @@ All `float` fields below are `allow_inf_nan=False` (#13).
 - `recipe.py`:
   - `RecipeIngredientIn {quantity: float|None gt=0, unit: str|None ≤30, item: str 1..200, note: str|None}`
     (#13) — no `position` (array index), no `normalized_name` (server-computed).
-  - `RecipeIngredientRead` adds `{id, position, normalized_name}`.
+  - An `ingredients` element may **instead** be a bare `str` (#S1): a non-blank
+    string is `parse_ingredient`d into a row and its verbatim text stored in
+    `raw_text`; a blank/whitespace string is skipped. `raw_text` is server-set —
+    the source line for parsed rows, `None` for structured rows.
+  - `RecipeIngredientRead` adds `{id, position, normalized_name, raw_text}`.
   - `RecipeBase {title 1..200, notes="", prep_time ≥0|None, cook_time ≥0|None,
     servings >0|None, cuisine|None, source_url|None, tags: list[str]=[],
     steps: list[str]=[]}`.
   - `RecipeCreate` / `RecipeUpdate` = `RecipeBase` + `ingredients:
-    list[RecipeIngredientIn] = []` — **PUT fully replaces** nested rows.
+    list[RecipeIngredientIn | str] = []` (#S1) — **PUT fully replaces** nested rows.
   - `RecipeRead` = `RecipeBase` + `{id, created_at, updated_at, photo_path,
     created_by: UserMini|None, ingredients: list[RecipeIngredientRead]}`.
   - `AvailabilityLine {ingredient_id, item, need: float|None, need_unit: str,
@@ -748,12 +875,23 @@ All `float` fields below are `allow_inf_nan=False` (#13).
     `GET /api/recipes/{id}/cook-logs`, and `GET /api/cook-logs/{log_id}` all
     return `CookLogRead`; `GET /api/cook-logs` returns
     `CookLogList {items: list[CookLogRead], total, limit, offset}` (#H5).
-- `inventory.py` — `InventoryItemIn {item, quantity: float ge=0 (finite),
-  unit: str|None, match_name: str|None}` — the human input for **`POST`** (an
-  additive upsert into `(match_name, unit_bucket)`) and for **`PATCH /{id}`** (an
-  absolute replacement of that row; a bucket-changing `unit` → 422, a
-  `match_name` collision → 409, #P1). The server converts `quantity`+`unit` to
-  `quantity_base` on write (#R2). `InventoryItemRead {id, item, normalized_name,
+- `inventory.py` (#N1) — **`InventoryItemCreate {item: str 1..200 (required),
+  quantity: float ge=0 finite (required), unit: str|None, match_name: str|None}`**
+  is the `POST` body (an additive upsert into `(match_name, unit_bucket)`).
+  **`InventoryItemUpdate {item: str|None, match_name: str|None, quantity:
+  float|None ge=0 finite, unit: str|None}`** is the `PATCH /{id}` body (an
+  absolute replacement of the addressed row). Every `InventoryItemUpdate` field
+  is omittable; the router acts only on fields in `body.model_fields_set`. A
+  field **present with value `None`** is rejected **422** for `item`,
+  `match_name`, `quantity`; `unit` alone may be omitted **or** explicitly `null`.
+  **`quantity` present without `unit` in the same body → 422 (#S2)** — the pair
+  is converted to `quantity_base` together; `unit` alone (no `quantity`) is a
+  display-preference change only. A supplied `unit` (including `null`) whose
+  `bucket_of(...)` ≠ the row's `unit_bucket` → **422** ("remove and re-add"); a
+  `match_name` that collides on `(match_name, unit_bucket)` → **409** (no merge,
+  #P1). `PATCH {}` → **200** no-op. The server converts `quantity`+`unit` to
+  `quantity_base` on write (#R2).
+  `InventoryItemRead {id, item, normalized_name,
   match_name, unit_bucket, quantity_base, display_unit, display_quantity,
   updated_at}` — `quantity_base` is authoritative (canonical); `display_quantity`
   is `from_base(quantity_base, dim, display_unit)` **computed on every read**,
@@ -763,10 +901,13 @@ All `float` fields below are `allow_inf_nan=False` (#13).
   (non-empty, unique, all must exist — else 422), multipliers: dict[int, float] = {}}`
   (each multiplier `gt=0`, finite, #13; **keys must be a subset of `recipe_ids`,
   else 422 — #H4**);
-  `GroceryListItemIn {item, quantity: float|None gt=0 (finite), unit: str|None}`;
-  `GroceryListItemUpdate {checked: bool|None, quantity, unit, item}` — 409 if the
-  target line is `added_to_inventory` (frozen after submit, #6) or the list is
-  `archived` (#R5);
+  `GroceryListItemIn {item, quantity: float|None gt=0 (finite), unit: str|None}`
+  is the `POST /api/grocery/{id}/items` body (manual line → `source="manual"`,
+  `nettable=true`);
+  `GroceryListItemUpdate {checked: bool|None, quantity, unit, item}` for `PATCH`
+  — 409 if the target line is `added_to_inventory` (frozen after submit, #6) or
+  the list is `archived` (#R5). `DELETE /api/grocery/{id}/items/{item_id}` →
+  **204** on an unfrozen line on an active list, else **409** (#S5);
   `GroceryListItemRead {id, item, normalized_name, quantity, unit, checked,
   checked_at, submitted_at, source, nettable, added_to_inventory,
   applied_quantity, applied_unit}` (#6) — for `source="generated"` lines
@@ -774,18 +915,27 @@ All `float` fields below are `allow_inf_nan=False` (#13).
   `applied_quantity`/`applied_unit` snapshot what `submit` added, also canonical
   (#P5/#P7); `source="manual"` lines keep the amounts the user typed;
   `GroceryListRead {id, name, status, source_recipe_ids, created_at, created_by,
-  items}`. `POST /{id}/submit` and `POST /{id}/archive` both return
-  `GroceryListRead`; `submit` on a non-`active` list and `archive` guard on
-  `status='active'` (#R5).
+  items}`. `GET /api/grocery` accepts an optional `?status=active|archived`
+  filter. `POST /{id}/submit` and `POST /{id}/archive` both return
+  `GroceryListRead`; `submit` on a non-`active` list → 409, and `archive` guards
+  on `status='active'` (re-archive → 409, #R5/#S7).
 
 **PUT nested semantics (full replace):**
 ```
 recipe = get_or_404
 apply scalar fields; recipe.tags = payload.tags; recipe.steps = payload.steps
 recipe.ingredients.clear()                       # delete-orphan removes old rows
-for i, ing in enumerate(payload.ingredients):
+rows = []
+for el in payload.ingredients:                   # objects and/or pasted strings (#S1)
+    if isinstance(el, str):
+        if el.strip() == "": continue            # blank pasted line -> skip
+        p = parse_ingredient(el); rows.append({**p, "raw_text": el})
+    else:
+        rows.append({"quantity": el.quantity, "unit": el.unit, "item": el.item,
+                     "note": el.note, "raw_text": None})
+for i, r in enumerate(rows):
     recipe.ingredients.append(RecipeIngredient(position=i,
-        normalized_name=normalize_name(ing.item), **ing.model_dump()))
+        normalized_name=normalize_name(r["item"]), **r))
 commit; refresh (selectinload)
 ```
 Ingredient `id`s churn per save — harmless (availability is computed fresh;
@@ -798,8 +948,9 @@ factory (#H2/#P2): `app = create_app(test_settings, test_engine)` where
 `test_settings` has `allow_registration=true` (no code), and `test_engine` is the
 in-memory `StaticPool` engine with the `PRAGMA foreign_keys=ON` / `busy_timeout`
 / `BEGIN IMMEDIATE` listeners (#14/#P3) + `create_all`/`drop_all`. **No
-`dependency_overrides[get_db]`** — `create_app` derives the session dependency
-from `test_engine` itself, so the injected engine is the sole DB wiring (#P2).
+`dependency_overrides`** — `create_app` stores `make_session_factory(test_engine)`
+on `app.state.session_factory` and the importable `get_db(request)` reads it, so
+the injected engine is the sole DB wiring (#P2/#N2).
 `test_concurrency.py` opts out of the shared engine — it builds its own
 **file-backed** SQLite DB (`tmp_path`) with two independent engines/connections
 and drives authenticated HTTP requests (#R3/#P3).
@@ -822,11 +973,17 @@ New / changed test files:
   and `group_*` all canonical, `group_unit` set, #R7/#P5; **`clove` need vs
   `bulb` stock ⇒ `have_uncertain`, not `missing`**, #R6; **row at
   `quantity_base = 0` ⇒ treated as absent: cook-to-zero food ⇒ `missing`, not
-  `short`/`have_uncertain`**, #P4; `have_uncertain` ⇒ `all_available` false, #4);
+  `short`/`have_uncertain`**, #P4; **#N3 three-way partition: `need 3 can` /
+  `1 can` + `1 jar` ⇒ `have_uncertain` + `nettable=false`, `group_have=1`,
+  `group_short=2`; `need 3 can` / `1 can` only ⇒ `short` + `nettable=true`;
+  `need 2 can` / `3 can` + `1 jar` ⇒ `ok`, no line**; `have_uncertain` ⇒
+  `all_available` false, #4);
   `generate_lines` (consolidation across 2 recipes, netting against summed
   positive compatible `quantity_base`, **`2 can` need − `1 can` stock ⇒ `1 can`
   line** in canonical units, #R1/#P5, skip in-stock, non-nettable surfaced,
-  zero-stock row ignored, #P4); `deduct` (clamp at 0, incompatible bucket ⇒
+  zero-stock row ignored, #P4; **#N3: `need 3 can` / `1 can` + `1 jar` ⇒ a
+  `2 can` line with `nettable=false`; same need / `1 can` only ⇒ `nettable=true`**);
+  `deduct` (clamp at 0, incompatible bucket ⇒
   `have uncertain` reason not applied, #R6, opaque same-unit deducts, **canonical
   `requested`/`deducted`/`deducted_unit`, `before − deducted == after`**,
   #16/#P7, **kg-from-g: stock `2000` g, recipe `1 kg` ⇒ `deducted 1000`,
@@ -834,10 +991,11 @@ New / changed test files:
   **`quantity_base` upsert** with a cross-unit add — `1 kg` row + `500 g` ⇒
   `1500` base, #R2 — **incompatible unit ⇒ a second row, never `1+500→501`**,
   #2; returns a canonical `Quantity`, #P7).
-- `test_auth.py` — anonymous `client`. register 201 / 409 dup / 403 when
+- `test_auth.py` — anonymous `client`. register 201 / 409 dup / **409
+  case-insensitive dup (`Alice` vs `alice`, #S3)** / 403 when
   `RECIPE_ALLOW_REGISTRATION=false` / 403 wrong `code` when a code is configured /
-  422 short pw (#15); login 200+token / 401 bad pw / 401 unknown user; logout
-  invalidates. **The five `get_current_user` 401 cases (#P6):** no `Authorization`
+  422 short pw (#15); login 200+token / login by differently-cased username
+  succeeds (#S3) / 401 bad pw / 401 unknown user; logout invalidates. **The five `get_current_user` 401 cases (#P6):** no `Authorization`
   header, malformed value (`"garbage"`, no space), wrong scheme (`"Basic xyz"`),
   unknown token, and a token whose `sessions` row is past `expires_at` — each on a
   gated endpoint (and `/me`); `/me` 200 with a good token.
@@ -849,7 +1007,9 @@ New / changed test files:
   newest-first across recipes; `GET /api/cook-logs/{id}` returns one; a log is
   still returned by both endpoints after its recipe is deleted (#H5).
 - `test_recipes.py` — expanded, `auth_client`. nested create/read (positions,
-  computed `normalized_name`); PUT clears old ingredients; steps/tags round-trip;
+  computed `normalized_name`); **string elements in `ingredients` parsed →
+  `raw_text` stored, object elements `raw_text=null`, blank strings skipped
+  (#S1)**; PUT clears old ingredients; steps/tags round-trip;
   `/availability?multiplier=2` (per-line `need` and `group_*` canonical,
   `group_unit` present, no `have`/`short` on the line, #R7/#P5; cook-to-zero food
   ⇒ `missing`, #P4); `/cook` writes `CookLog` + mutates inventory (clamp,
@@ -857,30 +1017,38 @@ New / changed test files:
   `requested`/`deducted`/`deducted_unit`/`before`/`after`, #16/#P7); `cook
   {deduct:false}` leaves inventory untouched but still writes a `CookLog`;
   `GET .../cook-logs` newest-first across both modes.
-- `test_inventory.py` — `auth_client`. **`POST` = additive upsert** (two `POST`s
-  to the same `(match_name, unit_bucket)` sum in `quantity_base`); **`PATCH
-  /{id}` = absolute replacement** (sets `quantity_base` outright — "reduce flour
-  to 200 g"); **`PATCH` display-unit change** within a bucket (`g`→`kg`) leaves
-  `quantity_base` untouched, only `display_quantity` changes; **`PATCH` to a
-  bucket-changing `unit` → 422**; **`PATCH match_name` onto an occupied
-  `(match_name, unit_bucket)` → 409** (#P1); **add → cook → GET** shows
-  `display_quantity` recomputed from the reduced `quantity_base` (#P1);
-  `(match_name, unit_bucket)` composite uniqueness; cross-unit add merges via
-  `quantity_base` (`1 kg` + `500 g` ⇒ `1500`, #R2); same food in two incompatible
-  units → two rows (#2); editing `match_name` re-points matching; negative /
-  non-finite qty rejected (#13).
+- `test_inventory.py` — `auth_client`. **`POST` (`InventoryItemCreate`) = additive
+  upsert** (two `POST`s to the same `(match_name, unit_bucket)` sum in
+  `quantity_base`; `POST` missing `item` or `quantity` → 422, #N1); **`PATCH
+  /{id}` (`InventoryItemUpdate`) = absolute replacement** (sets `quantity_base`
+  outright — `PATCH {quantity:200, unit:"g"}` "reduce flour to 200 g";
+  `PATCH {quantity:200}` with no `unit` → 422, #S2); **`PATCH
+  {unit:"kg"}` display-unit change** within a bucket leaves `quantity_base`
+  untouched, only `display_quantity` changes; **`PATCH` to a bucket-changing
+  `unit` → 422** (incl. `PATCH {unit:null}` on a non-COUNT row; `PATCH {unit:null}`
+  on a COUNT row succeeds, #N1); **`PATCH {item:null}` / `{quantity:null}` /
+  `{match_name:null}` → 422**, **`PATCH {}` → 200 no-op** (#N1); **`PATCH
+  match_name` onto an occupied `(match_name, unit_bucket)` → 409** (#P1); **add →
+  cook → GET** shows `display_quantity` recomputed from the reduced
+  `quantity_base` (#P1); `(match_name, unit_bucket)` composite uniqueness;
+  cross-unit add merges via `quantity_base` (`1 kg` + `500 g` ⇒ `1500`, #R2);
+  same food in two incompatible units → two rows (#2); editing `match_name`
+  re-points matching; negative / non-finite qty rejected (#13).
 - `test_grocery.py` — generate from 2 selected recipes (consolidation + netting;
   **generated line `quantity`/`unit` in canonical units**, #P5; a food cooked to
   `quantity_base = 0` still produces a full-need line, #P4), manual item add
   (amounts kept as typed), **check off → inventory unchanged** (#6), edit a
   checked line then submit → inventory reflects the edited value, `POST /submit`
   → inventory up + line frozen (`added_to_inventory`, canonical
-  `applied_quantity` set), PATCH a frozen line → 409, uncheck before submit →
+  `applied_quantity` set), PATCH a frozen line → 409, **DELETE an unfrozen line →
+  204, DELETE a frozen line → 409** (#S5), uncheck before submit →
   no-op, **`submit` does NOT archive; check a further line and re-submit picks it
-  up (incremental submit works)** (#R5), **`submit` with nothing checked → 200
+  up (incremental submit works)** (#R5), **re-archive → 409** (#S7), **`submit` with nothing checked → 200
   no-op** (#R5), `POST /archive` → `status=archived` and a later PATCH/submit →
   409 (#R5), sequential double-submit idempotency, delete list cascades items,
-  non-nettable line present.
+  non-nettable line present; **#N3: a recipe needing `3 can` with `1 can` + `1 jar`
+  in stock yields a `2 can` line flagged `nettable=false` (not a confident
+  netted line); with `1 can` only it is `nettable=true`**.
 - `test_concurrency.py` — **file-backed SQLite, two connections, authenticated
   HTTP** (#R3/#P3). Two `cook`s racing on a shared ingredient → final
   `quantity_base` is the correct total, both `CookLog`s honest (no lost update).
@@ -896,12 +1064,16 @@ New / changed test files:
   v1). Old tests still green.
 - **Phase 1 — pure core.** `normalize.py`, `units.py`,
   `services/ingredient_parse.py` + `test_units.py`, `test_ingredient_parse.py`.
-  Nothing else touched.
+  `parse_ingredient` is built and unit-tested here but not wired to any route
+  until Phase 3 (#S1). Nothing else touched.
 - **Phase 2 — auth + app factory.** Introduce `create_app(settings, engine)` in
   `main.py` and `make_engine` / `make_session_factory` in `database.py`; the
-  module-level `app` calls the factory. `create_app` **derives the app-local
-  `get_db` session dependency from the injected engine** and stashes `settings`
-  on `app.state` / behind `get_settings` (#P2). Add the `PRAGMA foreign_keys=ON`
+  module-level `app` calls the factory. `database.py` defines the **importable**
+  `get_db(request)` + `SessionDep` (reads `request.app.state.session_factory`;
+  commits on clean return, rolls back on exception — the request's one unit of
+  work, #N2/#N4) and keeps **one** default module-level `engine`, no
+  `SessionLocal`. `create_app` stores `session_factory` + `settings` on
+  `app.state` (+ `get_settings`) — the only DB wiring (#P2/#N2). Add the `PRAGMA foreign_keys=ON`
   / `busy_timeout` connect listener **and the `BEGIN IMMEDIATE` transaction hook
   for every request-scoped transaction** (prod + test engines,
   #14/#8/#R3/#P3). `User`/`Session` models, `security.py` (`get_current_user` —
@@ -914,27 +1086,38 @@ New / changed test files:
   `dependencies=[Depends(get_current_user)]` to the recipes router.
   `test_auth.py` (incl. the five 401 cases). End: existing recipe CRUD works, now
   gated; login works.
-- **Phase 3 — structured recipes.** Expand `Recipe` (keep `photo_path` /
-  `raw_text` as reserved nullable cols), add `RecipeIngredient`, drop the old
-  text cols; `schemas/recipe.py` nested + validation; rewrite `routers/recipes.py`
-  for nested create/replace. Expand `test_recipes.py`; add `test_validation.py`
-  (#H4). Delete `recipe.db`. End: full structured recipe CRUD. **No photo.**
+- **Phase 3 — structured recipes.** Expand `Recipe` (keep `photo_path` as a
+  reserved nullable col; **`raw_text` is active**, #S1), add `RecipeIngredient`,
+  drop the old text cols; `schemas/recipe.py` nested + validation
+  (`ingredients: list[RecipeIngredientIn | str]`); rewrite `routers/recipes.py`
+  for nested create/replace, **wiring `parse_ingredient` for string elements**
+  (parse → row + `raw_text`; blank strings skipped). Expand `test_recipes.py`
+  (incl. paste-string parsing, `raw_text` stored, blank-line skip); add
+  `test_validation.py` (#H4). Delete `recipe.db`. End: full structured recipe
+  CRUD with paste support. **No photo.**
 - **Phase 4 — inventory + math services.** `InventoryItem` model with
   `(match_name, unit_bucket)` composite unique + editable `match_name` +
   **`quantity_base` as source of truth + `CHECK(quantity_base >= 0)`, a
   `display_unit` preference (display quantity recomputed from base on read)**
   (#2/#R2/#P1); `services/inventory_math.py` (`check_availability` with
-  aggregation over **positive** stock, cross-bucket `have_uncertain` and
-  zero-stock-as-absent (#R6/#P4), canonical per-line `need` + `group_*` +
-  `group_unit` (#R7/#P5), opaque arithmetic without `to_base` (#R1);
+  aggregation over **positive** stock, the #N3 three-way partition
+  (compatible / incompatible / none → `ok` / `short` / `have_uncertain` /
+  `missing` with `nettable` per #R6/#P4/#N3), zero-stock-as-absent (#P4),
+  canonical per-line `need` + `group_*` + `group_unit` (#R7/#P5), opaque
+  arithmetic without `to_base` (#R1);
   `add_to_inventory_calc` converts to base then proposes the `quantity_base += …`
   upsert, returns a canonical `Quantity`, no `convert()` (#R2/#P7);
   `deduct_calc` on `quantity_base`, recording canonical
   `requested`/`deducted`/`deducted_unit`/`before`/`after` #16/#P7);
+  `schemas/inventory.py` — **`InventoryItemCreate`** (required `item`+`quantity`)
+  vs **`InventoryItemUpdate`** (all optional, `model_fields_set`-driven, explicit
+  `null` on `item`/`match_name`/`quantity` → 422, #N1);
   `routers/inventory.py` — **`POST` additive upsert, `PATCH /{id}` absolute
-  replacement (within-bucket only → 422, collision → 409), PATCH `match_name`**
-  (#P1); `GET /api/recipes/{id}/availability`. `test_inventory.py`,
-  `test_inventory_math.py`, availability tests (incl. cook-to-zero → `missing`).
+  replacement (within-bucket only → 422, `quantity` without `unit` → 422 #S2,
+  collision → 409, empty body → 200 no-op), PATCH `match_name`** (#P1/#N1/#S2);
+  `GET /api/recipes/{id}/availability`.
+  `test_inventory.py`, `test_inventory_math.py`, availability tests (incl.
+  cook-to-zero → `missing`, and #N3 `3 can / 1 can + 1 jar` → `have_uncertain`).
   End: inventory CRUD + missing-ingredient check.
 - **Phase 5 — cook = deduct + made-tracking.** `CookLog` model (with
   `deducted: bool = True` from the start; deductions carry canonical
@@ -952,11 +1135,13 @@ New / changed test files:
   `submitted_at` + canonical `applied_*` cols, #6/#P7); `generate_lines` in
   `inventory_math.py` (netting against summed **positive** compatible
   `quantity_base`, opaque same-unit nets, canonical line output,
-  #R1/#R2/#P4/#P5); `routers/grocery.py` (create-from-recipes, get, list, add
-  manual item, **PATCH = state/field edits only, 409 on frozen lines / archived
-  list**, `POST /{id}/submit` → one `BEGIN IMMEDIATE` txn `add_to_inventory` +
-  freeze, **no status change** (#R5), `POST /{id}/archive` → guarded
-  `status='active'→'archived'` (#R5), delete). `test_grocery.py`;
+  #R1/#R2/#P4/#P5); `routers/grocery.py` (create-from-recipes, get, list
+  (`?status=` filter), `POST /{id}/items` manual add, **PATCH = state/field edits
+  only, 409 on frozen lines / archived list**, `DELETE /{id}/items/{item_id}`
+  (204 / 409, #S5), `POST /{id}/submit` → one `BEGIN IMMEDIATE` txn
+  `add_to_inventory` + freeze, **no status change** (#R5), `POST /{id}/archive` →
+  guarded `status='active'→'archived'`, re-archive → 409 (#R5/#S7), delete list).
+  `test_grocery.py` (incl. line delete, re-archive 409);
   **`test_concurrency.py` submit-race over authenticated HTTP** (#R3/#P3). End:
   backend feature-complete.
 - **Phase 7 — docs.** Update `README.md`, `CLAUDE.md`, `backend/.env.example`
@@ -1156,11 +1341,14 @@ adversarial-review findings.
   1. `POST /api/auth/register {username, password, code:"devcode"}` → copy token
      → Authorize. **Then stop the server and restart it without those two env
      vars** (#R8) — a second `POST /api/auth/register` now returns 403.
-  2. `POST /api/recipes` with nested ingredients + steps; `GET` it back nested.
+  2. `POST /api/recipes` — mix structured ingredient objects **and** bare pasted
+     strings in the `ingredients` array (#S1) + steps; `GET` it back nested, with
+     `raw_text` populated on the parsed rows.
   3. `POST /api/inventory` a couple of items (e.g. `500 g flour`, `1 can
      tomatoes`); a second `POST` of `250 g flour` **adds** (flour row
-     `quantity_base` = 750); `PATCH /api/inventory/{flour_id} {quantity:200}`
-     **replaces** (→ 200 g); `PATCH {unit:"kg"}` just changes the displayed unit;
+     `quantity_base` = 750); `PATCH /api/inventory/{flour_id} {quantity:200, unit:"g"}`
+     **replaces** (→ 200 g); `PATCH {quantity:200}` alone → 422 (#S2);
+     `PATCH {unit:"kg"}` just changes the displayed unit;
      `PATCH {unit:"can"}` → 422 (#P1). `GET
      /api/recipes/{id}/availability?multiplier=1` shows ok/short/missing, per-line
      `need` and `group_*` in canonical units with `group_unit` (#R7/#P5), and
@@ -1178,9 +1366,10 @@ adversarial-review findings.
      **inventory unchanged**; `POST /api/grocery/{id}/submit` → inventory rises,
      line `added_to_inventory` + `applied_quantity` (canonical) set, **list still
      `status:active`** (#R5); check another line and `submit` again → only that
-     line is added; `PATCH` a frozen line → 409.
+     line is added; `PATCH` a frozen line → 409; `DELETE` an unfrozen line → 204,
+     `DELETE` a frozen line → 409 (#S5).
   6. `POST /api/grocery/{id}/archive` → `status:archived`; a further
-     `PATCH`/`submit` → 409 (#R5).
+     `PATCH`/`submit`/`archive` → 409 (#R5/#S7).
   7. `POST /api/recipes/{id}/cook {multiplier:1, deduct:false}` → inventory
      unchanged, entry appears in `GET /api/recipes/{id}/cook-logs`.
   8. `GET /api/cook-logs` lists cook logs across recipes newest-first;
@@ -1194,44 +1383,55 @@ adversarial-review findings.
 
 ## Critical files
 
-- `backend/app/models.py` — `User`/`Session`, expanded `Recipe` +
-  `RecipeIngredient` (with reserved-nullable `photo_path` / `raw_text`),
-  `InventoryItem` composite unique `(match_name, unit_bucket)` (#2) +
+- `backend/app/models.py` — `User`/`Session` (username `UNIQUE` on
+  `lower(username)`, #S3), expanded `Recipe` + `RecipeIngredient` (reserved-nullable
+  `photo_path`; **active `raw_text`**, #S1), `InventoryItem` composite unique
+  `(match_name, unit_bucket)` (#2), `unit_bucket` `str(30)` (#S6) +
   `quantity_base` source-of-truth / `display_unit` preference (#R2/#P1),
   `CookLog.deducted` + richer canonical `deductions` incl. `deducted_unit`
   (#16/#P7), `GroceryList` / `GroceryListItem` with `submitted_at` / canonical
   `applied_*` (#6/#P7), `CHECK` constraints (#13).
 - `backend/app/database.py` — `make_engine` / `make_session_factory` helpers
-  (#H2) + `PRAGMA foreign_keys=ON` + `busy_timeout` connect listener (#14/#8) +
-  `BEGIN IMMEDIATE` transaction hook for **every request-scoped transaction**
-  (#R3/#P3).
-- `backend/app/main.py` — `create_app(settings, engine)` factory (#H2/#P2):
-  derives the app-local `get_db` session dependency from the injected engine,
-  stashes `settings` on `app.state` / `get_settings`; 5 routers, `/api/health`,
-  lifespan `create_all` on the injected engine. No StaticFiles mount in v1.
-- `backend/app/routers/recipes.py` — nested CRUD + `/availability` (canonical
-  lines, positive-stock filter, #P4/#P5) + `/cook` (with `deduct`; canonical
-  deductions, #P7) + `/cook-logs`.
+  (#H2); **one** module-level default `engine`, no `SessionLocal`; the importable
+  `get_db(request)` (reads `request.app.state.session_factory`; commit-on-clean /
+  rollback-on-exception unit of work) + `SessionDep` (#N2/#N4); `PRAGMA
+  foreign_keys=ON` + `busy_timeout` connect listener (#14/#8) + `BEGIN IMMEDIATE`
+  transaction hook for **every request-scoped transaction** (#R3/#P3).
+- `backend/app/main.py` — `create_app(settings, engine)` factory (#H2/#P2/#N2):
+  stores `make_session_factory(engine)` as `app.state.session_factory` and
+  `settings` as `app.state.settings` / `get_settings` (only DB wiring, no
+  overrides); 5 routers, `/api/health`, lifespan `create_all` on the injected
+  engine. No StaticFiles mount in v1.
+- `backend/app/routers/recipes.py` — nested CRUD (ingredients array = structured
+  objects and/or pasted strings → `parse_ingredient` + `raw_text`, #S1) +
+  `/availability` (canonical lines, positive-stock filter, #P4/#P5) + `/cook`
+  (with `deduct`; canonical full-key-set deductions, #P7) + `/cook-logs`.
 - `backend/app/routers/cook_logs.py` — `GET /api/cook-logs` (paginated) +
   `GET /api/cook-logs/{log_id}` (#H5) — new router.
-- `backend/app/routers/inventory.py` — `POST` additive upsert + `PATCH /{id}`
-  absolute replacement (within-bucket → 422, collision → 409) + PATCH
-  `match_name` (#P1) — new router.
-- `backend/app/routers/grocery.py` — lists + `PATCH` items (state/edit only) +
-  `POST /{id}/submit` (#6, no auto-archive #R5) + `POST /{id}/archive` (#R5) +
-  delete — new router.
+- `backend/app/routers/inventory.py` — `POST` (`InventoryItemCreate`) additive
+  upsert + `PATCH /{id}` (`InventoryItemUpdate`, `model_fields_set`-driven)
+  absolute replacement (within-bucket → 422, `quantity` without `unit` → 422 #S2,
+  explicit-null on `item`/`match_name`/`quantity` → 422, collision → 409, empty
+  body → 200 no-op) + PATCH `match_name` (#P1/#N1/#S2) — new router.
+- `backend/app/routers/grocery.py` — lists (`GET ?status=`) + `POST /{id}/items`
+  manual add + `PATCH` items (state/edit only) + `DELETE /{id}/items/{item_id}`
+  (204 / 409, #S5) + `POST /{id}/submit` (#6, no auto-archive #R5) +
+  `POST /{id}/archive` (re-archive → 409, #R5/#S7) + delete list — new router.
 - `backend/app/routers/auth.py` — register/login/logout/me — new router.
 - `backend/app/services/inventory_math.py` — `check_availability`,
   `generate_lines`, `add_to_inventory_calc`, `deduct_calc` (pure, propose-only,
-  #H3; positive-stock filter #P4, canonical outputs #P5/#P7) — new service.
-- `backend/app/services/ingredient_parse.py` — `parse_ingredient` (pure) — new.
+  #H3; positive-stock filter #P4, #N3 compatible/incompatible/none partition
+  driving `nettable`, canonical outputs #P5/#P7) — new service.
+- `backend/app/services/ingredient_parse.py` — `parse_ingredient` (pure) — new;
+  wired into `routers/recipes.py` for pasted-string ingredient elements (#S1).
 - `backend/app/normalize.py`, `backend/app/units.py`, `backend/app/security.py` —
-  new pure/util modules (`security.py`: optional header + five 401s, consumes
-  `get_db` / `get_settings`, #P2/#P6).
+  new pure/util modules (`security.py`: optional header + five 401s, takes
+  `SessionDep` / `get_settings`, #P2/#N2/#P6).
 - `backend/app/config.py` — new `RECIPE_*` settings: `session_ttl_days`,
   `allow_registration` (default `false`, #15), `registration_code`.
 - `backend/app/schemas.py` → becomes `backend/app/schemas/` package
-  (`common`, `auth`, `recipe`, `inventory`, `grocery`).
+  (`common`, `auth`, `recipe`, `inventory` — split `InventoryItemCreate` /
+  `InventoryItemUpdate`, #N1 — `grocery`).
 - `backend/tests/conftest.py` — factory-built app `create_app(test_settings,
   test_engine)` with **no `dependency_overrides`** (#H2/#P2), FK +
   `BEGIN IMMEDIATE` listeners on the test engine (#14/#P3), registration-on
@@ -1266,4 +1466,20 @@ adversarial-review findings.
       legacy `have`/`short` removed (#P5); optional auth header + five explicit
       401s (#P6); canonical `CookLog` deductions + `deducted_unit` (#P7). Units
       converted to canonical throughout every v1 response.
+- [x] Review pass 6 folded in (2026-08-31): the three `docs/issues.md` blockers
+      resolved — split `InventoryItemCreate` / `InventoryItemUpdate` with
+      `model_fields_set` omission-vs-null semantics (#N1); concrete
+      module-`engine`-only + importable `get_db(request)` reading
+      `app.state.session_factory` + `SessionDep`, `get_db` owns the commit
+      (#N2, subsumes the #N4 transaction-boundary finding); #N3 three-way
+      compatible/incompatible/none partition so a shortfall with incompatible
+      stock present is `have_uncertain` + `nettable=false`, not confidently
+      nettable. Phases 2–6 can now proceed.
+- [x] Spec pass 7 folded in (2026-08-31): `docs/spec.md` written; seven
+      divergences reconciled into this plan — pasted-string ingredient input +
+      active `raw_text` (#S1), inventory `PATCH {quantity}` requires `unit`
+      (#S2), case-insensitive usernames (#S3), first-writer-wins aggregate label
+      (#S4), `DELETE` grocery line endpoint (#S5), `unit_bucket` `str(30)` (#S6),
+      re-archive → 409 (#S7), plus gap-fills. **`docs/spec.md` is authoritative
+      for v1 build detail.**
 - [ ] Phase 0 — reset & deps (not started; awaiting go-ahead)
