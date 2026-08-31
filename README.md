@@ -6,6 +6,8 @@ Barebones full-stack scaffold: FastAPI + SQLAlchemy + SQLite backend, React + Ty
 > v1 for a household recipe keeper + food-inventory tracker (structured recipes,
 > unit-aware inventory netting, cook-deducts-stock, grocery lists, URL import, token
 > auth), built in phases. The scaffold below is the starting point for that work.
+> For deferred features, infrastructure decisions, and design invariants, see
+> `docs/features.md`.
 
 ## Layout
 

@@ -992,6 +992,11 @@ New / changed test files:
 
 ## Deferred (post-v1) — data model already accommodates
 
+See `docs/features.md` for a consolidated roadmap: deferred capabilities,
+infrastructure deferrals (Alembic, multi-user, remote hosting), the `FoodItem`
+upgrade path, design invariants for extensions, and rejected items. The list
+below is the source material; `features.md` provides context and upgrade paths.
+
 - **"What can we make now"** — run `check_availability` across all recipes, filter
   `all_available`; add `GET /api/recipes/makeable`.
 - **Staples / low-stock alerts** — add `is_staple bool` + `min_quantity float` to
