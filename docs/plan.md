@@ -59,8 +59,8 @@ plan below. `#n` tags are referenced from the relevant sections.
 | 6 | Grocery check/uncheck mutates inventory per-line and reverses using post-edit field values → drift. | **Fixed (user-directed).** Check-off no longer touches inventory. New `POST /api/grocery/{id}/submit` adds every checked, quantified, not-yet-applied line in one transaction and **freezes** those lines (forward-only, matching Cook/receipt-apply). No uncheck-reversal. |
 | 8 | No atomicity / concurrency contract for read-modify-write on `quantity`. | **Fixed (light).** SQLite `UPSERT` for `add_to_inventory`; `PRAGMA busy_timeout`; `UPDATE ... WHERE status=<expected>` guards on one-shot transitions. No dedicated concurrency test suite. |
 | 9 | COUNT dimension treats `jar`/`can`/`package`/`clove`/… as 1:1 with `each`. | **Fixed.** COUNT keeps only `unit`/`each`/`""`, `dozen`, `pair`; the rest move to UNKNOWN (opaque, exact-string match). |
-| 10a | `_fetch_and_scrape` never returns `html`, so the `wild_mode=True` retry is dead code. | **Fixed.** Split into `_fetch_html(url)` (sole network seam) + `scrape_preview(html, url)`; route holds `html` for the retry. |
-| 10b | Fetch is unbounded (no size cap, no status check). | **Fixed (partial).** Streamed byte cap + `raise_for_status`. Private-IP/SSRF blocking stays Phase 7 hardening (LAN-only threat model). |
+| 10a | `_fetch_and_scrape` never returns `html`, so the `wild_mode=True` retry is dead code. | **Fixed.** Split the fetch (`fetch_bytes`, renamed & SSRF-guarded in #H1) from `scrape_preview(html, url)`; the route holds `html` for the retry. |
+| 10b | Fetch is unbounded (no size cap, no status check). | **Fixed.** Streamed byte cap + `raise_for_status` + SSRF guard — see hardening pass 3 below. |
 | 11 | Public `/uploads` now also serves receipt images (PII); `StaticFiles` mounts before the dir exists; conftest imports the app before fixtures can redirect the dir. | **Fixed.** Receipts stored under a private dir, served only via an auth'd `FileResponse` route. `os.makedirs` for both dirs at import time before the mount. conftest sets `RECIPE_UPLOAD_DIR` / `RECIPE_RECEIPTS_DIR` before importing `app`. |
 | 12 | OCR has no decoded-pixel / time / concurrency limit; every test monkeypatches `_ocr_image`, so a missing binary ships green. | **Fixed.** Pillow format/frame/`MAX_IMAGE_PIXELS` validation (decompression-bomb → reject); `pytesseract` `timeout`; process semaphore; `/api/health` reports tesseract availability; one non-mocked CI smoke test. |
 | 13 | Recipe/receipt quantities and grocery multipliers accept negative and non-finite floats. | **Fixed.** `gt=0` when non-null + `allow_inf_nan=False` on every quantity/multiplier; inventory stays `ge=0` finite. |
@@ -68,6 +68,28 @@ plan below. `#n` tags are referenced from the relevant sections.
 | 15 | Registration on by default; no `code` field; every account has full mutation access. | **Fixed.** `RECIPE_ALLOW_REGISTRATION` defaults **false**; when true a configured `RECIPE_REGISTRATION_CODE` is required; `code` added to `RegisterRequest`. Single shared household / full-trust members stated explicitly. |
 | 16 | `CookLog.deductions` records the requested amount, not the actual clamped delta; review responses lack their cook event's context. | **Fixed.** Each deduction records `requested` / `deducted` / `before` / `after`; `RecipeReviewRead` nests `CookEventMini`. |
 | 17 | Receipt items use PUT full-replace; the replacement payload has no id / `raw_text` / `price_cents`, so OCR evidence is lost on edit. | **Fixed.** Per-item `PATCH /api/receipts/{id}/items/{item_id}` with stable ids; OCR rows (`raw_text`, `price_cents`) are never destroyed. |
+
+## Revisions — hardening pass 3 (from the parallel review branch)
+
+A concurrent branch revised the *pre-scope-expansion* plan against a separate
+design review. Its feature scope is stale (no receipts / research / reviews), so
+it is **not merged**, but five of its treatments were stronger and are folded in
+here. `#Hn` tags mark them below.
+
+| # | Change | Why |
+|---|---|---|
+| H1 | **SSRF-guarded `fetch_bytes`** is the single network primitive for `/import` **and** `/research/compare` and `save=true` image download: HTTP(S) scheme allowlist, resolve host and reject private / loopback / link-local / ULA / multicast / `169.254.169.254`, `follow_redirects=False` (a 3xx → 502), `raise_for_status`, `Content-Type` allowlist, stream to a byte cap. `RECIPE_IMPORT_ALLOW_PRIVATE=true` re-opens it for a trusted LAN. | `/research` fetches a *batch* of arbitrary user-supplied URLs — the exposure that made "defer to Phase 7" acceptable for single-URL import no longer holds. Bounded, well-specified, cheap. |
+| H2 | **App factory** `create_app(settings, engine) -> FastAPI` + `make_engine(url)` / `make_session_factory(engine)` in `database.py`; module-level `app = create_app(settings, engine)` for uvicorn. `create_app` runs `makedirs` before the StaticFiles mount and the lifespan `create_all` on the injected engine. | Removes the "set `RECIPE_*_DIR` env vars before importing `app`" ordering hack in `conftest.py` (#11) — tests pass a settings object + a test engine, no global mutation, no import-order sensitivity. |
+| H3 | **Concurrency contract, tightened.** Explicit rule: pure `services/` **propose** an adjustment DTO; the **router performs** the atomic write and owns the single transaction; a mid-operation failure rolls the whole thing back. On `IntegrityError` or lock / `busy_timeout` timeout the endpoint returns **409**, not 500. | Keeps `inventory_math` genuinely ORM-free and gives the client a defined error instead of a 500 under contention. |
+| H4 | **Validation completeness.** `GroceryListCreate.recipe_ids` must be non-empty, unique, and all exist (else 422); `multipliers` keys must be a subset of `recipe_ids` (else 422). A dedicated `test_validation.py` covers negative / `0` / `inf` / `nan` on every numeric field across recipes, inventory, cook, grocery, availability. | Closes the gaps `#13` left (it covered field-level `gt=0` / `allow_inf_nan=False` but not collection-level or a focused test). |
+| H5 | **Global cook-log reads.** New `routers/cook_logs.py`: `GET /api/cook-logs` (all recipes, newest-first, paginated) and `GET /api/cook-logs/{log_id}`. | A cook log survives its recipe's deletion (`recipe_id` → null, `recipe_title` snapshot) but `#16` left no endpoint that can return it afterward, and no by-id fetch for a reviewer drilling into `CookEventMini`. |
+
+Judgement calls left **as-is on main** (branch had alternatives; main's choices
+stand): grocery `submit` is forward-only, no per-line `/undo` (the Deferred
+"undo for forward-only actions" covers all three uniformly); `match_name` is
+editable on inventory rows only, not on recipe ingredients (`FoodItem` is the
+real fix); `AvailabilityLine` stays one-per-ingredient (frontend renders a
+status dot per row).
 
 ## Done criteria
 
@@ -110,7 +132,9 @@ import mechanism, dependencies, and the phased build sequence — all below.
    inventory (converting units, clamping at 0, skipping unmatched); `deduct=false`
    skips inventory entirely. Either way it writes an auditable `CookLog` row,
    so **every** made-event is recorded. `GET /api/recipes/{id}/cook-logs`
-   lists them newest-first — the made-history.
+   lists them newest-first — the made-history — and `GET /api/cook-logs` /
+   `GET /api/cook-logs/{log_id}` read across all recipes and still resolve a log
+   after its recipe is deleted (#H5).
 8. **Reviews.** `POST /api/recipes/{id}/cook-logs/{log_id}/reviews
    {rating?, comment?, changes_next_time?}` attaches a review to a specific
    made-event. `GET /api/recipes/{id}` nests all reviews (newest first) so
@@ -127,21 +151,28 @@ import mechanism, dependencies, and the phased build sequence — all below.
    only newly-checked lines.
 10. **Unit conversion** is a standalone pure module with a documented supported-
     unit set and defined behavior for unknown / incompatible pairs.
-11. **URL import.** `POST /api/recipes/import {url, save?}` fetches via our own
-    `httpx` call, parses with `recipe-scrapers`, and returns a structured recipe
-    preview (ingredient strings parsed into rows where possible); unsupported
-    sites return 422 with `unsupported: true`; fetch failures return 502. No test
-    hits the network.
+11. **URL import.** `POST /api/recipes/import {url, save?}` fetches through the
+    single SSRF-guarded `fetch_bytes` helper (HTTP(S) only, private/loopback/
+    link-local/metadata targets rejected, redirects not followed, `Content-Type`
+    checked, response streamed to a byte cap; #H1), parses with `recipe-scrapers`
+    (normal then wild mode), and returns a structured recipe preview (ingredient
+    strings parsed into rows where possible); unsupported sites return 422 with
+    `unsupported: true`; fetch failures (transport, blocked address, redirect,
+    non-2xx, oversize) return 502. `save=true` downloads the remote image through
+    the same helper. No test hits the network.
 12. **Recipe research.** `POST /api/research/compare {urls, limit?}` scrapes each
-    URL with the same import machinery and reports what fraction of the analyzed
+    URL through the same `fetch_bytes` + `scrape_preview` machinery (so the batch
+    inherits the SSRF guard; #H1) and reports what fraction of the analyzed
     recipes contain each normalized ingredient — nothing is saved unless
     separately imported. Fetch/parse failures are collected, not fatal. No
     `query` / web-search mode in v1 (#1).
 13. **Tests green.** `uv run pytest` passes: units, ingredient parser, inventory
-    math, auth gating, recipe CRUD with nested rows, availability, cook (both
-    `deduct` modes), reviews, inventory CRUD, receipt parsing + apply, grocery
-    generation + submit, import (fetch monkeypatched), research (fetch
-    monkeypatched), and one non-mocked OCR smoke test (#12).
+    math, auth gating, input validation (#H4), recipe CRUD with nested rows,
+    availability, cook (both `deduct` modes) + cook-log reads (#H5), reviews,
+    inventory CRUD, receipt parsing + apply, grocery generation + submit, import
+    (`httpx.MockTransport`: success, blocked address, redirect, oversize, non-2xx,
+    `save=true` offline; #H1), research (fetch mocked), and one non-mocked OCR
+    smoke test (#12).
 14. **Docs.** `README.md`, `CLAUDE.md`, `backend/.env.example` updated for the
     new architecture, env vars, and the `rm backend/recipe.db` reset procedure.
 
@@ -204,9 +235,12 @@ dependency.
 ```
 config.py     + upload_dir, receipts_dir (private, #11), max_upload_bytes,
                 allow_registration (default false, #15), registration_code?, session_ttl_days,
-                import_max_bytes (#10b), ocr_timeout_seconds, ocr_max_concurrency, max_image_pixels (#12),
-                research_max_urls
-database.py   + connect-event listener: PRAGMA foreign_keys=ON, PRAGMA busy_timeout=5000 (#14/#8)
+                import_max_bytes, import_fetch_timeout (10s), max_image_bytes (~5 MiB),
+                import_allow_private (default false, #H1), ocr_timeout_seconds, ocr_max_concurrency,
+                max_image_pixels (#12), research_max_urls
+database.py   make_engine(url) + make_session_factory(engine) helpers (#H2); default module-level
+                engine/SessionLocal kept for the default app; on-connect listener:
+                PRAGMA foreign_keys=ON, PRAGMA busy_timeout=5000 (#14/#8)
 normalize.py  normalize_name()  (incl. descriptor stripping, #7)  [pure]
 units.py      unit table + conversions                           [pure, no deps]
 security.py   hash/verify_password (pwdlib), issue_token, get_current_user dep, CurrentUser alias
@@ -214,8 +248,9 @@ models.py     all tables
 schemas/      package: common.py, auth.py, recipe.py, inventory.py, grocery.py, receipt.py, research.py  (__init__ re-exports)
 services/
   ingredient_parse.py   parse_ingredient(text) -> row dict       [pure]
-  import_recipe.py      _fetch_html(url) -> str  [only network fn, #10a], scrape_preview(html, url) -> RecipeImportPreview
-  inventory_math.py     check_availability, generate_lines, add_to_inventory_calc, deduct_calc  [pure, dataclasses in/out]
+  import_recipe.py      fetch_bytes(url,*,limit,allowed_types)  [only network fn; SSRF-guarded, #H1/#10b],
+                        scrape_preview(html, url, wild=False) -> RecipeImportPreview  [#10a]
+  inventory_math.py     check_availability, generate_lines, add_to_inventory_calc, deduct_calc  [pure, dataclasses in/out — PROPOSE an adjustment, never mutate, #H3]
   receipt_ocr.py        _ocr_image(path)  [only OCR call — Pillow validate + pytesseract(timeout=…) under a Semaphore, #12]
   receipt_parse.py      parse_receipt_text(text) -> list[line guess]  [pure]
   recipe_research.py    compare_ingredients(previews) -> ResearchReport  [pure, dataclasses in/out]
@@ -223,22 +258,27 @@ routers/
   auth.py       /api/auth      register, login, logout, me
   recipes.py    /api/recipes   CRUD + /import + /{id}/photo + /{id}/availability + /{id}/cook +
                                 /{id}/cook-logs + /{id}/cook-logs/{log_id}/reviews + /{id}/reviews
+  cook_logs.py  /api/cook-logs  list (paginated, all recipes) + get by id (#H5)
   inventory.py  /api/inventory  CRUD (incl. PATCH match_name)
   grocery.py    /api/grocery    lists + items (PATCH state only) + /{id}/submit (#6) + delete
   receipts.py   /api/receipts   upload (OCR + parse) + get/list + GET /{id}/image (auth'd, #11) +
                                 PATCH /{id}/items/{item_id} (#17) + /apply + delete
   research.py   /api/research   /compare (URL batch only, #1)
-main.py       include 6 routers; os.makedirs(upload_dir) AND os.makedirs(receipts_dir) at import,
-              BEFORE mounting /uploads StaticFiles (#11); keep /api/health (reports tesseract availability, #12)
+main.py       create_app(settings, engine) -> FastAPI (#H2): os.makedirs(upload_dir) AND
+              os.makedirs(receipts_dir) THEN mount /uploads StaticFiles (#11); include 7 routers;
+              /api/health (reports tesseract availability, #12); lifespan create_all on the injected
+              engine. Module-level `app = create_app(settings, engine)` for uvicorn.
 ```
 
 **Rule (documented in CLAUDE.md):** `services/` functions take/return plain
 dataclasses or dicts, **never ORM objects**; routers marshal ORM ↔ dataclass.
 That is the unit-test seam. `services/inventory_math.py` imports only `units`,
-`normalize`, stdlib. `receipt_parse.py` and `recipe_research.py` follow the
-same rule; `import_recipe._fetch_html` and `receipt_ocr._ocr_image` are each a
-single network/subprocess-touching function — the one seam each gets
-monkeypatched in tests.
+`normalize`, stdlib. **A service proposes an adjustment DTO; the router performs
+the atomic write and owns the single transaction (#H3).** `receipt_parse.py` and
+`recipe_research.py` follow the pure rule; `import_recipe.fetch_bytes` and
+`receipt_ocr._ocr_image` are each a single network/subprocess-touching function
+— the one seam each gets monkeypatched in tests (import tests drive `fetch_bytes`
+through `httpx.MockTransport`, offline).
 
 **Auth gating:** every router is
 `APIRouter(..., dependencies=[Depends(get_current_user)])` except `auth`
@@ -417,10 +457,18 @@ records `requested` vs the **actual** `deducted` amount and `before`/`after`
 per row (#16), so a future "undo" = `add_to_inventory` of each entry's
 `deducted` amount.
 
-### made-history — `GET /api/recipes/{id}/cook-logs`
-Plain `list[CookLogRead]` for the recipe, `order_by(cooked_at.desc())` — every
-made-event regardless of `deducted`. This is both "recipes I've actually
-made" and how a caller finds the `cook_log_id` a review attaches to.
+### made-history — `GET /api/recipes/{id}/cook-logs` + global `GET /api/cook-logs[/{log_id}]` (#H5)
+Per-recipe: plain `list[CookLogRead]`, `order_by(cooked_at.desc())` — every
+made-event regardless of `deducted`. This is both "recipes I've actually made"
+and how a caller finds the `cook_log_id` a review attaches to.
+
+`routers/cook_logs.py` adds the cross-recipe reads:
+- `GET /api/cook-logs?limit=&offset=` → `CookLogList` (paginated, all recipes,
+  newest first) — the "what have we cooked lately" feed.
+- `GET /api/cook-logs/{log_id}` → `CookLogRead` (404 if missing) — a log is
+  reachable by id alone, so a reviewer can drill from `CookEventMini` into the
+  full deduction detail, and a log **still resolves after its recipe is deleted**
+  (`recipe_id` null, `recipe_title` snapshot stands).
 
 ### add a review — `POST /api/recipes/{id}/cook-logs/{log_id}/reviews`
 ```
@@ -457,9 +505,14 @@ it changes only `item`/`quantity`/`unit`/`include` and recomputes
 `normalized_name`, **never** touching the OCR `raw_text` / `price_cents`, so the
 receipt stays a faithful record of what was scanned.
 
-### concurrency & atomicity (#8)
+### concurrency & atomicity (#8, #H3)
 
 Two household members can act at once. Contract:
+- **Pure service proposes, router performs (#H3).** `services/inventory_math.py`
+  takes DTOs and returns a proposed adjustment; it never holds an ORM object or a
+  session. The router applies that adjustment and **owns the single
+  transaction** — a failure mid-operation rolls the whole thing back (no
+  half-applied cook, no partly-submitted grocery list).
 - Every mutating endpoint (`cook`, receipt `apply`, grocery `submit`, inventory
   CRUD) commits in **one transaction**.
 - `add_to_inventory` is the SQLite `INSERT … ON CONFLICT (match_name,
@@ -469,9 +522,11 @@ Two household members can act at once. Contract:
   `UPDATE receipts SET status='applied' WHERE id=? AND status='draft'` (and the
   same for grocery `submit`); zero rows affected → 409.
 - `database.py` sets `PRAGMA busy_timeout=5000` per connection (#14), so a brief
-  writer overlap waits rather than erroring.
+  writer overlap waits rather than erroring. **On `IntegrityError` or a lock /
+  `busy_timeout` timeout the endpoint returns 409, not 500 (#H3).**
 - Not in scope: a multi-process/file-DB concurrency test suite — disproportionate
-  at 2 users. The `test_*` suites stay on the in-memory engine.
+  at 2 users. One sequential double-submit / double-apply test asserts the
+  guard's idempotency; safety otherwise rests on the atomic statements above.
 
 ### compare ingredients — `services/recipe_research.py` (pure)
 ```
@@ -496,8 +551,9 @@ therefore never reads a field the preview lacks.
 
 Router (`routers/research.py`, `POST /api/research/compare
 {urls: list[str], limit: int=8}`, `limit` capped at `settings.research_max_urls`;
-422 if `urls` is empty): dedup URLs; for each, reuse `import_recipe._fetch_html`
-+ `scrape_preview` (Phase 7) — failures go into `failed`, not a hard error;
+422 if `urls` is empty): dedup URLs; for each, reuse `import_recipe.fetch_bytes`
++ `scrape_preview` (Phase 7) — so **every URL in the batch goes through the same
+SSRF guard** as `/import` (#H1) — failures go into `failed`, not a hard error;
 **nothing is persisted** (no `Recipe` rows created) — a URL the user likes is
 saved separately via `POST /api/recipes/import {url, save:true}`. No `query` /
 web-search resolution in v1 (#1); see Deferred.
@@ -531,17 +587,22 @@ web-search resolution in v1 (#1); see Deferred.
 
 ## URL import approach
 
-`services/import_recipe.py`:
+`services/import_recipe.py` — fetch and parse are split, and the one network
+primitive is **SSRF-guarded** (#H1). It is the only seam tests mock, via
+`httpx.MockTransport` (so `save=true`'s image path runs offline too).
 ```
-def _fetch_html(url) -> str:                        # the ONLY network call; monkeypatched in tests (#10a)
-    with httpx.stream("GET", url, timeout=10, follow_redirects=True, headers={"User-Agent": ...}) as r:
-        r.raise_for_status()                        # non-2xx -> caller returns 502 (#10b)
-        buf = b""
-        for chunk in r.iter_bytes():
-            buf += chunk
-            if len(buf) > settings.import_max_bytes: raise FetchTooLarge   # streamed byte cap (#10b)
-    return buf.decode(r.encoding or "utf-8", "replace")
-    # NOTE: private-IP / SSRF rejection is deferred to Phase 7 hardening (LAN-only threat model, #10b)
+def fetch_bytes(url, *, limit, allowed_types) -> bytes:      # the ONLY network call
+    require url.scheme in ("http", "https")                  # else -> caller 502
+    ip = resolve(url.host)
+    unless settings.import_allow_private:                    # default false
+        reject ip in {private, loopback, link-local, ULA, multicast, 169.254.169.254}
+    r = httpx.get(url, timeout=settings.import_fetch_timeout,
+                  follow_redirects=False,                    # a 3xx -> 502 "redirect not followed; paste the final URL"
+                  headers={"User-Agent": ...})
+    r.raise_for_status()                                     # non-2xx -> 502
+    require r.headers["content-type"] matches allowed_types  # else -> 502
+    read the stream, aborting past `limit` bytes             # oversize -> 502
+    return body
 
 def scrape_preview(html, url, wild_mode=False) -> RecipeImportPreview:   # pure; wraps recipe_scrapers + mapping
     scraper = scrape_html(html, org_url=url, wild_mode=wild_mode)
@@ -560,16 +621,20 @@ def map_to_preview(scraper, url) -> RecipeImportPreview:
                    cuisine=safe(scraper.cuisine), tags=[], unsupported=False, warnings=[...])
 ```
 Route `POST /api/recipes/import {url, save: bool = false}`:
-- `html = _fetch_html(url)`; `httpx` transport error / non-2xx / `FetchTooLarge`
-  → **502** `{detail:"Could not fetch URL"}`.
+- `html = fetch_bytes(url, limit=settings.import_max_bytes,
+  allowed_types={text/html, application/xhtml+xml}).decode(...)`. Any
+  `fetch_bytes` failure (bad scheme, blocked address, redirect, non-2xx, timeout,
+  transport error, wrong content-type, oversize) → **502**
+  `{detail:"Could not fetch URL"}`.
 - `try scrape_preview(html, url)`; on any `recipe_scrapers` failure retry
-  `scrape_preview(html, url, wild_mode=True)` (the retry now has `html` in scope,
+  `scrape_preview(html, url, wild_mode=True)` (the retry has `html` in scope,
   #10a); still failing → **422** `{detail:"Could not parse this site",
   unsupported:true}`.
 - `save=false` (default) → **200** `RecipeImportPreview` (frontend loads it into
-  the form later). `save=true` → create the Recipe, download `remote_image_url`
-  into `uploads/` via the photo code (failure leaves `photo_path` null) → **201**
-  `RecipeRead`.
+  the form later). `save=true` → create the Recipe, then
+  `fetch_bytes(remote_image_url, limit=settings.max_image_bytes,
+  allowed_types=image/*)` → store via the photo code (any failure leaves
+  `photo_path` null, no 5xx) → **201** `RecipeRead`.
 
 **Lightweight ingredient parser** — `services/ingredient_parse.py` (pure):
 ```
@@ -619,12 +684,13 @@ in README, CI workflow, and the Makefile setup target.
 — `query` mode is out of v1 (#1) · an LLM/AI service for either research or
 receipt parsing (both stay pure heuristics per the no-LLM constraint).
 
-**Backend dev:** none — `test_import.py` and `test_research.py` monkeypatch
-`_fetch_html` (returning canned HTML with embedded recipe JSON-LD, which
-`recipe_scrapers` `wild_mode` parses for real — no stub-scraper mock);
-`test_receipts.py` monkeypatches `_ocr_image`, **except** one non-mocked OCR
-smoke test that runs the real `tesseract` on a Pillow-generated image, skipped
-when the binary is absent (#12).
+**Backend dev:** none — `test_import.py` and `test_research.py` drive
+`import_recipe` through `httpx.MockTransport` (#H1), returning canned HTML with
+embedded recipe JSON-LD that `recipe_scrapers` `wild_mode` parses for real (no
+stub-scraper mock), and also exercising blocked-address / redirect / oversize /
+non-2xx paths; `test_receipts.py` monkeypatches `_ocr_image`, **except** one
+non-mocked OCR smoke test that runs the real `tesseract` on a Pillow-generated
+image, skipped when the binary is absent (#12).
 
 **Frontend:** `react-router-dom` (confirmed) — added during the later frontend
 effort, not v1.
@@ -632,17 +698,19 @@ effort, not v1.
 ## Schema management
 
 Stay on `create_all`:
-- lifespan keeps `Base.metadata.create_all(bind=engine)`.
-- `os.makedirs(settings.upload_dir, exist_ok=True)` **and**
-  `os.makedirs(settings.receipts_dir, exist_ok=True)` run **at import time in
-  `main.py` before the `/uploads` StaticFiles mount** (#11) — `StaticFiles`
-  validates `directory=` at construction, which is import-time, before the
-  lifespan runs.
-- `database.py` registers a `connect` event listener issuing
-  `PRAGMA foreign_keys=ON` and `PRAGMA busy_timeout=5000` on every SQLite
-  connection (#14/#8) — without it SQLite ignores the declared `CASCADE` /
-  `SET NULL`. The test engine gets the same listener. Relationships that rely on
-  DB-level cascade set `passive_deletes=True`.
+- **App factory (#H2).** `create_app(settings, engine)` is the single build path.
+  It `os.makedirs(settings.upload_dir)` and `os.makedirs(settings.receipts_dir)`
+  **before** mounting `/uploads` StaticFiles (which validates `directory=` at
+  construction), and its lifespan runs `Base.metadata.create_all(bind=engine)` on
+  the **injected** engine. The module-level `app = create_app(settings, engine)`
+  is what uvicorn imports; `conftest.py` calls `create_app(test_settings,
+  test_engine)` — no "set env vars before importing `app`" ordering hack.
+- `database.py` exposes `make_engine(url)` / `make_session_factory(engine)` and
+  registers a `connect` event listener issuing `PRAGMA foreign_keys=ON` and
+  `PRAGMA busy_timeout=5000` on every SQLite connection (#14/#8) — without it
+  SQLite ignores the declared `CASCADE` / `SET NULL`. The test engine gets the
+  same listener. Relationships that rely on DB-level cascade set
+  `passive_deletes=True`.
 - `create_all` won't ALTER the stale `recipes` table → **delete
   `backend/recipe.db`** in Phase 0 and again after the schema-expanding phases.
 - `.gitignore` += `uploads/`, `receipts/` (already ignores `*.db`).
@@ -690,7 +758,10 @@ All `float` fields below are `allow_inf_nan=False` (#13).
     `CookLogRead {id, recipe_id, recipe_title, multiplier, deducted, cooked_at,
     cooked_by: UserMini|None, deductions: list[dict]}` — each deduction dict is
     `{item, normalized_name, requested, requested_unit, deducted, inventory_unit,
-    before, after, applied, reason}` (#16).
+    before, after, applied, reason}` (#16). `POST /cook`,
+    `GET /api/recipes/{id}/cook-logs`, and `GET /api/cook-logs/{log_id}` all
+    return `CookLogRead`; `GET /api/cook-logs` returns
+    `CookLogList {items: list[CookLogRead], total, limit, offset}` (#H5).
   - `RecipeReviewIn {rating: int|None (ge=1,le=5), comment: str="",
     changes_next_time: str=""}`; `RecipeReviewRead` adds
     `{id, cook_log_id, created_at, created_by: UserMini|None,
@@ -700,8 +771,10 @@ All `float` fields below are `allow_inf_nan=False` (#13).
 - `inventory.py` — `InventoryItemIn {item, quantity: float ge=0 (finite),
   unit: str|None, match_name: str|None}` (`match_name` also settable on PATCH, #2);
   `InventoryItemRead` adds `{id, normalized_name, match_name, unit_bucket, updated_at}`.
-- `grocery.py` — `GroceryListCreate {name: str|None, recipe_ids: list[int] (non-empty),
-  multipliers: dict[int, float] = {}}` (each multiplier `gt=0`, finite, #13);
+- `grocery.py` — `GroceryListCreate {name: str|None, recipe_ids: list[int]
+  (non-empty, unique, all must exist — else 422), multipliers: dict[int, float] = {}}`
+  (each multiplier `gt=0`, finite, #13; **keys must be a subset of `recipe_ids`,
+  else 422 — #H4**);
   `GroceryListItemIn {item, quantity: float|None gt=0 (finite), unit: str|None}`;
   `GroceryListItemUpdate {checked: bool|None, quantity, unit, item}` — 409 if the
   target line is `added_to_inventory` (frozen after submit, #6);
@@ -739,18 +812,15 @@ Ingredient `id`s churn per save — harmless (availability is computed fresh;
 
 ## Test strategy
 
-**`conftest.py` is the load-bearing change.** Keep the in-memory `StaticPool`
-engine + `create_all`/`drop_all` + `dependency_overrides[get_db]`, and add the
-`PRAGMA foreign_keys=ON` / `busy_timeout` connect listener to the test engine
-(#14). Add:
-- a fixture that sets `RECIPE_UPLOAD_DIR` **and** `RECIPE_RECEIPTS_DIR` to
-  `tmp_path_factory` dirs and reloads `settings` **before `app` is imported**
-  (#11) — `main.py` now `os.makedirs` + mounts StaticFiles at import, so the env
-  must be in place first. Simplest: a tiny `conftest` at `tests/` top that sets
-  the env vars at collection time, or an app-factory call (see #11). Note this
-  ordering explicitly.
-- `RECIPE_ALLOW_REGISTRATION=true` (+ no code) in the test env so the `user`
-  fixture can register (#15).
+**`conftest.py` is the load-bearing change.** It builds the app through the
+factory (#H2): `app = create_app(test_settings, test_engine)` where
+`test_settings` points `upload_dir` / `receipts_dir` at `tmp_path_factory` dirs
+and has `allow_registration=true` (no code), and `test_engine` is the in-memory
+`StaticPool` engine with the `PRAGMA foreign_keys=ON` / `busy_timeout` connect
+listener (#14) + `create_all`/`drop_all`. `get_db` is still overridden via
+`dependency_overrides` for request-scoped sessions. **No "before import"
+ordering hack** — the factory takes the dirs and engine as arguments and
+`makedirs` them before the StaticFiles mount.
 - `user` — registers a default user via `POST /api/auth/register`.
 - `auth_client` — `TestClient` with `Authorization: Bearer <token>` preset;
   **becomes the default**. Existing `test_recipes.py` switches `client` →
@@ -774,6 +844,13 @@ New / changed test files:
   `RECIPE_ALLOW_REGISTRATION=false` / 403 wrong `code` when a code is configured /
   422 short pw (#15); login 200+token / 401 bad pw / 401 unknown user; `/me` 200
   with token & 401 without; logout invalidates; a gated endpoint 401 without token.
+- `test_validation.py` — negative / `0` / `inf` / `nan` quantity and multiplier
+  rejected (422) on recipe ingredient, inventory add/edit, cook, grocery create,
+  availability query param (#H4, #13); `recipe_ids` empty or with a duplicate →
+  422; a `multipliers` key not in `recipe_ids` → 422.
+- `test_cook_logs.py` — `auth_client`. `GET /api/cook-logs` paginates
+  newest-first across recipes; `GET /api/cook-logs/{id}` returns one; a log is
+  still returned by both endpoints after its recipe is deleted (#H5).
 - `test_recipes.py` — expanded, `auth_client`. nested create/read (positions,
   computed `normalized_name`); PUT clears old ingredients; steps/tags round-trip;
   `/availability?multiplier=2`; `/cook` writes `CookLog` + mutates inventory
@@ -793,11 +870,14 @@ New / changed test files:
   up + line frozen (`added_to_inventory`, `applied_quantity` set), PATCH a frozen
   line → 409, uncheck before submit → no-op, re-submit picks up only newly-checked
   lines, delete list cascades items, non-nettable line present.
-- `test_import.py` — **no live HTTP.** Monkeypatch
-  `app.services.import_recipe._fetch_html` to return canned HTML (recipe JSON-LD);
-  assert preview mapping + parser wiring + `ImportIngredient.normalized_name`
-  (#3); `recipe_scrapers` failure then `wild_mode` retry path (#10a);
-  unparseable → 422 `unsupported:true`; fetch error / oversize → 502 (#10b).
+- `test_import.py` — **no live HTTP**, `httpx.MockTransport` (#H1). Happy path
+  (preview mapping + parser wiring + `ImportIngredient.normalized_name`, #3);
+  `recipe_scrapers` failure then `wild_mode` retry (#10a); unparseable → 422
+  `unsupported:true`; non-2xx → 502; redirect (3xx) → 502; body over
+  `import_max_bytes` → 502; wrong `Content-Type` → 502;
+  `http://169.254.169.254/…` and `http://localhost/…` blocked by the guard → 502
+  (no request made); `save=true` stores the mocked image, and with a failing
+  image response still returns 201 with `photo_path` null.
 - `test_receipt_parse.py` — pure. Canned noisy-OCR-style text blocks (all
   caps, broken decimals, store header/footer noise, `SUBTOTAL`/`TAX`/`TOTAL`
   lines) → expected `{item, quantity, unit, price_cents}` guesses; noise
@@ -812,11 +892,11 @@ New / changed test files:
   (#11); wrong content-type / oversize / decompression-bomb image rejected (#12).
   Plus one **non-mocked** test: Pillow renders text to PNG, real `_ocr_image`
   reads it back (`skipif` tesseract missing, #12).
-- `test_research.py` — **no live HTTP.** Monkeypatch
-  `app.services.import_recipe._fetch_html` with canned HTML for several recipes
-  to reproduce a "100% vs 10% ingredient" comparison; one failing URL lands in
-  `failed` without aborting the rest; empty `urls` → 422; a repeated ingredient
-  within one recipe counts once. No `query` mode (#1).
+- `test_research.py` — **no live HTTP**, `httpx.MockTransport` (#H1). Canned HTML
+  for several recipes reproduces a "100% vs 10% ingredient" comparison; one
+  failing URL lands in `failed` without aborting the rest; a blocked-address URL
+  in the batch lands in `failed` too (guard, no request); empty `urls` → 422; a
+  repeated ingredient within one recipe counts once. No `query` mode (#1).
 
 `pyproject.toml` `testpaths`/`addopts` unchanged. No mypy/lint added (ethos).
 
@@ -830,21 +910,25 @@ New / changed test files:
 - **Phase 1 — pure core.** `normalize.py`, `units.py`,
   `services/ingredient_parse.py` + `test_units.py`, `test_ingredient_parse.py`.
   Nothing else touched.
-- **Phase 2 — auth.** Add the `PRAGMA foreign_keys=ON` / `busy_timeout` connect
-  listener to `database.py` and the test engine (#14/#8). `User`/`Session`
-  models, `security.py`, `schemas/auth.py`, `routers/auth.py` (registration
-  default off + `code` check, #15), wire into `main.py`, `config` additions
-  (`allow_registration` default false). conftest: env fixture (registration on
-  for tests), `user` + `auth_client`; migrate `test_recipes.py` to `auth_client`;
-  add `dependencies=[Depends(get_current_user)]` to the recipes router.
-  `test_auth.py`. End: existing recipe CRUD works, now gated; login works.
+- **Phase 2 — auth + app factory.** Introduce `create_app(settings, engine)` in
+  `main.py` and `make_engine` / `make_session_factory` in `database.py`; the
+  module-level `app` calls the factory. Add the `PRAGMA foreign_keys=ON` /
+  `busy_timeout` connect listener (prod + test engines, #14/#8). `User`/`Session`
+  models, `security.py`, `schemas/auth.py` (incl. `code`), `routers/auth.py`
+  (registration default off + `code` check, #15), `config` additions
+  (`allow_registration` default false). conftest: build via the factory with a
+  temp dir + test engine (no import-order hack, #H2); `user` + `auth_client`;
+  migrate `test_recipes.py` to `auth_client`; add
+  `dependencies=[Depends(get_current_user)]` to the recipes router.
+  `test_auth.py`. End: existing recipe CRUD works, now gated; login works; tests
+  touch no `recipe.db` / `uploads/`.
 - **Phase 3 — structured recipes + photo.** Expand `Recipe`, add
-  `RecipeIngredient`, drop the old text cols; `schemas/recipe.py` nested; rewrite
-  `routers/recipes.py` for nested create/replace; `config` `upload_dir` +
-  `receipts_dir`; `main.py` `os.makedirs` both dirs **at import before** the
-  StaticFiles mount (#11); conftest sets both dir env vars before importing `app`
-  (#11); `POST /{id}/photo`. Expand `test_recipes.py`. Delete `recipe.db`. End:
-  full structured recipe CRUD + photos.
+  `RecipeIngredient`, drop the old text cols; `schemas/recipe.py` nested +
+  validation; rewrite `routers/recipes.py` for nested create/replace; `config`
+  `upload_dir` + `receipts_dir`; `create_app` `makedirs` both dirs before
+  mounting `/uploads` (#H2/#11); `POST /{id}/photo`. Expand `test_recipes.py`;
+  add `test_validation.py` (#H4). Delete `recipe.db`. End: full structured
+  recipe CRUD + photos.
 - **Phase 4 — inventory + math services + grocery receipt OCR.**
   `InventoryItem` model with `(match_name, unit_bucket)` composite unique +
   editable `match_name` + `CHECK(quantity >= 0)` (#2); `services/inventory_math.py`
@@ -863,30 +947,38 @@ New / changed test files:
   `test_receipts.py` (incl. the non-mocked OCR smoke test). End: inventory CRUD +
   missing-ingredient check + receipt-driven stock updates.
 - **Phase 5 — cook = deduct, made-tracking, and reviews.** `CookLog` model
-  (with `deducted: bool = True` from the start); `POST /api/recipes/{id}/cook
-  {multiplier, deduct=true}` using `deduct_calc` when `deduct=true`, skipping
-  it (but still logging) when `deduct=false`; `GET
-  /api/recipes/{id}/cook-logs` (made-history, newest first). **Plus:**
-  `RecipeReview` model; `POST
-  /api/recipes/{id}/cook-logs/{log_id}/reviews`; `GET
-  /api/recipes/{id}/reviews`; `RecipeRead` nests `reviews`. Cook, made-history,
-  and review tests all in `test_recipes.py`.
+  (with `deducted: bool = True` from the start; deductions carry
+  `requested`/`deducted`/`before`/`after`, #16); `POST /api/recipes/{id}/cook
+  {multiplier, deduct=true}` using `deduct_calc` when `deduct=true` (service
+  proposes, router applies atomically in one transaction, #H3), skipping it (but
+  still logging) when `deduct=false`; `GET /api/recipes/{id}/cook-logs`
+  (made-history, newest first). **Plus:** `routers/cook_logs.py` —
+  `GET /api/cook-logs` (paginated) + `GET /api/cook-logs/{log_id}` (#H5);
+  `RecipeReview` model; `POST /api/recipes/{id}/cook-logs/{log_id}/reviews`;
+  `GET /api/recipes/{id}/reviews`; `RecipeRead` nests `reviews`. Cook,
+  made-history, and review tests in `test_recipes.py`; global reads in
+  `test_cook_logs.py` (#H5).
 - **Phase 6 — grocery lists.** `GroceryList`/`GroceryListItem` models (with
   `submitted_at` + `applied_*` cols, #6); `generate_lines` in `inventory_math.py`
   (netting against summed compatible rows); `routers/grocery.py` (create-from-
   recipes, get, list, add manual item, **PATCH = state/field edits only, 409 on
   frozen lines**, `POST /{id}/submit` → one-txn `add_to_inventory` + freeze,
   delete). `test_grocery.py`. End: backend feature-complete.
-- **Phase 7 — URL import + recipe research.** `services/import_recipe.py`
-  (`_fetch_html` streamed byte cap + `raise_for_status` #10b; `scrape_preview`
-  with `wild_mode` retry holding `html` #10a; `ImportIngredient` mapping #3);
-  `POST /api/recipes/import` in `recipes.py`; remote image download reuse.
-  **Plus:** `services/recipe_research.py`; `routers/research.py`
-  (`POST /api/research/compare {urls, limit?}`, empty `urls` → 422, #1); `config`
-  gains `research_max_urls`, `import_max_bytes`. `test_import.py` +
-  `test_research.py` (both monkeypatch `_fetch_html` only).
+- **Phase 7 — URL import + recipe research.** `services/import_recipe.py`:
+  `fetch_bytes` (scheme allowlist, resolved-address block-list, no redirects,
+  `raise_for_status`, `Content-Type` check, byte cap; #H1/#10b) split from
+  `scrape_preview` (normal + `wild_mode` retry holding `html`, #10a);
+  `ImportIngredient` mapping (#3). `POST /api/recipes/import` in `recipes.py`;
+  `save=true` image download reuses `fetch_bytes`. **Plus:**
+  `services/recipe_research.py`; `routers/research.py`
+  (`POST /api/research/compare {urls, limit?}`, empty `urls` → 422, batch goes
+  through `fetch_bytes`, #1/#H1); `config` gains `research_max_urls`,
+  `import_max_bytes`, `import_fetch_timeout`, `max_image_bytes`,
+  `import_allow_private`. `test_import.py` + `test_research.py` via
+  `httpx.MockTransport` (incl. blocked-address / redirect / oversize).
 - **Phase 8 — docs.** Update `README.md`, `CLAUDE.md`, `backend/.env.example`
-  (new `RECIPE_*` vars: `RECEIPTS_DIR`, `IMPORT_MAX_BYTES`, `OCR_TIMEOUT_SECONDS`,
+  (new `RECIPE_*` vars: `RECEIPTS_DIR`, `IMPORT_MAX_BYTES`, `IMPORT_FETCH_TIMEOUT`,
+  `MAX_IMAGE_BYTES`, `IMPORT_ALLOW_PRIVATE`, `OCR_TIMEOUT_SECONDS`,
   `OCR_MAX_CONCURRENCY`, `MAX_IMAGE_PIXELS`, `RESEARCH_MAX_URLS`,
   `REGISTRATION_CODE`; **no** Google search vars, #1; `tesseract-ocr` system
   requirement; `rm backend/recipe.db` note; new architecture & full API surface
@@ -947,7 +1039,8 @@ New / changed test files:
      + `applied_quantity` set; `PATCH` that line again → 409.
   7. `POST /api/recipes/import {url:"<a supported recipe site>"}` → structured
      preview (ingredient rows carry `normalized_name`); a junk URL → 422
-     `unsupported:true`.
+     `unsupported:true`; `http://localhost:8000/` or `http://169.254.169.254/`
+     → 502 (SSRF guard, #H1).
   8. `POST /api/recipes/{id}/cook {multiplier:1, deduct:false}` → inventory
      unchanged, entry appears in `GET /api/recipes/{id}/cook-logs`; `POST
      .../cook-logs/{log_id}/reviews {rating:4, changes_next_time:"more salt"}`
@@ -961,7 +1054,12 @@ New / changed test files:
      with a token; it is **not** reachable under `/uploads`.
   10. `POST /api/research/compare {urls:["<3+ links for the same dish>"]}` →
       ingredient percentages match a manual count; `{urls:[]}` → 422.
+  11. `GET /api/cook-logs` lists cook logs across recipes newest-first;
+      `GET /api/cook-logs/{id}` returns one; delete that recipe → the log is
+      still returned (#H5).
 - Confirm `GET` on any data route without `Authorization` → 401.
+- Confirm a recipe ingredient / receipt item `quantity: -1` or `0`, or a grocery
+  `multiplier: 0` / `inf` → 422 (#H4).
 
 ## Critical files
 
@@ -970,14 +1068,16 @@ New / changed test files:
   `deductions` (#16), `RecipeReview`, `ReceiptImport`/`ReceiptItem` with
   `applied_*` snapshots (#5), `GroceryListItem.submitted_at`/`applied_*` (#6),
   `CHECK` constraints (#13).
-- `backend/app/database.py` — `PRAGMA foreign_keys=ON` + `busy_timeout` connect
-  listener (#14/#8).
-- `backend/app/main.py` — 6 new routers, `/uploads` mount, `os.makedirs` for
-  `upload_dir` **and** `receipts_dir` at import **before** the mount (#11),
-  `/api/health` reports tesseract (#12).
+- `backend/app/database.py` — `make_engine` / `make_session_factory` helpers
+  (#H2) + `PRAGMA foreign_keys=ON` + `busy_timeout` connect listener (#14/#8).
+- `backend/app/main.py` — `create_app(settings, engine)` factory (#H2):
+  `makedirs` both dirs then `/uploads` mount (#11), 7 routers, `/api/health`
+  reports tesseract (#12), lifespan `create_all` on the injected engine.
 - `backend/app/routers/recipes.py` — nested CRUD + `/import` + `/photo` +
   `/availability` + `/cook` (with `deduct`) + `/cook-logs` +
   `/cook-logs/{id}/reviews` + `/reviews`.
+- `backend/app/routers/cook_logs.py` — `GET /api/cook-logs` (paginated) +
+  `GET /api/cook-logs/{log_id}` (#H5) — new router.
 - `backend/app/routers/receipts.py` (incl. auth'd `GET /{id}/image` #11 and
   per-item `PATCH .../items/{item_id}` #17), `routers/research.py` (URL-batch
   only #1) — new routers.
@@ -986,21 +1086,23 @@ New / changed test files:
 - `backend/app/services/receipt_ocr.py` (Pillow validation + `pytesseract`
   timeout + `Semaphore`, #12), `services/receipt_parse.py`,
   `services/recipe_research.py` — new services.
-- `backend/app/services/import_recipe.py` — `_fetch_html` (streamed cap #10b) +
+- `backend/app/services/import_recipe.py` — `fetch_bytes` (SSRF guard: scheme +
+  resolved-IP block-list + no redirects + content-type + byte cap, #H1/#10b) +
   `scrape_preview` (`wild_mode` retry #10a) + `ImportIngredient` mapping (#3).
 - `backend/app/normalize.py` — descriptor stripping (#7).
 - `backend/app/config.py` — new `RECIPE_*` settings: `receipts_dir`,
-  `import_max_bytes`, `ocr_timeout_seconds`, `ocr_max_concurrency`,
+  `import_max_bytes`, `import_fetch_timeout`, `max_image_bytes`,
+  `import_allow_private` (#H1), `ocr_timeout_seconds`, `ocr_max_concurrency`,
   `max_image_pixels`, `research_max_urls`, `registration_code`;
   `allow_registration` default `false` (#15). No Google search settings (#1).
-- `backend/tests/conftest.py` — sets `RECIPE_UPLOAD_DIR` + `RECIPE_RECEIPTS_DIR`
-  before importing `app` (#11), FK-pragma on the test engine (#14),
-  registration-on env, `auth_client` (new default) + `user`.
+- `backend/tests/conftest.py` — factory-built app `create_app(test_settings,
+  test_engine)` (#H2), FK-pragma on the test engine (#14), registration-on
+  settings, `auth_client` (new default) + `user`.
 - `backend/app/schemas.py` → becomes `backend/app/schemas/` package, plus new
   `receipt.py` and `research.py` modules within it.
 - New: `backend/app/units.py`, `security.py`,
   `services/{ingredient_parse,import_recipe,inventory_math,receipt_ocr,receipt_parse,recipe_research}.py`,
-  `routers/{auth,inventory,grocery,receipts,research}.py`.
+  `routers/{auth,cook_logs,inventory,grocery,receipts,research}.py`.
 
 ## Status
 
@@ -1010,4 +1112,5 @@ New / changed test files:
 - [x] Final plan written and approved
 - [x] Git repo initialised, skeleton pushed, this plan committed to `docs/plan.md`
 - [x] Adversarial review pass 2 folded in (see Revisions table; 17 findings dispositioned)
+- [x] Hardening pass 3 folded in (5 items lifted from the parallel review branch; #H1–#H5)
 - [ ] Phase 0 — reset & deps (not started; awaiting go-ahead)
