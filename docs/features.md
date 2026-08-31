@@ -13,6 +13,10 @@ plan and its 22 review findings are archived at `git show 5144c25:docs/plan.md`.
 This file tracks them under **Deferred to v2** below and does not duplicate the
 detail — `plan.md` is authoritative for the v1↔v2 boundary.
 
+**Project:** [github.com/dylanmccoy/stockpot](https://github.com/dylanmccoy/stockpot) (public repo)
+
+**Status:** v1 plan approved & implementation-ready (9-phase build, see `plan.md` §Build sequence). Backend-only: auth, structured recipes, inventory, availability checks, cook-deducts, grocery-list submit, unit conversion (pure). Frontend deferred to later effort.
+
 ## What v1 actually ships
 
 Auth (opaque sessions, registration default-off) · structured recipes + nested
@@ -71,6 +75,22 @@ only here.
     Search failures → land in `failed` or return 502 (implementation choice).
   - **Config:** `RECIPE_WEB_SEARCH_PROVIDER` (default empty/off) and
     `RECIPE_WEB_SEARCH_KEY` (env var).
+
+## v1 build sequence
+
+The backend is built in 9 phases, each ending with `uv run pytest` green:
+
+1. **Phase 0 — reset & deps:** add new dependencies (`recipe-scrapers`, `pwdlib[argon2]`, `python-multipart`, `httpx`), delete old `recipe.db`.
+2. **Phase 1 — pure core:** `normalize.py`, `units.py`, ingredient parser + tests (no HTTP).
+3. **Phase 2 — auth:** User/Session models, bearer-token login, `auth.py` router, gating. Tests: 401 on missing token.
+4. **Phase 3 — structured recipes + photo:** Replace flat `ingredients`/`instructions` with `RecipeIngredient` child table (qty/unit/item/note) + JSON `steps/tags`. Photo upload to `/uploads/`. Tests expand.
+5. **Phase 4 — inventory + availability:** `InventoryItem` CRUD, `check_availability` service for per-ingredient status (ok/short/missing/to_taste/have_uncertain). Tests: netting + unit conversion.
+6. **Phase 5 — cook deducts stock:** `POST /api/recipes/{id}/cook` + `CookLog` audit trail. Deduction is one-shot (no unwind). Tests: clamp at 0, unit mismatches reported.
+7. **Phase 6 — grocery lists:** `GroceryList` + `GroceryListItem` tables. `POST /api/grocery` generates from hand-picked recipes, netted against stock. `POST /api/grocery/{id}/submit` adds checked lines to inventory (one-shot, frozen after). Tests: consolidation, netting, idempotency.
+8. **Phase 7 — URL import** (backend-ready, not v1): `services/import_recipe.py` wraps `recipe-scrapers`, lightweight ingredient-string parser. Tests: monkeypatched fetch (no live HTTP).
+9. **Phase 8 — docs:** README, CLAUDE.md, `.env.example` updated (new vars, `rm recipe.db` procedure, API surface).
+
+Each phase is independently testable and independently pushable. Phase 7 (URL import) is backend-ready code but not shipped in v1. See `docs/plan.md` §Build sequence for full pseudocode and migration steps.
 
 ## Deferred features (post-v2)
 
