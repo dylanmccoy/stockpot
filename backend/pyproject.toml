@@ -20,6 +20,10 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+filterwarnings = [
+    # Upstream: Starlette's TestClient still imports httpx. Not our warning to fix.
+    "ignore:Using `httpx` with `starlette.testclient`:UserWarning",
+]
 
 [build-system]
 requires = ["hatchling"]
