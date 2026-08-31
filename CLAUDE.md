@@ -2,6 +2,28 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Communication style
+
+Responses have been too dense to parse quickly — long paragraphs and deep
+nesting that bury the actual answer. Fix, without dropping precision:
+
+- **Lead with the answer.** First 1–3 sentences (or a short table) state the
+  outcome/conclusion. Supporting detail follows — never make the reader parse
+  a paragraph to find the point.
+- **Prefer lists and tables to prose.** If a sentence has more than one
+  clause of justification or more than one item, it's probably a bullet list.
+- **One idea per line.** Avoid stacking qualifiers/parentheticals into a
+  single dense sentence — split them into short sentences or sub-bullets.
+- **Rationale gets a clause, not a paragraph**, unless the user asks "why" or
+  is choosing between options. State *what*, only elaborate *why* on request
+  or when it changes a decision.
+- **For multi-part work** (a plan, a multi-file change, several findings):
+  give a one-line summary per part first (e.g. a table), then full detail
+  underneath or on request — don't make the summary and the detail the same
+  wall of text.
+- Keep all the technical specifics (exact names, numbers, edge cases) — cut
+  redundant framing and throat-clearing, not information.
+
 ## Commands
 
 All backend commands run from `backend/`; all frontend commands from `frontend/`.
