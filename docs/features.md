@@ -24,8 +24,22 @@ ingredient rows · inventory with `(match_name, unit_bucket)` identity ·
 `GET /availability` missing-ingredient check · cook = deduct + `CookLog` (both
 `deduct` modes) · per-recipe and global cook-log reads · grocery-list generation
 (netted against stock) + `POST /submit` (adds checked lines to inventory) · pure
-unit-conversion module. 7 build phases. No file uploads, no outbound HTTP, no
+unit-conversion module. 8 build phases (9 with docs). No file uploads, no outbound HTTP, no
 OCR.
+
+## What's discussed but not in v1 (deferred or different scope)
+
+| Item | Status | Where it lives |
+| --- | --- | --- |
+| **Frontend (React SPA)** | Discussed in detail; separate later effort | `docs/features.md` §Deferred features — pages, auth, routing outlined |
+| **URL recipe import** | Phase 7 code is backend-ready (in `plan.md`); not shipped in v1 | `docs/plan.md` §URL import approach; backend-ready but user chose backend-only v1 |
+| **Photo upload** | Full spec drafted; de-scoped from v1 on 2026-08-31 | `git show 5144c25:docs/plan.md` §Photo upload; `features.md` §Deferred to v2 |
+| **Recipe research (URL batch)** | Full spec drafted; depends on URL import; v2 | `git show 5144c25:docs/plan.md` §Recipe research; `features.md` §Deferred to v2 |
+| **Per-cook reviews** | Full spec drafted; de-scoped from v1 | `git show 5144c25:docs/plan.md` §Per-cook reviews; `features.md` §Deferred to v2 |
+| **Grocery-receipt OCR** | Full spec drafted; highest cost; de-scoped from v1 | `git show 5144c25:docs/plan.md` §Grocery-receipt OCR; `features.md` §Deferred to v2 |
+| **Web search query mode** | Outlined; depends on URL import; post-v2 | `docs/features.md` §Recipe research — free-text query mode |
+
+The pre-trim plan at `git show 5144c25:docs/plan.md` (1117 lines, with 22 adversarial-review findings) carries the full execution-ready spec for all five de-scoped features — nothing is lost, only deferred.
 
 ## Standing v1 constraints
 
