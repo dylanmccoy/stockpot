@@ -679,12 +679,11 @@ New / changed test files:
 
 ## Deferred to v2 — data model already accommodates
 
-See `docs/features.md` for a consolidated roadmap: deferred capabilities,
+See `docs/features.md` for the consolidated roadmap: deferred capabilities,
 infrastructure deferrals (Alembic, multi-user, remote hosting), the `FoodItem`
-upgrade path, design invariants for extensions, and rejected items. **Note:
-`features.md` predates this de-scope** and still frames photo / import / research
-/ reviews / receipt-OCR as v1; the blocks below are authoritative for the
-v1<->v2 boundary until `features.md` is reconciled.
+upgrade path, design invariants for extensions, and rejected items. This section
+is authoritative for the v1↔v2 boundary and the execution detail; `features.md`
+carries the why-deferred and upgrade context.
 
 Each block below is execution-ready. `full spec` points at the section of the
 pre-trim plan (`git show 5144c25:docs/plan.md`) that carries the complete
