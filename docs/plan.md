@@ -98,7 +98,41 @@ Five treatments lifted from a parallel review branch. Post-trim:
 Judgement calls that stand: grocery `submit` is forward-only, no per-line
 `/undo` (the Deferred "undo for forward-only actions" covers it uniformly);
 `match_name` is editable on inventory rows only, not on recipe ingredients
-(`FoodItem` is the real fix); `AvailabilityLine` stays one-per-ingredient.
+(`FoodItem` is the real fix); `AvailabilityLine` stays one-per-ingredient (now
+with group-level fields, #R7).
+
+**Recipe-side match divergence — residual v1 limitation (#R4).** With one
+inventory row per `(match_name, unit_bucket)` and `match_name` editable on the
+inventory row only, two recipe labels that *should* map to one stock item but
+`normalize_name` to different strings (`flour` vs `all-purpose flour` vs `plain
+flour`) cannot both be matched by editing the inventory row — fixing one label
+breaks the other. The v1 lever is **`normalize.py` tuning** (add such tokens to
+the leading-descriptor stoplist so they collapse to a common form). The complete
+fix — recipe-ingredient-side aliasing or a shared `FoodItem` identity — is
+**v2** (see §Deferred, `FoodItem` upgrade path). v1 does not add an
+`ingredient_aliases` table.
+
+## Revisions — review pass 4 (2026-08-31)
+
+A post-de-scope adversarial review (`NO-SHIP`) raised 8 core-loop findings; all
+8 are folded in here. Full adjudication (failure scenarios, risk trade-offs) in
+`/home/dylan/.claude/plans/reviewed-updated-plan-here-abstract-tome.md`.
+
+| # | Finding | Treatment |
+|---|---|---|
+| R1 | Opaque units (`can`, `jar`, `bag`, `clove`) had no arithmetic model — `to_base()` returns `None` for them, so availability/cook/grocery `to_base(...).amt` crashed and identical opaque stock never netted. | **Fixed.** Availability, `deduct`, and `generate_lines` branch on `bucket is opaque` **before** any `to_base` call and do arithmetic directly on the stored amount. `add_quantities` merges opaque `Quantity`s whose unit strings are equal. Same-unit opaque now nets (`2 can` need − `1 can` stock = `1 can` short). Cross-unit opaque (`can` vs `jar`, `clove` vs `bulb`) stays `nettable=false` / `have_uncertain`. |
+| R2 | The `ON CONFLICT … SET quantity = quantity + convert(…)` upsert invoked a `convert()` SQLite does not have — the #8/#H3 atomicity guarantee was not actually delivered. | **Fixed.** `inventory_items` stores `quantity_base` (canonical: g / ml / count / exact opaque amount) as the source of truth; the pure service converts the incoming amount to base *before* the INSERT (no DB-state dependency, no race). The upsert is the valid atomic `SET quantity_base = quantity_base + excluded.quantity_base`. `quantity` / `unit` become display-only. |
+| R3 | Concurrent cooks could lose a deduction despite "one transaction": `BEGIN DEFERRED` + a shared read → both compute from the same stale value → the second commits over the first. `busy_timeout` only waits. | **Fixed.** Mutating transactions (cook, grocery `submit`) run `BEGIN IMMEDIATE` (write lock acquired before the first read) via a `database.py` hook. Adds `test_concurrency.py` (file-backed SQLite, two connections: one cook-race, one submit-race) — the in-memory `StaticPool` fixture cannot exercise this. #H3's 409-on-`busy_timeout` stands. |
+| R4 | Stripping `fresh`/`dried`/`ground` in `normalize.py` silently merged identity-distinct foods; and one inventory `match_name` cannot express two recipe labels. | **Partially fixed.** `normalize.py` stoplist keeps cut-style (`diced`, `chopped`, …) and size/quality (`large`, `ripe`, …) descriptors but **no longer strips state/process words** (`fresh`, `dried`, `ground`, and none of `cooked`/`raw`/`smoked` added) — those are identity-bearing. Recipe-side aliasing stays a documented v1 limitation (see above); `FoodItem` is the v2 fix. |
+| R5 | `submit` auto-archived when "every line applied or unchecked" — but the same list was promised to accept a later `submit` of newly-checked lines, which the `status='active'` guard would 409. A no-op `submit` also archived. | **Fixed.** `submit` never changes list status. A list stays `active` until an explicit `POST /api/grocery/{id}/archive` (guarded `WHERE status='active'`). `submit` with nothing checked is an explicit no-op (200, empty result), not a state change. |
+| R6 | Availability filtered inventory to the required bucket only, so `clove`-need vs `bulb`-stock returned `missing`, never `have_uncertain` — that status was near-unreachable. | **Fixed.** Availability and `deduct` load **all** inventory rows for the `match_name`, then partition: compatible-bucket rows → do the math; else if any other-bucket row exists → `have_uncertain` + `nettable=false`; `missing` only when no row for the name exists at all. |
+| R7 | Aggregated availability emitted one line per member ingredient, each carrying the *group's* `need`/`have`/`short` — a client summing per-line `need` double-counts. | **Fixed.** One line per ingredient still, but per-line `need`/`need_unit` = that row's own quantity ×M; group totals move to new `group_key` / `group_need` / `group_have` / `group_short` fields (identical across members). `status` and `all_available` unchanged. |
+| R8 | The verification script starts a default server (registration disabled) and calls `/register` — a guaranteed 403 — and omits the `code`. | **Fixed.** Verification step 1 sets `RECIPE_ALLOW_REGISTRATION=true` + `RECIPE_REGISTRATION_CODE=devcode`, passes `code`, and restarts without those vars afterward. |
+
+Deferred-block wording tightened (#R-def): the Research URL-list cap, the OCR
+CI-fatal-tesseract rule, OCR upload-failure cleanup, review-read reachability
+after recipe deletion, and the URL-import streaming contract are each stated
+explicitly in §Deferred rather than delegated to the archived revision.
 
 ## Done criteria
 
@@ -120,7 +154,10 @@ Judgement calls that stand: grocery `submit` is forward-only, no per-line
    returns per-ingredient `status` in
    `{ok, short, missing, to_taste, have_uncertain}` with unit conversion applied
    when units are compatible and an explicit uncertain state otherwise. Multiple
-   lines for the same food are aggregated before comparison (#4), and
+   lines for the same food are aggregated before comparison (#4); each line
+   carries its **own** `need` plus the group totals in `group_need` /
+   `group_have` / `group_short` / `group_key` (#R7). `have_uncertain` is returned
+   whenever the food is in stock only in an incompatible bucket (#R6).
    `all_available` is true only when every quantified line is `ok`.
 5. **Cook deducts stock, or just logs it.** `POST /api/recipes/{id}/cook
    {multiplier, deduct?}` — `deduct=true` (default) subtracts ingredients from
@@ -136,9 +173,11 @@ Judgement calls that stand: grocery `submit` is forward-only, no per-line
    are flagged `nettable=false`, not dropped. Manual one-off items can be added.
    `PATCH` on a line toggles `checked` and edits its fields — **no inventory
    effect** (#6). `POST /api/grocery/{id}/submit` adds every checked, quantified,
-   not-yet-applied line to inventory in one transaction and freezes those lines
-   (forward-only; a later `PATCH` on a frozen line → 409). Re-submitting picks up
-   only newly-checked lines.
+   not-yet-applied line to inventory in one `BEGIN IMMEDIATE` transaction (#R3)
+   and freezes those lines (forward-only; a later `PATCH` on a frozen line →
+   409). `submit` **never archives** the list (#R5); re-submitting picks up only
+   newly-checked lines, and a `submit` with nothing checked is a 200 no-op. A
+   list stays `active` until an explicit `POST /api/grocery/{id}/archive`.
 7. **Unit conversion** is a standalone pure module with a documented supported-
    unit set and defined behavior for unknown / incompatible pairs.
 8. **Tests green.** `uv run pytest` passes: units, ingredient parser, inventory
@@ -159,7 +198,7 @@ Layering with new modules:
 | **sessions** | `id` PK · `token` str(64) unique indexed (`secrets.token_urlsafe(32)`) · `user_id` FK users CASCADE · `created_at` · `last_used_at` · `expires_at` (= created + `SESSION_TTL_DAYS`, default 30) |
 | **recipes** | `id` PK · `title` str(200) min_len 1 · `notes` Text="" · `prep_time` int? ≥0 · `cook_time` int? ≥0 · `servings` float? >0 · `cuisine` str(100)? · `source_url` str(500)? · `photo_path` str(500)? *(reserved for v2 photo upload — nullable, unused in v1)* · `tags` JSON `list[str]`=[] · `steps` JSON `list[str]`=[] · `created_at` · `updated_at` (`onupdate`) · `created_by_id` FK users? (no cascade) |
 | **recipe_ingredients** | `id` PK · `recipe_id` FK recipes CASCADE · `position` int 0-based · `quantity` float? (null = to taste) · `unit` str(30)? · `item` str(200) · `note` str(200)? · `normalized_name` str(200) indexed, **server-computed** · `raw_text` str(300)? *(reserved for v2 import — nullable, unused in v1)* · index `(recipe_id, position)` |
-| **inventory_items** | `id` PK · `item` str(200) display · `normalized_name` str(200) indexed, server-computed · `match_name` str(200) indexed (defaults to `normalized_name`, **user-editable** — the recipe↔inventory match key, #2/#7) · `unit_bucket` str(20) (`mass`/`volume`/`count`/`opaque:<canonical unit>`, #2) · `quantity` float ≥0 finite default 0, `CHECK(quantity >= 0)` · `unit` str(30)? · `updated_at` · `created_by_id` FK users? · **unique `(match_name, unit_bucket)`** (add = upsert within a bucket) |
+| **inventory_items** | `id` PK · `item` str(200) display · `normalized_name` str(200) indexed, server-computed · `match_name` str(200) indexed (defaults to `normalized_name`, **user-editable** — the recipe↔inventory match key, #2/#7) · `unit_bucket` str(20) (`mass`/`volume`/`count`/`opaque:<canonical unit>`, #2) · `quantity_base` float ≥0 finite default 0, `CHECK(quantity_base >= 0)` — **source of truth**, in the bucket's canonical unit (g / ml / count / exact opaque amount), #R2 · `quantity` float?, `unit` str(30)? — **display only** (the amount+unit of the most recent add; never read for math, #R2) · `updated_at` · `created_by_id` FK users? · **unique `(match_name, unit_bucket)`** (add = atomic `quantity_base += excluded.quantity_base` upsert within a bucket) |
 | **grocery_lists** | `id` PK · `name` str(200) default `"Groceries <date>"` · `status` str(20) `active`/`archived` · `source_recipe_ids` JSON `list[int]`=[] (informational, no FK) · `created_at` · `created_by_id` FK users? |
 | **grocery_list_items** | `id` PK · `grocery_list_id` FK CASCADE · `item` str(200) · `normalized_name` str(200) indexed · `quantity` float? >0 finite when set · `unit` str(30)? · `checked` bool=false · `checked_at` dt? · `submitted_at` dt? (#6) · `source` str(20) `generated`/`manual` · `nettable` bool=true · `added_to_inventory` bool=false (idempotency guard + freeze flag, #6) · `applied_quantity` float? · `applied_unit` str(30)? (snapshot of what `submit` actually added, #6) |
 | **cook_logs** | `id` PK · `recipe_id` FK recipes SET NULL · `recipe_title` str(200) snapshot · `multiplier` float=1 >0 · `deducted` bool=true (false = logged without touching stock) · `cooked_at` · `cooked_by_id` FK users? · `deductions` JSON=[] (`[{item, normalized_name, requested, requested_unit, deducted, inventory_unit, before, after, applied, reason}]`, empty when `deducted=false`; #16) |
@@ -181,18 +220,42 @@ Relationships: `Recipe.ingredients` → ordered by `position`,
   for known units, or `opaque:<canonical unit>` for an unknown/opaque unit
   (`bag`, `jar`, …). "Add to stock" upserts *within* a bucket. Stocking the same
   food in two incompatible units (flour in `bag` and in `g`) yields two rows,
-  never an arithmetic merge of `1 + 500 → 501`. All inventory lookups return the
-  set of compatible rows for a `match_name`, not one row.
+  never an arithmetic merge of `1 + 500 → 501`. All inventory lookups fetch
+  **every** row for a `match_name` and partition into compatible vs.
+  other-bucket at the call site (#R6) — the "no compatible row but stock exists
+  elsewhere" case is what surfaces `have_uncertain`.
+- **Stored quantity is canonical (`quantity_base`), #R2.** Each row keeps its
+  amount in the bucket's base unit — g for `mass`, ml for `volume`, count for
+  `count`, the exact numeric amount for `opaque:<unit>` (unit equality is
+  guaranteed by the composite key there). The incoming add is converted to base
+  in the pure service *before* the write, so the upsert increment
+  (`quantity_base = quantity_base + excluded.quantity_base`) is a genuine atomic
+  SQL expression with no `convert()` and no read-modify-write. `quantity` /
+  `unit` are retained for display (last-add amount+unit) and never read for
+  math.
+- **Opaque buckets do arithmetic too (#R1).** Within `opaque:can`, `2 need − 1
+  stock = 1 short` — the composite key guarantees the unit string is identical,
+  so the numbers add and subtract directly (no `to_base`). Only *cross-unit*
+  opaque comparisons (`can` vs `jar`) are non-nettable.
 
 **`backend/app/normalize.py`** (pure, no dep): `normalize_name(raw)` = strip →
 lower → drop punctuation (keep spaces/hyphens) → collapse whitespace → **strip
 leading prep/size descriptors** (a small stoplist: `diced`, `chopped`, `minced`,
-`sliced`, `ground`, `fresh`, `dried`, `large`, `small`, `medium`, `boneless`,
-`skinless`, `ripe`, … — documented tuning knob, #7) → naive singularize
-(irregular map `{tomatoes→tomato, potatoes→potato, leaves→leaf, …}`, then
-`-ies→-y`, `-ses/-xes/-oes→ -e`, trailing `-s` → drop). Remaining false
-matches are corrected per-row via the editable `match_name`; no `inflect`
-dependency.
+`sliced`, `large`, `small`, `medium`, `boneless`, `skinless`, `ripe`, … —
+documented tuning knob, #7) → naive singularize (irregular map
+`{tomatoes→tomato, potatoes→potato, leaves→leaf, …}`, then `-ies→-y`,
+`-ses/-xes/-oes→ -e`, trailing `-s` → drop). Remaining false matches are
+corrected per-row via the editable `match_name`; no `inflect` dependency.
+
+**State/process descriptors are NOT stripped (#R4).** `fresh`, `dried`,
+`ground`, `cooked`, `raw`, `smoked` and the like change a food's identity and
+its quantity semantics (`fresh yeast` ≠ `active-dry yeast`; dried herbs are
+~3× the potency of fresh) — stripping them would silently merge distinct stock
+items into one bucket. Only cut-style (`diced`, `chopped`, …) and size/quality
+(`large`, `ripe`, …) descriptors, which do not change identity, are in the
+stoplist. The stoplist remains a documented tuning knob; recipe-side match
+divergence (`flour` vs `all-purpose flour`) is tuned here, with the residual
+limitation noted in §Revisions — hardening pass 3.
 
 ## Module / router layout (`backend/app/`)
 
@@ -214,7 +277,7 @@ routers/
   recipes.py    /api/recipes   CRUD + /{id}/availability + /{id}/cook + /{id}/cook-logs
   cook_logs.py  /api/cook-logs  list (paginated, all recipes) + get by id (#H5)
   inventory.py  /api/inventory  CRUD (incl. PATCH match_name)
-  grocery.py    /api/grocery    lists + items (PATCH state only) + /{id}/submit (#6) + delete
+  grocery.py    /api/grocery    lists + items (PATCH state only) + /{id}/submit (#6) + /{id}/archive (#R5) + delete
 main.py       create_app(settings, engine) -> FastAPI (#H2): include 5 routers; /api/health;
               lifespan create_all on the injected engine. Module-level `app = create_app(settings, engine)`
               for uvicorn.
@@ -239,10 +302,13 @@ Static synonym table `str → (Dimension, factor_to_base)`:
 - **mass:** g/gram(s) 1 · kg 1000 · mg 0.001 · oz/ounce 28.3495 · lb/lbs/pound(s) 453.592
 - **volume:** ml 1 · l/litre/liter 1000 · tsp/teaspoon 4.92892 · tbsp/tablespoon 14.7868 · cup(s) 236.588 · fl-oz 29.5735 · pint 473.176 · quart 946.353 · gallon 3785.41
 - **count:** unit/each/"" 1 · dozen 12 · pair 2  — **only genuinely countable units** (#9)
-- **left UNKNOWN on purpose** (→ opaque, exact-string match only, never converted, non-nettable):
+- **left UNKNOWN on purpose** (→ opaque: exact-string match only, never
+  *cross-unit* converted; **same-unit opaque still nets**, #R1):
   clove, slice, piece, stick, can, package, pkg, jar, bottle, box, bag, head, bulb,
-  bunch, sprig, pinch, handful, dash, splash, "to taste" (#9). Documented tuning knob — a
-  food-specific conversion (e.g. `1 can tomatoes ≈ 400 g`) can be added later, per pair, deliberately.
+  bunch, sprig, pinch, handful, dash, splash, "to taste" (#9). Within one
+  `opaque:<unit>` bucket the amounts add/subtract directly (`2 can − 1 can = 1
+  can`). Documented tuning knob — a food-specific *cross-unit* conversion (e.g.
+  `1 can tomatoes ≈ 400 g`) can be added later, per pair, deliberately.
 
 Unit-string normalization: lower → strip trailing `.` → naive-singularize → map
 via synonym dict.
@@ -251,42 +317,53 @@ API:
 ```
 @dataclass Quantity: amount: float | None; unit: str | None
 parse_unit(s)                 -> UnitDef | None            # None = unknown
-to_base(amount, unit)         -> (float, Dimension) | None
+to_base(amount, unit)         -> (float, Dimension) | None # None = opaque/unknown unit
 from_base(amount, dim, unit)  -> float | None
 compatible(a, b)              -> bool                       # both known + same dimension
-add_quantities(list[Quantity]) -> list[Quantity]           # merge by dimension; unknown/None each stay a bucket
+add_quantities(list[Quantity]) -> list[Quantity]           # merge known units by dimension;
+                                                           # merge opaque units when the unit STRING is equal (#R1);
+                                                           # None-unit merges as COUNT; distinct otherwise
+bucket_of(unit)               -> "mass"|"volume"|"count"|"opaque:<canon>"   # None -> "count"
 ```
 
 Incompatible/unknown behavior — **never drop a line:**
 - both units `None` → treat as COUNT (so "3 onions" vs "2 onions" nets).
-- one side unknown, or different dimensions ("2 cloves garlic" vs "1 bulb
-  garlic") → `compatible()` false → line surfaced with `nettable=false`, need =
-  recipe requirement as written.
+- **same opaque unit both sides** ("2 cans" vs "1 can") → nets directly:
+  `nettable=true`, arithmetic on the raw amounts, no `to_base` (#R1).
+- one side a *known* unit and the other opaque, or two *different* opaque units
+  ("2 cloves garlic" vs "1 bulb garlic"), or different known dimensions →
+  `compatible()` false → line surfaced with `nettable=false`, need = recipe
+  requirement as written.
 
 ## Netting & deduction algorithms (`services/inventory_math.py`, pure)
 
 ### availability — `GET /api/recipes/{id}/availability?multiplier=M`
 
 **Aggregate first (#4):** group the recipe's ingredient rows by
-`(normalized_name, bucket)` where `bucket` = `to_base(need, unit).dim` for a
-known unit, else `opaque:<canonical unit>` (None unit → COUNT). Sum `need` per
-group in base units. Then compare each group once against the *sum* of matching
-inventory rows (`inv.match_name == normalized_name` and same bucket) — so a
-recipe that lists flour twice can't see full stock twice.
+`(normalized_name, bucket)` where `bucket` = `bucket_of(unit)` — a known unit's
+dimension, else `opaque:<canonical unit>` (None unit → COUNT). Sum `need` per
+group (in base units for known dimensions; raw amount for opaque). Compare each
+group once against the *sum* of matching inventory rows — so a recipe that lists
+flour twice can't see full stock twice.
 ```
-groups = aggregate(recipe.ingredients, M)          # -> {(norm, bucket): summed_need_base, member ingredient_ids, unit}
+groups = aggregate(recipe.ingredients, M)   # -> {(norm, bucket): {need, member ingredient_ids w/ own qty, unit}}
 for g in groups:
     to_taste members -> one line(status="to_taste") each; skip quantified math for those
-    stock_base = sum(to_base(r.quantity, r.unit).amt for r in inventory
-                     if r.match_name == g.norm and same_bucket(r, g))
-    if no matching inventory row:            -> line(need=g.need, have=0, short=g.need, status="missing")
-    elif g.bucket is opaque and units differ -> line(need, have=stock, status="have_uncertain", nettable=false)
+    all_rows  = [r for r in inventory if r.match_name == g.norm]           # every bucket (#R6)
+    compat    = [r for r in all_rows if r.unit_bucket == g.bucket]         # same bucket only
+    if not all_rows:                          -> group_status = "missing", group_have = 0
+    elif not compat:                          -> group_status = "have_uncertain", nettable=false  (#R6)
     else:
-        short_base = g.need_base - stock_base
-        -> line(status="ok", have=stock) if short_base <= 0
-           else line(need, have=stock, short=from_base(short_base, …), status="short")
-    (emit one AvailabilityLine per member ingredient_id, carrying the group's status)
-report.all_available = every quantified line has status == "ok"
+        stock = sum(r.quantity_base for r in compat)          # already canonical — NO to_base (#R1/#R2)
+        short = g.need - stock                                 # g.need also canonical (opaque: raw amount)
+        group_status = "ok"    if short <= 0 else "short"
+        group_have, group_short = stock, max(short, 0)
+    # one AvailabilityLine per member ingredient_id:
+    #   need / need_unit  = THAT member's own quantity * M   (not the group total, #R7)
+    #   group_key         = f"{g.norm}|{g.bucket}"
+    #   group_need / group_have / group_short = the group figures above (from_base back to g.unit for known dims)
+    #   status            = group_status ;  nettable per above
+report.all_available = every quantified line's group_status == "ok"
                        (any missing / short / have_uncertain -> false; to_taste is ignored)
 ```
 
@@ -302,18 +379,22 @@ for rid in recipe_ids:
 
 items = []
 for norm, r in reqs.items():
-    for q in add_quantities(r.quantities):                      # consolidated per dimension/bucket
-        stock_base = sum_inventory_base(match_name=norm, bucket=bucket_of(q))   # sum of compatible rows in base units, #2/#4
-        if stock_base is None:                                   # no compatible row at all
-            need, nettable = q, (q.amount is not None and (q.unit is None or parse_unit(q.unit) is not None))
+    for q in add_quantities(r.quantities):        # consolidated per dimension/bucket; opaque merged by unit string (#R1)
+        bucket = bucket_of(q.unit)
+        compat = [iv for iv in inventory if iv.match_name == norm and iv.unit_bucket == bucket]
+        need_base = (q.amount if bucket.startswith("opaque:") or q.unit is None
+                     else to_base(q.amount, q.unit).amt)         # canonical; opaque = raw amount (#R1)
+        if q.amount is None:                                     # opaque/None with no amount -> surface as written
+            need, nettable = q, false
+        elif not compat:                                         # nothing in this bucket
+            other = any(iv.match_name == norm for iv in inventory)
+            need, nettable = q, (not other)                      # non-nettable if stock exists in another bucket (#R6)
         else:
-            nb = to_base(q.amount, q.unit)
-            if q.amount is None or nb is None:                   # opaque/unknown recipe unit
-                need, nettable = q, false
-            else:
-                short = nb.amt - stock_base
-                if short <= 0: continue                          # fully in stock -> no line
-                need, nettable = Quantity(from_base(short, nb.dim, q.unit), q.unit), true
+            stock = sum(iv.quantity_base for iv in compat)       # already canonical — NO to_base (#R2)
+            short = need_base - stock
+            if short <= 0: continue                              # fully in stock -> no line
+            need_amt = short if bucket.startswith("opaque:") else from_base(short, dim_of(bucket), q.unit)
+            need, nettable = Quantity(need_amt, q.unit), true
         items.append(GLItem(item=r.display_item, normalized_name=norm,
                             quantity=need.amount, unit=need.unit, nettable=nettable, source="generated"))
     if r.to_taste and norm not already emitted:
@@ -336,39 +417,55 @@ line can be freely checked, edited, and unchecked with no drift.
 
 ### submit a grocery list — `POST /api/grocery/{list}/submit`
 ```
-with one transaction:
+if list.status != "active": 409
+with ONE transaction (BEGIN IMMEDIATE, #R3):
     for item in list.items:
         if not item.checked or item.added_to_inventory or item.quantity is None: continue
         applied = add_to_inventory(item.normalized_name, item.item, item.quantity, item.unit)
         item.applied_quantity, item.applied_unit = applied.amount, applied.unit   # snapshot (#6)
         item.added_to_inventory = true
         item.submitted_at = now
-    list.status = "archived" if all items are (added_to_inventory or not checked) else "active"
-return updated list
+    # NO status change here (#R5) — the list stays "active"
+return updated list        # 200 even if nothing was checked (explicit no-op)
 ```
 Forward-only, matching Cook — **no unapply**. Re-submitting is safe:
 already-`added_to_inventory` lines are skipped, so only newly-checked lines are
-added. An accidental submit is corrected with a manual `/api/inventory`
-adjustment. This is what resolves #6: because checking has no inventory effect
-and submitted lines are frozen, the "edit-after-check then uncheck" desync
-cannot occur; the stored `applied_quantity`/`applied_unit` snapshot keeps the
-audit record honest.
+added; a `submit` with nothing checked is a harmless 200 no-op (#R5). An
+accidental submit is corrected with a manual `/api/inventory` adjustment. This
+is what resolves #6: because checking has no inventory effect and submitted
+lines are frozen, the "edit-after-check then uncheck" desync cannot occur; the
+stored `applied_quantity`/`applied_unit` snapshot keeps the audit record honest.
+
+### archive a grocery list — `POST /api/grocery/{list}/archive` (#R5)
+```
+UPDATE grocery_lists SET status='archived' WHERE id=? AND status='active'   # guarded, idempotent
+-> 200 GroceryListRead ; 404 if the list does not exist
+```
+The **only** path to `archived`. `submit` never triggers it, so incremental
+submit (shop today, finish tomorrow) works: the list is still `active` when the
+second `submit` lands. Archiving is terminal — a `PATCH` / `submit` on an
+archived list → 409.
 
 ### add_to_inventory(match_name, display, amount, unit) -> Quantity actually added
 ```
 bucket = bucket_of(unit)                    # dim for a known unit, else opaque:<canonical>, None -> count
-# atomic upsert within the (match_name, unit_bucket) row (#2, #8):
-INSERT INTO inventory_items (item, normalized_name, match_name, unit_bucket, quantity, unit)
-     VALUES (display, normalize_name(display), match_name, bucket, max(amount,0), unit)
+# convert to canonical base IN PYTHON, before the write — depends only on the
+# input, not on any current DB value, so there is no race (#R2):
+amt_base = max(amount, 0) if bucket.startswith("opaque:") or unit is None \
+           else to_base(max(amount, 0), unit).amt          # opaque: raw amount; known: g/ml/count
+
+# genuinely-atomic upsert within the (match_name, unit_bucket) row (#2, #8, #R2):
+INSERT INTO inventory_items (item, normalized_name, match_name, unit_bucket, quantity_base, quantity, unit)
+     VALUES (display, normalize_name(display), match_name, bucket, :amt_base, :amount, :unit)
 ON CONFLICT (match_name, unit_bucket) DO UPDATE SET
-     quantity = quantity + convert(excluded.quantity, excluded.unit -> inventory_items.unit within bucket),
-     updated_at = now
-RETURNING …
-# convert() is identity for an opaque bucket (units are guaranteed equal there);
-# for mass/volume/count it is to_base/from_base into the stored row's unit.
-# There is NO cross-bucket / best-effort '+=' path — incompatible units are simply
-# different rows (#2). Stored quantity stays >= 0 and finite (CHECK).
-return Quantity(amount, unit)
+     quantity_base = inventory_items.quantity_base + excluded.quantity_base,   # plain SQL, no convert()
+     quantity      = excluded.quantity,          # display: last-add amount
+     unit          = excluded.unit,              # display: last-add unit
+     updated_at    = now
+RETURNING quantity_base
+# No cross-bucket / best-effort '+=' path — incompatible units are just
+# different rows (#2). quantity_base stays >= 0 and finite (CHECK).
+return Quantity(amount, unit)                    # what THIS call contributed (for the grocery snapshot)
 ```
 
 ### mark as cooked — `POST /api/recipes/{id}/cook {multiplier, deduct=true}`
@@ -376,29 +473,31 @@ return Quantity(amount, unit)
 log = CookLog(recipe_id, recipe_title=recipe.title, multiplier=M, deducted=deduct, cooked_by=user)
 if not deduct:
     save(log); return log         # made-event recorded, stock untouched, deductions=[]
-with one transaction:
+with ONE transaction (BEGIN IMMEDIATE — write lock before the first read, #R3):
   for (norm, bucket), need_base, unit in aggregate(recipe.ingredients, M):   # aggregate like availability (#4)
+    #   need_base is canonical: g/ml/count for known dims, raw amount for opaque (#R1)
     to_taste members -> log.deductions += {item, requested:null, applied:false, reason:"to taste"}
-    rows = [r for r in inventory if r.match_name == norm and same_bucket(r, bucket)]
-    if not rows: log.deductions += {item, requested:need, applied:false, reason:"not in inventory"}; continue
-    if bucket is opaque and any(r.unit != unit for r in rows):
-        log.deductions += {item, requested:need, applied:false, reason:"unit mismatch"}; continue
+    all_rows = [r for r in inventory if r.match_name == norm]
+    compat   = [r for r in all_rows if r.unit_bucket == bucket]
+    if not all_rows: log.deductions += {item, requested:need, applied:false, reason:"not in inventory"}; continue
+    if not compat:   log.deductions += {item, requested:need, applied:false, reason:"have uncertain (incompatible unit)"}; continue   # (#R6)
     remaining = need_base
-    for r in rows:                                   # draw down compatible rows in order, clamp at 0 (#16)
-        before = r.quantity
-        take_base = min(remaining, to_base(r.quantity, r.unit).amt)
-        r.quantity = from_base(to_base(r.quantity, r.unit).amt - take_base, bucket, r.unit); r.updated_at = now
-        remaining -= take_base
-        log.deductions += {item, normalized_name:norm, requested: (need if r is rows[0] else null),
-                           requested_unit: unit, deducted: from_base(take_base, bucket, r.unit),
-                           inventory_unit: r.unit, before, after: r.quantity,
+    for r in compat:                                 # draw down compatible rows in order, clamp at 0 (#16)
+        before = r.quantity_base
+        take   = min(remaining, r.quantity_base)     # both canonical — NO to_base (#R1/#R2)
+        r.quantity_base = before - take; r.updated_at = now
+        remaining -= take
+        log.deductions += {item, normalized_name:norm, requested: (need if r is compat[0] else null),
+                           requested_unit: unit, deducted: display_amt(take, bucket, unit),
+                           inventory_unit: canon_unit(bucket), before, after: r.quantity_base,
                            applied: true, reason: ("ok" if remaining <= 0 else "clamped to 0")}
 save(log)
 ```
-Cook is intentionally lossy (clamp at 0, skip mismatches). `deductions` records
-`requested` vs the **actual** `deducted` amount and `before`/`after` per row
-(#16), so a future "undo" = `add_to_inventory` of each entry's `deducted`
-amount.
+`display_amt` converts a canonical delta back to `unit` for the log
+(identity for opaque). Cook is intentionally lossy (clamp at 0, skip
+incompatible buckets). `deductions` records `requested` vs the **actual**
+`deducted` amount and `before`/`after` per row (#16), so a future "undo" =
+`add_to_inventory` of each entry's `deducted` amount.
 
 ### made-history — `GET /api/recipes/{id}/cook-logs` + global `GET /api/cook-logs[/{log_id}]` (#H5)
 Per-recipe: plain `list[CookLogRead]`, `order_by(cooked_at.desc())` — every
@@ -421,18 +520,32 @@ Two household members can act at once. Contract:
   transaction** — a failure mid-operation rolls the whole thing back (no
   half-applied cook, no partly-submitted grocery list).
 - Every mutating endpoint (`cook`, grocery `submit`, inventory CRUD) commits in
-  **one transaction**.
+  **one transaction**, opened with **`BEGIN IMMEDIATE`** for `cook` and grocery
+  `submit` (#R3): the connection takes the write (RESERVED) lock *before* its
+  first `SELECT`, so a second concurrent actor blocks at `BEGIN`, waits out
+  `busy_timeout`, and then reads the **already-updated** stock — no
+  read-modify-write lost update. `database.py` issues `BEGIN IMMEDIATE` on the
+  relevant connections via a transaction hook (SQLAlchemy's pysqlite "emit our
+  own BEGIN" pattern), alongside the existing PRAGMA listener. Plain
+  `BEGIN DEFERRED` + `busy_timeout` does **not** prevent the lost update — it
+  only makes the stale writer wait, then commit its stale value.
 - `add_to_inventory` is the SQLite `INSERT … ON CONFLICT (match_name,
-  unit_bucket) DO UPDATE SET quantity = quantity + …` upsert above — the
-  increment is atomic and concurrent first-inserts can't raise a duplicate 500.
+  unit_bucket) DO UPDATE SET quantity_base = quantity_base + excluded.quantity_base`
+  upsert above (#R2) — a genuine atomic SQL increment (no `convert()`, no Python
+  read-modify-write), and concurrent first-inserts can't raise a duplicate 500.
 - One-shot state transitions use a guarded update:
-  `UPDATE grocery_lists SET status='archived' WHERE id=? AND status='active'`;
-  the grocery-item freeze uses `added_to_inventory` as the guard.
+  `UPDATE grocery_lists SET status='archived' WHERE id=? AND status='active'`
+  (the `archive` endpoint, #R5); the grocery-item freeze uses
+  `added_to_inventory` as the guard.
 - `database.py` sets `PRAGMA busy_timeout=5000` per connection (#14), so a brief
   writer overlap waits rather than erroring. **On `IntegrityError` or a lock /
   `busy_timeout` timeout the endpoint returns 409, not 500 (#H3).**
-- Not in scope: a multi-process/file-DB concurrency test suite — disproportionate
-  at 2 users. One sequential double-submit test asserts the guard's idempotency.
+- **In scope (#R3):** `test_concurrency.py` — a file-backed SQLite DB with two
+  independent connections, one test racing two `cook`s that share an ingredient
+  and one racing two `submit`s, asserting stock lands at the correct total (not
+  a lost update) and both `CookLog`s report honest `deducted` amounts. The
+  in-memory `StaticPool` fixture shares one connection and cannot exercise this.
+  The sequential double-submit idempotency test still runs in `test_grocery.py`.
 
 ## Auth approach
 
@@ -524,9 +637,14 @@ All `float` fields below are `allow_inf_nan=False` (#13).
     created_by: UserMini|None, ingredients: list[RecipeIngredientRead]}`.
   - `AvailabilityLine {ingredient_id, item, need: float|None, need_unit,
     have: float|None, have_unit, short: float|None,
+    group_key: str, group_need: float|None, group_have: float|None,
+    group_short: float|None,
     status: Literal["ok","short","missing","to_taste","have_uncertain"],
-    nettable: bool}`; `AvailabilityReport {recipe_id, multiplier, lines,
-    all_available}`.
+    nettable: bool}` (#R7) — `need`/`need_unit` are **this ingredient row's own**
+    quantity ×M; `group_*` carry the aggregated figures shared by every line
+    with the same `group_key` (`"<normalized_name>|<bucket>"`). `status` and
+    `all_available` are decided on the group. `AvailabilityReport {recipe_id,
+    multiplier, lines, all_available}`.
   - `CookRequest {multiplier: float = 1 (gt=0, finite), deduct: bool = True}`;
     `CookLogRead {id, recipe_id, recipe_title, multiplier, deducted, cooked_at,
     cooked_by: UserMini|None, deductions: list[dict]}` — each deduction dict is
@@ -536,20 +654,26 @@ All `float` fields below are `allow_inf_nan=False` (#13).
     return `CookLogRead`; `GET /api/cook-logs` returns
     `CookLogList {items: list[CookLogRead], total, limit, offset}` (#H5).
 - `inventory.py` — `InventoryItemIn {item, quantity: float ge=0 (finite),
-  unit: str|None, match_name: str|None}` (`match_name` also settable on PATCH, #2);
-  `InventoryItemRead` adds `{id, normalized_name, match_name, unit_bucket, updated_at}`.
+  unit: str|None, match_name: str|None}` (`match_name` also settable on PATCH, #2)
+  — `quantity`+`unit` are the human input; the server converts to `quantity_base`
+  on write (#R2). `InventoryItemRead` adds `{id, normalized_name, match_name,
+  unit_bucket, quantity_base, updated_at}` — `quantity`/`unit` echo the last add
+  (display), `quantity_base` is the authoritative amount.
 - `grocery.py` — `GroceryListCreate {name: str|None, recipe_ids: list[int]
   (non-empty, unique, all must exist — else 422), multipliers: dict[int, float] = {}}`
   (each multiplier `gt=0`, finite, #13; **keys must be a subset of `recipe_ids`,
   else 422 — #H4**);
   `GroceryListItemIn {item, quantity: float|None gt=0 (finite), unit: str|None}`;
   `GroceryListItemUpdate {checked: bool|None, quantity, unit, item}` — 409 if the
-  target line is `added_to_inventory` (frozen after submit, #6);
+  target line is `added_to_inventory` (frozen after submit, #6) or the list is
+  `archived` (#R5);
   `GroceryListItemRead {id, item, normalized_name, quantity, unit, checked,
   checked_at, submitted_at, source, nettable, added_to_inventory,
   applied_quantity, applied_unit}` (#6);
   `GroceryListRead {id, name, status, source_recipe_ids, created_at, created_by,
-  items}`.
+  items}`. `POST /{id}/submit` and `POST /{id}/archive` both return
+  `GroceryListRead`; `submit` on a non-`active` list and `archive` guard on
+  `status='active'` (#R5).
 
 **PUT nested semantics (full replace):**
 ```
@@ -571,7 +695,9 @@ factory (#H2): `app = create_app(test_settings, test_engine)` where
 `test_settings` has `allow_registration=true` (no code), and `test_engine` is the
 in-memory `StaticPool` engine with the `PRAGMA foreign_keys=ON` / `busy_timeout`
 connect listener (#14) + `create_all`/`drop_all`. `get_db` is still overridden
-via `dependency_overrides` for request-scoped sessions.
+via `dependency_overrides` for request-scoped sessions. `test_concurrency.py`
+opts out of the shared engine — it builds its own **file-backed** SQLite DB
+(`tmp_path`) with two independent engines/connections (#R3).
 - `user` — registers a default user via `POST /api/auth/register`.
 - `auth_client` — `TestClient` with `Authorization: Bearer <token>` preset;
   **becomes the default**. Existing `test_recipes.py` switches `client` →
@@ -580,17 +706,24 @@ via `dependency_overrides` for request-scoped sessions.
 
 New / changed test files:
 - `test_units.py` — pure. Both-way conversions, plurals/abbrevs, unknown → None,
-  cross-dimension incompatible, count handling, `add_quantities` merge + bucketing.
+  cross-dimension incompatible, count handling, `add_quantities` merge + bucketing
+  incl. **same-unit opaque merges (`2 can` + `1 can` → `3 can`), different opaque
+  units stay separate** (#R1); `bucket_of`.
 - `test_ingredient_parse.py` — pure. `"2 tbsp olive oil"`, `"1 1/2 cups flour"`,
   `"½ tsp salt"`, `"salt to taste"`, `"3 large eggs"`, `"1 (14 oz) can tomatoes"`,
   garbage → raw fallback.
 - `test_inventory_math.py` — pure. availability (all 5 statuses; **duplicate
-  ingredient rows aggregated** so stock isn't double-counted, #4; `have_uncertain`
-  ⇒ `all_available` false, #4); `generate_lines` (consolidation across 2 recipes,
-  netting against summed compatible rows, skip in-stock, non-nettable surfaced);
-  `deduct` (clamp at 0, mismatch skipped, cross-unit convert, `requested` vs
-  `deducted` recorded, #16); `add_to_inventory` (new bucket row, upsert within a
-  bucket, **incompatible unit ⇒ a second row, never `1+500→501`**, #2).
+  ingredient rows aggregated** so stock isn't double-counted, #4; per-line `need`
+  = the row's own qty while `group_*` carry the total, #R7; **`clove` need vs
+  `bulb` stock ⇒ `have_uncertain`, not `missing`**, #R6; `have_uncertain` ⇒
+  `all_available` false, #4); `generate_lines` (consolidation across 2 recipes,
+  netting against summed compatible `quantity_base`, **`2 can` need − `1 can`
+  stock ⇒ `1 can` line**, #R1, skip in-stock, non-nettable surfaced); `deduct`
+  (clamp at 0, incompatible bucket ⇒ `have uncertain` reason not applied, #R6,
+  opaque same-unit deducts, `requested` vs `deducted` recorded, #16);
+  `add_to_inventory` (new bucket row, **`quantity_base` upsert** with a
+  cross-unit add — `1 kg` row + `500 g` ⇒ `1500` base, #R2 — **incompatible unit
+  ⇒ a second row, never `1+500→501`**, #2).
 - `test_auth.py` — anonymous `client`. register 201 / 409 dup / 403 when
   `RECIPE_ALLOW_REGISTRATION=false` / 403 wrong `code` when a code is configured /
   422 short pw (#15); login 200+token / 401 bad pw / 401 unknown user; `/me` 200
@@ -604,19 +737,29 @@ New / changed test files:
   still returned by both endpoints after its recipe is deleted (#H5).
 - `test_recipes.py` — expanded, `auth_client`. nested create/read (positions,
   computed `normalized_name`); PUT clears old ingredients; steps/tags round-trip;
-  `/availability?multiplier=2`; `/cook` writes `CookLog` + mutates inventory
-  (clamp, mismatch; deduction dict carries `requested`/`deducted`/`before`/
-  `after`, #16); `cook {deduct:false}` leaves inventory untouched but still
-  writes a `CookLog`; `GET .../cook-logs` newest-first across both modes.
+  `/availability?multiplier=2` (per-line `need` vs `group_*`, #R7); `/cook`
+  writes `CookLog` + mutates inventory (clamp, incompatible bucket; deduction
+  dict carries `requested`/`deducted`/`before`/`after`, #16); `cook
+  {deduct:false}` leaves inventory untouched but still writes a `CookLog`;
+  `GET .../cook-logs` newest-first across both modes.
 - `test_inventory.py` — CRUD, `(match_name, unit_bucket)` upsert + composite
-  uniqueness, same food in two incompatible units → two rows (#2), editing
-  `match_name` re-points matching, negative / non-finite qty rejected (#13).
+  uniqueness, cross-unit add merges via `quantity_base` (#R2), same food in two
+  incompatible units → two rows (#2), editing `match_name` re-points matching,
+  negative / non-finite qty rejected (#13).
 - `test_grocery.py` — generate from 2 selected recipes (consolidation + netting),
   manual item add, **check off → inventory unchanged** (#6), edit a checked line
   then submit → inventory reflects the edited value, `POST /submit` → inventory
   up + line frozen (`added_to_inventory`, `applied_quantity` set), PATCH a frozen
-  line → 409, uncheck before submit → no-op, re-submit picks up only newly-checked
-  lines, delete list cascades items, non-nettable line present.
+  line → 409, uncheck before submit → no-op, **`submit` does NOT archive; check a
+  further line and re-submit picks it up (incremental submit works)** (#R5),
+  **`submit` with nothing checked → 200 no-op** (#R5), `POST /archive` →
+  `status=archived` and a later PATCH/submit → 409 (#R5), sequential
+  double-submit idempotency, delete list cascades items, non-nettable line
+  present.
+- `test_concurrency.py` — **file-backed SQLite, two connections** (#R3). Two
+  `cook`s racing on a shared ingredient → final `quantity_base` is the correct
+  total, both `CookLog`s honest (no lost update). Two `submit`s racing → each
+  checked line applied exactly once.
 
 `pyproject.toml` `testpaths`/`addopts` unchanged. No mypy/lint added (ethos).
 
@@ -631,7 +774,8 @@ New / changed test files:
 - **Phase 2 — auth + app factory.** Introduce `create_app(settings, engine)` in
   `main.py` and `make_engine` / `make_session_factory` in `database.py`; the
   module-level `app` calls the factory. Add the `PRAGMA foreign_keys=ON` /
-  `busy_timeout` connect listener (prod + test engines, #14/#8). `User`/`Session`
+  `busy_timeout` connect listener **and the `BEGIN IMMEDIATE` transaction hook**
+  (prod + test engines, #14/#8/#R3). `User`/`Session`
   models, `security.py`, `schemas/auth.py` (incl. `code`), `routers/auth.py`
   (registration default off + `code` check, #15), `config` additions
   (`allow_registration` default false). conftest: build via the factory with a
@@ -646,28 +790,37 @@ New / changed test files:
   (#H4). Delete `recipe.db`. End: full structured recipe CRUD. **No photo.**
 - **Phase 4 — inventory + math services.** `InventoryItem` model with
   `(match_name, unit_bucket)` composite unique + editable `match_name` +
-  `CHECK(quantity >= 0)` (#2); `services/inventory_math.py` (`check_availability`
-  with aggregation + `all_available` semantics #4; `add_to_inventory_calc` as a
-  bucketed upsert, no blind `+=` #2; `deduct_calc` recording
-  `requested`/`deducted`/`before`/`after` #16); `routers/inventory.py` CRUD incl.
-  PATCH `match_name`; `GET /api/recipes/{id}/availability`. `test_inventory.py`,
+  **`quantity_base` as source of truth + `CHECK(quantity_base >= 0)`, `quantity`
+  / `unit` display-only** (#2/#R2); `services/inventory_math.py`
+  (`check_availability` with aggregation, cross-bucket `have_uncertain` (#R6),
+  per-line `need` + `group_*` (#R7), opaque arithmetic without `to_base` (#R1);
+  `add_to_inventory_calc` converts to base then proposes the
+  `quantity_base += …` upsert, no `convert()` (#R2); `deduct_calc` on
+  `quantity_base`, recording `requested`/`deducted`/`before`/`after` #16);
+  `routers/inventory.py` CRUD incl. PATCH `match_name`;
+  `GET /api/recipes/{id}/availability`. `test_inventory.py`,
   `test_inventory_math.py`, availability tests. End: inventory CRUD +
   missing-ingredient check.
 - **Phase 5 — cook = deduct + made-tracking.** `CookLog` model (with
   `deducted: bool = True` from the start; deductions carry
   `requested`/`deducted`/`before`/`after`, #16); `POST /api/recipes/{id}/cook
   {multiplier, deduct=true}` using `deduct_calc` when `deduct=true` (service
-  proposes, router applies atomically in one transaction, #H3), skipping it (but
-  still logging) when `deduct=false`; `GET /api/recipes/{id}/cook-logs`
-  (made-history, newest first); `routers/cook_logs.py` — `GET /api/cook-logs`
-  (paginated) + `GET /api/cook-logs/{log_id}` (#H5). Cook + made-history tests in
-  `test_recipes.py`; global reads in `test_cook_logs.py` (#H5).
+  proposes, router applies atomically in one **`BEGIN IMMEDIATE`** transaction,
+  #H3/#R3), skipping it (but still logging) when `deduct=false`;
+  `GET /api/recipes/{id}/cook-logs` (made-history, newest first);
+  `routers/cook_logs.py` — `GET /api/cook-logs` (paginated) +
+  `GET /api/cook-logs/{log_id}` (#H5). Cook + made-history tests in
+  `test_recipes.py`; global reads in `test_cook_logs.py` (#H5);
+  **`test_concurrency.py` cook-race** (#R3).
 - **Phase 6 — grocery lists.** `GroceryList`/`GroceryListItem` models (with
   `submitted_at` + `applied_*` cols, #6); `generate_lines` in `inventory_math.py`
-  (netting against summed compatible rows); `routers/grocery.py` (create-from-
-  recipes, get, list, add manual item, **PATCH = state/field edits only, 409 on
-  frozen lines**, `POST /{id}/submit` → one-txn `add_to_inventory` + freeze,
-  delete). `test_grocery.py`. End: backend feature-complete.
+  (netting against summed compatible `quantity_base`, opaque same-unit nets,
+  #R1/#R2); `routers/grocery.py` (create-from-recipes, get, list, add manual
+  item, **PATCH = state/field edits only, 409 on frozen lines / archived list**,
+  `POST /{id}/submit` → one `BEGIN IMMEDIATE` txn `add_to_inventory` + freeze,
+  **no status change** (#R5), `POST /{id}/archive` → guarded
+  `status='active'→'archived'` (#R5), delete). `test_grocery.py`;
+  **`test_concurrency.py` submit-race** (#R3). End: backend feature-complete.
 - **Phase 7 — docs.** Update `README.md`, `CLAUDE.md`, `backend/.env.example`
   (new `RECIPE_*` vars: `SESSION_TTL_DAYS`, `ALLOW_REGISTRATION`,
   `REGISTRATION_CODE`; `rm backend/recipe.db` note; new architecture & full v1
@@ -685,9 +838,11 @@ upgrade path, design invariants for extensions, and rejected items. This section
 is authoritative for the v1↔v2 boundary and the execution detail; `features.md`
 carries the why-deferred and upgrade context.
 
-Each block below is execution-ready. `full spec` points at the section of the
-pre-trim plan (`git show 5144c25:docs/plan.md`) that carries the complete
-detail plus its adversarial-review findings.
+Each block below is execution-ready **modulo the "before v2" note it carries**
+(#R-def) — a handful of details that review pass 4 flagged as still delegated to
+the archive. `full spec` points at the section of the pre-trim plan
+(`git show 5144c25:docs/plan.md`) that carries the complete detail plus its
+adversarial-review findings.
 
 ### Photo upload
 - **Route:** `POST /api/recipes/{id}/photo` — one image under a public
@@ -726,6 +881,12 @@ detail plus its adversarial-review findings.
   502, blocked address (`169.254.169.254`, `localhost`) → 502 with no request,
   `save=true` offline.
 - **Data-model impact:** none.
+- **Before v2 (#R-def):** "stream to a byte cap" must be an actual streaming
+  read that aborts once a running byte counter exceeds the cap — **not**
+  `resp.content[:N]` after a full download. Also: `httpx.Client(trust_env=False)`
+  (ignore ambient `HTTP(S)_PROXY`), and connect to the **pre-resolved, already
+  IP-checked address** with the original `Host` header preserved, so a
+  DNS-rebind between the check and the fetch cannot redirect it.
 - *full spec: git 5144c25 §"URL import approach", §"Lightweight ingredient parser".*
 
 ### Recipe research
@@ -740,6 +901,10 @@ detail plus its adversarial-review findings.
   `query` / web-search mode** — Google Custom Search JSON API is closed to new
   customers and ends 2027-01-01 (#1); revisit with Vertex AI Search / Brave /
   Bing.
+- **Before v2 (#R-def):** the *URL list itself* must be bounded, not only the
+  optional `limit` param — after dedupe, `len(urls) > research_max_urls` → 422,
+  and the batch runs under a single total deadline so a pile of slow hosts can't
+  hang the request.
 - **Schemas:** `ResearchCompareRequest`, `IngredientStatRead`, `ResearchReport`.
 - **Config:** `research_max_urls`.
 - **Tests:** `test_research.py` via `httpx.MockTransport` — a "100% vs 10%"
@@ -769,6 +934,10 @@ detail plus its adversarial-review findings.
 - **Deps:** none.
 - **Data-model impact:** additive table; `cook_logs` already carries the FK
   target.
+- **Before v2 (#R-def):** all review-read routes are recipe-scoped, so a review
+  becomes unreachable once its recipe is deleted (its `recipe_id` goes null) —
+  the same gap #H5 fixed for cook logs. Add `GET /api/cook-logs/{log_id}/reviews`
+  or nest `reviews` in the global cook-log detail so the record stays readable.
 - *full spec: git 5144c25 §"add a review", §"Reviews" done-criterion.*
 
 ### Grocery-receipt OCR → stock
@@ -810,6 +979,12 @@ detail plus its adversarial-review findings.
   one non-mocked smoke test** — Pillow renders text to PNG, real `_ocr_image`
   reads it back, `skipif` tesseract missing (#12).
 - **Data-model impact:** additive tables only.
+- **Before v2 (#R-def):** (1) the non-mocked smoke test's `skipif` is
+  **local-only** — under `CI` a missing `tesseract` binary is a hard failure, so
+  a broken install can't ship green. (2) Upload/OCR failure cleanup is explicit:
+  stage the image in a temp file, and on any OCR timeout or DB error either
+  delete it or persist a visible `status=failed` draft with retry semantics —
+  never leave an orphaned receipt image (it is PII).
 - *full spec: git 5144c25 §"apply a receipt", §"Grocery receipt → stock"
   done-criterion, findings #5 #11 #12 #17.*
 
@@ -835,22 +1010,34 @@ detail plus its adversarial-review findings.
 
 ## Verification
 
-- `cd backend && uv sync && uv run pytest` — all suites green.
-- `cd backend && rm -f recipe.db && uv run uvicorn app.main:app --reload`, then at
+- `cd backend && uv sync && uv run pytest` — all suites green (incl.
+  `test_concurrency.py`, #R3).
+- `cd backend && rm -f recipe.db && RECIPE_ALLOW_REGISTRATION=true
+  RECIPE_REGISTRATION_CODE=devcode uv run uvicorn app.main:app --reload`, then at
   `/docs`:
-  1. `POST /api/auth/register` → copy token → Authorize.
+  1. `POST /api/auth/register {username, password, code:"devcode"}` → copy token
+     → Authorize. **Then stop the server and restart it without those two env
+     vars** (#R8) — a second `POST /api/auth/register` now returns 403.
   2. `POST /api/recipes` with nested ingredients + steps; `GET` it back nested.
-  3. `POST /api/inventory` a couple of items; `GET
-     /api/recipes/{id}/availability?multiplier=1` shows ok/short/missing.
-  4. `POST /api/recipes/{id}/cook {multiplier:1}` → inventory quantities drop;
-     `CookLog` recorded with `requested`/`deducted`/`before`/`after` per line.
+  3. `POST /api/inventory` a couple of items (e.g. `500 g flour`, `1 can
+     tomatoes`); `GET /api/recipes/{id}/availability?multiplier=1` shows
+     ok/short/missing, per-line `need` vs `group_*` (#R7), and `have_uncertain`
+     when the only stock is in an incompatible unit (#R6).
+  4. `POST /api/recipes/{id}/cook {multiplier:1}` → inventory `quantity_base`
+     drops; `CookLog` recorded with `requested`/`deducted`/`before`/`after` per
+     line.
   5. `POST /api/grocery {recipe_ids:[id]}` → list has only shortfalls,
-     consolidated; `PATCH` a line `checked:true` → **inventory unchanged**;
-     `POST /api/grocery/{id}/submit` → inventory rises, line `added_to_inventory`
-     + `applied_quantity` set; `PATCH` that line again → 409.
-  6. `POST /api/recipes/{id}/cook {multiplier:1, deduct:false}` → inventory
+     consolidated (`2 can` need − `1 can` stock ⇒ `1 can` line, #R1); `PATCH` a
+     line `checked:true` → **inventory unchanged**; `POST
+     /api/grocery/{id}/submit` → inventory rises, line `added_to_inventory` +
+     `applied_quantity` set, **list still `status:active`** (#R5); check another
+     line and `submit` again → only that line is added; `PATCH` a frozen line →
+     409.
+  6. `POST /api/grocery/{id}/archive` → `status:archived`; a further
+     `PATCH`/`submit` → 409 (#R5).
+  7. `POST /api/recipes/{id}/cook {multiplier:1, deduct:false}` → inventory
      unchanged, entry appears in `GET /api/recipes/{id}/cook-logs`.
-  7. `GET /api/cook-logs` lists cook logs across recipes newest-first;
+  8. `GET /api/cook-logs` lists cook logs across recipes newest-first;
      `GET /api/cook-logs/{id}` returns one; delete that recipe → the log is
      still returned (#H5).
 - Confirm `GET` on any data route without `Authorization` → 401.
@@ -861,12 +1048,14 @@ detail plus its adversarial-review findings.
 
 - `backend/app/models.py` — `User`/`Session`, expanded `Recipe` +
   `RecipeIngredient` (with reserved-nullable `photo_path` / `raw_text`),
-  `InventoryItem` composite unique `(match_name, unit_bucket)` (#2),
+  `InventoryItem` composite unique `(match_name, unit_bucket)` (#2) +
+  `quantity_base` source-of-truth / `quantity`+`unit` display-only (#R2),
   `CookLog.deducted` + richer `deductions` (#16), `GroceryList` /
   `GroceryListItem` with `submitted_at` / `applied_*` (#6), `CHECK` constraints
   (#13).
 - `backend/app/database.py` — `make_engine` / `make_session_factory` helpers
-  (#H2) + `PRAGMA foreign_keys=ON` + `busy_timeout` connect listener (#14/#8).
+  (#H2) + `PRAGMA foreign_keys=ON` + `busy_timeout` connect listener (#14/#8) +
+  `BEGIN IMMEDIATE` transaction hook for mutating paths (#R3).
 - `backend/app/main.py` — `create_app(settings, engine)` factory (#H2): 5
   routers, `/api/health`, lifespan `create_all` on the injected engine. No
   StaticFiles mount in v1.
@@ -876,7 +1065,8 @@ detail plus its adversarial-review findings.
   `GET /api/cook-logs/{log_id}` (#H5) — new router.
 - `backend/app/routers/inventory.py` — CRUD incl. PATCH `match_name` — new router.
 - `backend/app/routers/grocery.py` — lists + `PATCH` items (state/edit only) +
-  `POST /{id}/submit` (#6) + delete — new router.
+  `POST /{id}/submit` (#6, no auto-archive #R5) + `POST /{id}/archive` (#R5) +
+  delete — new router.
 - `backend/app/routers/auth.py` — register/login/logout/me — new router.
 - `backend/app/services/inventory_math.py` — `check_availability`,
   `generate_lines`, `add_to_inventory_calc`, `deduct_calc` (pure, propose-only,
@@ -891,6 +1081,8 @@ detail plus its adversarial-review findings.
 - `backend/tests/conftest.py` — factory-built app `create_app(test_settings,
   test_engine)` (#H2), FK-pragma on the test engine (#14), registration-on
   settings, `auth_client` (new default) + `user`.
+- `backend/tests/test_concurrency.py` — file-backed SQLite, two connections;
+  cook-race + submit-race assert no lost update (#R3) — new test file.
 
 ## Status
 
@@ -904,4 +1096,10 @@ detail plus its adversarial-review findings.
 - [x] De-scoped to core-loop v1 (2026-08-31); photo / receipt OCR / URL import /
       recipe research / per-cook reviews → §Deferred to v2. Pre-trim plan
       archived at `git show 5144c25:docs/plan.md`.
+- [x] Review pass 4 folded in (2026-08-31): opaque arithmetic (#R1), canonical
+      `quantity_base` upsert (#R2), `BEGIN IMMEDIATE` + `test_concurrency.py`
+      (#R3), narrowed descriptor stoplist (#R4), no grocery auto-archive +
+      `/archive` endpoint (#R5), cross-bucket `have_uncertain` (#R6), per-line
+      `need` + `group_*` fields (#R7), verification registration env vars (#R8),
+      deferred-block wording (#R-def).
 - [ ] Phase 0 — reset & deps (not started; awaiting go-ahead)
