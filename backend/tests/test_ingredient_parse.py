@@ -169,6 +169,26 @@ def test_to_taste_sets_note_and_nulls_quantity() -> None:
     assert r2["item"] == "black pepper"
 
 
+def test_to_taste_nulls_an_already_parsed_quantity() -> None:
+    # spec.md §2.3: "a trailing / embedded 'to taste' -> note = 'to taste' and
+    # quantity = None". A leading number IS parsed here, so this pins the "null
+    # any quantity that was parsed" half — a suffix-only rule that leaves the
+    # parsed quantity in place must fail.
+    r = parse_ingredient("1 tsp salt to taste")
+    assert r["quantity"] is None
+    assert r["note"] == "to taste"
+    assert r["item"] == "salt"
+
+
+def test_embedded_to_taste_with_trailing_text() -> None:
+    # "to taste" is not at the end of the string here; an endswith() check would
+    # miss it. Note is still set and the parsed quantity is still nulled.
+    r = parse_ingredient("2 tbsp olive oil to taste for the dressing")
+    assert r["quantity"] is None
+    assert r["note"] == "to taste"
+    assert isinstance(r["item"], str) and "olive oil" in r["item"]
+
+
 def test_trailing_parenthetical_becomes_note_without_parens() -> None:
     r = parse_ingredient("2 cups flour (sifted)")
     _assert_quantity(r["quantity"], 2.0)

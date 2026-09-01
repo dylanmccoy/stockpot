@@ -240,6 +240,17 @@ def test_plural_round_trip_opaque_tokens(singular: str, plural: str) -> None:
     assert bucket_of(plural) == bucket_of(singular) == f"opaque:{singular}"
 
 
+def test_to_taste_is_a_stable_opaque_token() -> None:
+    # "to taste" is the one OPAQUE_TOKENS value with no plural form, so it is
+    # not covered by the parametrized round-trip above. It must still normalize
+    # to itself unchanged (not be rewritten to another opaque key) and land in
+    # its own opaque bucket (spec.md §2.2 opaque list + §7 test_units row).
+    assert normalize_unit_token("to taste") == "to taste"
+    assert normalize_unit_token("  To Taste  ") == "to taste"
+    assert bucket_of("to taste") == "opaque:to taste"
+    assert canon_unit(bucket_of("to taste")) == "to taste"
+
+
 def test_es_group_opaque_plurals_named() -> None:
     # A bare trailing-"s" strip would leave "boxe"/"dashe" and split the bucket.
     assert normalize_unit_token("boxes") == "box"
