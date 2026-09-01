@@ -2,11 +2,10 @@
 
 Barebones full-stack scaffold: FastAPI + SQLAlchemy + SQLite backend, React + TypeScript (Vite) frontend.
 
-> **Direction:** `docs/plan.md` holds the approved implementation plan — a backend-only
-> v1 for a household recipe keeper + food-inventory tracker (structured recipes,
-> unit-aware inventory netting, cook-deducts-stock, grocery lists, URL import, token
-> auth), built in phases. The scaffold below is the starting point for that work.
-> For deferred features, infrastructure decisions, and design invariants, see
+> **Direction:** `docs/plan.md` is the backend-v1 delivery roadmap and
+> `docs/spec.md` is its technical contract. v1 covers token auth, structured
+> recipes, unit-aware inventory, cook/deduct history, and grocery lists. The
+> scaffold below is the starting point; deferred work lives in
 > `docs/features.md`.
 
 ## Layout

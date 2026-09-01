@@ -1,75 +1,190 @@
-# Features & Roadmap
+# Future Features and Roadmap
 
-See `docs/plan.md` for the v1 backend scope (what is shipped). This file
-documents deferred capabilities, infrastructure decisions pending v1 scope
-expansion, design invariants that extensions must preserve, and features
-rejected outright.
+This file owns work outside backend v1: deferred product capabilities,
+infrastructure upgrades, extension invariants, and deliberately excluded
+directions. The shipped v1 boundary and phase order live in [`plan.md`](plan.md);
+the normative v1 behavior lives in [`spec.md`](spec.md).
 
-**v1 was de-scoped on 2026-08-31** to the core cooking loop only. Five features
-that an earlier revision of the plan carried — photo upload, URL import, recipe
-research, per-cook reviews, grocery-receipt OCR — moved to v2. Their
-execution-ready specs live in `docs/plan.md` §"Deferred to v2"; the pre-trim
-plan and its 22 review findings are archived at `git show 5144c25:docs/plan.md`.
-This file tracks them under **Deferred to v2** below and does not duplicate the
-detail — `plan.md` is authoritative for the v1↔v2 boundary.
+The pre-trim plan and its original review detail remain available at
+`git show 5144c25:docs/plan.md`.
 
-**Project:** [github.com/dylanmccoy/stockpot](https://github.com/dylanmccoy/stockpot) (public repo)
+## Current v1 boundary
 
-**Status:** v1 plan approved & implementation-ready (9-phase build, see `plan.md` §Build sequence). Backend-only: auth, structured recipes, inventory, availability checks, cook-deducts, grocery-list submit, unit conversion (pure). Frontend deferred to later effort.
+Backend v1 contains authentication, structured recipes, inventory, availability,
+cook/deduct history, grocery-list generation and submit, unit conversion, tests,
+and LAN operating documentation. It has eight phases numbered 0–7.
 
-## What v1 actually ships
+It does not contain uploads, outbound HTTP, OCR, a rebuilt frontend, migrations,
+meal planning, or multi-household authorization.
 
-Auth (opaque sessions, registration default-off) · structured recipes + nested
-ingredient rows · inventory with `(match_name, unit_bucket)` identity ·
-`GET /availability` missing-ingredient check · cook = deduct + `CookLog` (both
-`deduct` modes) · per-recipe and global cook-log reads · grocery-list generation
-(netted against stock) + `POST /submit` (adds checked lines to inventory) · pure
-unit-conversion module. 8 build phases (9 with docs). No file uploads, no outbound HTTP, no
-OCR.
+## Standing constraints for future work
 
-## What's discussed but not in v1 (deferred or different scope)
+- Preserve one-way imports and the app-factory test seam.
+- Keep live network and subprocess seams narrow and mocked in ordinary tests.
+- Keep server-side inventory math canonical and auditable.
+- Preserve raw source evidence when imports or OCR create editable records.
+- Keep forward-only actions explicit and snapshot what was actually applied.
+- Do not introduce an LLM or hosted AI dependency.
 
-| Item | Status | Where it lives |
-| --- | --- | --- |
-| **Frontend (React SPA)** | Discussed in detail; separate later effort | `docs/features.md` §Deferred features — pages, auth, routing outlined |
-| **URL recipe import** | Phase 7 code is backend-ready (in `plan.md`); not shipped in v1 | `docs/plan.md` §URL import approach; backend-ready but user chose backend-only v1 |
-| **Photo upload** | Full spec drafted; de-scoped from v1 on 2026-08-31 | `git show 5144c25:docs/plan.md` §Photo upload; `features.md` §Deferred to v2 |
-| **Recipe research (URL batch)** | Full spec drafted; depends on URL import; v2 | `git show 5144c25:docs/plan.md` §Recipe research; `features.md` §Deferred to v2 |
-| **Per-cook reviews** | Full spec drafted; de-scoped from v1 | `git show 5144c25:docs/plan.md` §Per-cook reviews; `features.md` §Deferred to v2 |
-| **Grocery-receipt OCR** | Full spec drafted; highest cost; de-scoped from v1 | `git show 5144c25:docs/plan.md` §Grocery-receipt OCR; `features.md` §Deferred to v2 |
-| **Web search query mode** | Outlined; depends on URL import; post-v2 | `docs/features.md` §Recipe research — free-text query mode |
+## Deferred to v2
 
-The pre-trim plan at `git show 5144c25:docs/plan.md` (1117 lines, with 22 adversarial-review findings) carries the full execution-ready spec for all five de-scoped features — nothing is lost, only deferred.
+| Feature | Hook already present in v1 | Why deferred |
+|---|---|---|
+| Photo upload | Nullable `recipes.photo_path` | Adds multipart handling, file lifecycle, and a static mount without strengthening the core loop |
+| URL import | Active `recipe_ingredients.raw_text` and structured recipe creation | Adds runtime HTTP, scraping, and an SSRF-sensitive fetch boundary |
+| Recipe research | URL-import preview DTOs can be reused | Depends on URL import and is exploratory rather than transactional |
+| Per-cook reviews | Durable `cook_logs` provide the attachment point | Useful history, but not required to complete the cook/inventory loop |
+| Grocery-receipt OCR | Inventory additive upsert is the apply target | Highest operational cost: native OCR, private files, image limits, and concurrency controls |
 
-## Standing v1 constraints
+The specifications below are execution-ready except for the explicit
+**Before v2** decisions attached to individual features. The archived pre-trim
+plan remains the source for still-earlier exploration, not for missing current
+requirements.
 
-All future work must preserve these choices:
 
-- **LAN-only, no remote hosting yet** — no in-app HTTPS, no email, no third-party IdP.
-- **SQLite + no migrations** — `create_all()` on startup; data loss on schema
-  change. Alembic is the next infrastructure step after v1's first schema
-  change (see Deferred, **Migrations**).
-- **Single full-trust household** — `created_by_id` is attribution only; every
-  authed user can read/write all data. Multi-user / per-resource authz is a
-  later upgrade.
-- **No LLM / AI services** — when research and receipt parsing land in v2 they
-  stay pure heuristics.
-- **No live network in tests** — v1 makes no outbound calls at all. When
-  `fetch_bytes` (URL import + research) and `_ocr_image` (receipt OCR) arrive in
-  v2 they are the only network/subprocess seams, both mocked offline.
+### Photo upload
+- **Route:** `POST /api/recipes/{id}/photo` — one image under a public
+  `upload_dir`, records the relative path in `recipes.photo_path` (column
+  already present), served at `/uploads/...`. Wrong content-type → 415/422,
+  oversize → 413.
+- **Deps:** `python-multipart` (Starlette needs it for `multipart/form-data`).
+- **Factory change:** `create_app` `os.makedirs(settings.upload_dir)` **before**
+  mounting `/uploads` StaticFiles; `config` gains `upload_dir`,
+  `max_upload_bytes`.
+- **Data-model impact:** none — `photo_path` is already a nullable column.
+- *full spec: git 5144c25 §"Done criteria" item 3, §"Module / router layout".*
 
-## Deferred to v2 (carried by the pre-trim plan, cut 2026-08-31)
+### URL import (fast-follow)
+- **Service `services/import_recipe.py`:**
+  `fetch_bytes(url, *, limit, allowed_types) -> bytes` — the **only** network
+  call, SSRF-guarded (#H1/#10b): HTTP(S) scheme allowlist; resolve host and
+  reject private/loopback/link-local/ULA/multicast/`169.254.169.254`;
+  `follow_redirects=False` (3xx → 502); `raise_for_status`; `Content-Type`
+  allowlist; stream to a byte cap. `RECIPE_IMPORT_ALLOW_PRIVATE=true` re-opens it
+  for a trusted LAN. Split from
+  `scrape_preview(html, url, wild_mode=False) -> RecipeImportPreview` (pure;
+  wraps `recipe-scrapers`, normal then wild mode; the route holds `html` for the
+  retry, #10a).
+- **Route:** `POST /api/recipes/import {url, save?}` → 200 `RecipeImportPreview`
+  (or 201 `RecipeRead` when `save=true`, image downloaded through the same
+  `fetch_bytes`). Unsupported site → 422 `unsupported:true`; any fetch failure →
+  502.
+- **DTO:** `ImportIngredient` = `RecipeIngredientIn` + `{raw_text, normalized_name}`
+  (#3) — populates `recipe_ingredients.raw_text` (column already present).
+- **Deps:** `recipe-scrapers`; promote `httpx` from dev to runtime.
+- **Config:** `import_max_bytes`, `import_fetch_timeout` (10s), `max_image_bytes`
+  (~5 MiB), `import_allow_private` (default false).
+- **Tests:** `test_import.py` via `httpx.MockTransport` — happy path, wild-mode
+  retry, unsupported → 422, non-2xx / redirect / oversize / wrong content-type →
+  502, blocked address (`169.254.169.254`, `localhost`) → 502 with no request,
+  `save=true` offline.
+- **Data-model impact:** none.
+- **Before v2 (#R-def):** "stream to a byte cap" must be an actual streaming
+  read that aborts once a running byte counter exceeds the cap — **not**
+  `resp.content[:N]` after a full download. Also: `httpx.Client(trust_env=False)`
+  (ignore ambient `HTTP(S)_PROXY`), and connect to the **pre-resolved, already
+  IP-checked address** with the original `Host` header preserved, so a
+  DNS-rebind between the check and the fetch cannot redirect it.
+- *full spec: git 5144c25 §"URL import approach", §"Lightweight ingredient parser".*
 
-Full spec for each is in `docs/plan.md` §"Deferred to v2". Summary + why-deferred
-only here.
+### Recipe research
+- **Service `services/recipe_research.py` (pure):**
+  `compare_ingredients(previews) -> ResearchReport` — for a batch of scraped
+  `RecipeImportPreview`s, report what fraction contain each `normalized_name`
+  (one recipe counts an ingredient once). Nothing is persisted.
+- **Route `routers/research.py`:** `POST /api/research/compare {urls, limit?}`
+  (`limit` capped at `settings.research_max_urls`; empty `urls` → 422). Reuses
+  `fetch_bytes` + `scrape_preview`, so the whole batch inherits the SSRF guard
+  (#H1). Per-URL fetch/parse failures collected in `failed`, not fatal. **No
+  `query` / web-search mode** — Google Custom Search JSON API is closed to new
+  customers and ends 2027-01-01 (#1); revisit with Vertex AI Search / Brave /
+  Bing.
+- **Before v2 (#R-def):** the *URL list itself* must be bounded, not only the
+  optional `limit` param — after dedupe, `len(urls) > research_max_urls` → 422,
+  and the batch runs under a single total deadline so a pile of slow hosts can't
+  hang the request.
+- **Schemas:** `ResearchCompareRequest`, `IngredientStatRead`, `ResearchReport`.
+- **Config:** `research_max_urls`.
+- **Tests:** `test_research.py` via `httpx.MockTransport` — a "100% vs 10%"
+  comparison, one failing URL lands in `failed`, a blocked-address URL lands in
+  `failed`, empty `urls` → 422, repeated ingredient within one recipe counts
+  once.
+- **Deps:** none beyond URL import's.
+- **Data-model impact:** none — computed per request, no table.
+- *full spec: git 5144c25 §"compare ingredients", §"Recipe research" done-criterion.*
 
-| Feature | Hook already in v1 | Why deferred |
-| --- | --- | --- |
-| **Photo upload** | `recipes.photo_path` is a reserved nullable column | Isolated and low-risk, but not part of the cooking loop; adds `python-multipart` + a StaticFiles mount + an upload dir |
-| **URL import** (`POST /api/recipes/import`) | `recipe_ingredients.raw_text` is a reserved nullable column | Clean fast-follow (`recipe-scrapers` does the parsing), but out of the smallest v1; brings `recipe-scrapers`, promotes `httpx` to runtime, and needs the SSRF-guarded `fetch_bytes` |
-| **Recipe research** (`POST /api/research/compare`, URL-batch) | none needed — computed per request, no table | Depends on URL import's `fetch_bytes` + `scrape_preview`; not part of the cook-at-home loop |
-| **Per-cook reviews** | `cook_logs` already carries the FK target a review attaches to | Pleasant, not friction-reducing; additive `recipe_reviews` table + `CookEventMini` nesting on `RecipeRead` |
-| **Grocery-receipt OCR** (`/api/receipts`) | `add_to_inventory` (the upsert `submit`/`cook` share) is the apply target | Highest cost, most tangential: a `tesseract-ocr` system package, `pytesseract` + `Pillow`, decompression-bomb guards, a process semaphore, private file storage + an auth'd `FileResponse` route, a non-mocked CI smoke test |
+### Per-cook reviews
+- **Table `recipe_reviews`:** `id` PK · `cook_log_id` FK cook_logs CASCADE, not
+  null · `recipe_id` FK recipes SET NULL (denormalized) · `rating` int? 1-5 ·
+  `comment` Text="" · `changes_next_time` Text="" · `created_at` ·
+  `created_by_id` FK users?.
+- **Routes:** `POST /api/recipes/{id}/cook-logs/{log_id}/reviews
+  {rating?, comment?, changes_next_time?}` (404 if the cook log isn't this
+  recipe's); `GET /api/recipes/{id}/reviews`. `RecipeRead` additionally nests
+  `reviews: list[RecipeReviewRead]` newest-first, each nesting a
+  `CookEventMini {cook_log_id, cooked_at, multiplier, deducted}` (#16) so the
+  reviewed event's date/mode show without a second lookup. Append-only — reviews
+  are never edited/deleted in v1's stance.
+- **Schemas:** `RecipeReviewIn`, `RecipeReviewRead`, `CookEventMini`.
+- **Tests:** create a review against a cook log; 404 on mismatched
+  recipe/cook-log; `GET /api/recipes/{id}` nests reviews newest-first with their
+  `cook_event`.
+- **Deps:** none.
+- **Data-model impact:** additive table; `cook_logs` already carries the FK
+  target.
+- **Before v2 (#R-def):** all review-read routes are recipe-scoped, so a review
+  becomes unreachable once its recipe is deleted (its `recipe_id` goes null) —
+  the same gap #H5 fixed for cook logs. Add `GET /api/cook-logs/{log_id}/reviews`
+  or nest `reviews` in the global cook-log detail so the record stays readable.
+- *full spec: git 5144c25 §"add a review", §"Reviews" done-criterion.*
+
+### Grocery-receipt OCR → stock
+- **Tables:** `receipt_imports` (`id` · `image_path` under a **private**
+  `receipts_dir` · `raw_ocr_text` · `status` `draft`/`applied` · `created_at` ·
+  `applied_at?` · `created_by_id?`) and `receipt_items` (`id` · `receipt_id` FK
+  CASCADE · `position` · `raw_text` OCR original, **never overwritten** (#17) ·
+  `item` editable · `normalized_name` recomputed on edit · `quantity` float? >0
+  finite · `unit?` · `price_cents?` OCR original · `include` bool=true ·
+  `applied` bool=false · `applied_quantity?` · `applied_unit?` snapshot (#5)).
+- **Services:** `receipt_ocr._ocr_image(path)` — the **only** OCR call: Pillow
+  format/frame/`MAX_IMAGE_PIXELS` validation (decompression-bomb → reject),
+  `pytesseract(timeout=…)` under a `Semaphore` (#12). `receipt_parse.parse_receipt_text`
+  — pure heuristic line-guesser (all-caps, broken decimals, drop
+  `SUBTOTAL`/`TAX`/`TOTAL` noise).
+- **Routes `routers/receipts.py`:** `POST /api/receipts` (photo upload → OCR →
+  parse → draft lines); `GET` list/detail; `GET /{id}/image` — auth'd
+  `FileResponse`, image **never** under `/uploads` (#11); `PATCH .../items/{item_id}`
+  — per-item, draft-only, recomputes `normalized_name`, leaves `raw_text` /
+  `price_cents` intact (#17); `POST .../apply` — one transaction; **422 if any
+  included line lacks a finite positive quantity** (#5), else adds every included
+  line to inventory via `add_to_inventory`, snapshots `applied_*`, receipt →
+  `applied` (immutable); `DELETE` (blocked once applied). Double-apply → 409
+  (guarded `UPDATE ... WHERE status='draft'`).
+- **Health:** `/api/health` reports tesseract availability (#12).
+- **Deps:** `pytesseract` + `Pillow` (Python); **`tesseract-ocr` system
+  package** on dev/CI/deploy hosts (`apt-get install tesseract-ocr`; add to
+  README, CI workflow, Makefile setup target).
+- **Config:** `receipts_dir`, `ocr_timeout_seconds`, `ocr_max_concurrency`,
+  `max_image_pixels`.
+- **Factory change:** `os.makedirs(receipts_dir)` at build; no StaticFiles mount
+  for it.
+- **Tests:** `test_receipt_parse.py` (pure, canned noisy OCR text);
+  `test_receipts.py` (monkeypatch `_ocr_image` for flow tests: draft creation,
+  per-item PATCH keeps `raw_text`/`price_cents`, apply writes `applied_quantity`,
+  apply with null/≤0 line → 422 and receipt stays draft, double-apply → 409,
+  delete blocked once applied, `GET /{id}/image` needs auth and is not under
+  `/uploads`, bad content-type / oversize / decompression-bomb rejected) **plus
+  one non-mocked smoke test** — Pillow renders text to PNG, real `_ocr_image`
+  reads it back, `skipif` tesseract missing (#12).
+- **Data-model impact:** additive tables only.
+- **Before v2 (#R-def):** (1) the non-mocked smoke test's `skipif` is
+  **local-only** — under `CI` a missing `tesseract` binary is a hard failure, so
+  a broken install can't ship green. (2) Upload/OCR failure cleanup is explicit:
+  stage the image in a temp file, and on any OCR timeout or DB error either
+  delete it or persist a visible `status=failed` draft with retry semantics —
+  never leave an orphaned receipt image (it is PII).
+- *full spec: git 5144c25 §"apply a receipt", §"Grocery receipt → stock"
+  done-criterion, findings #5 #11 #12 #17.*
 
 ### Recipe research — free-text `query` mode (v2+, after URL-batch research lands)
 
@@ -89,24 +204,7 @@ only here.
     Search failures → land in `failed` or return 502 (implementation choice).
   - **Config:** `RECIPE_WEB_SEARCH_PROVIDER` (default empty/off) and
     `RECIPE_WEB_SEARCH_KEY` (env var).
-
-## v1 build sequence
-
-The backend is built in 9 phases, each ending with `uv run pytest` green:
-
-1. **Phase 0 — reset & deps:** add new dependencies (`recipe-scrapers`, `pwdlib[argon2]`, `python-multipart`, `httpx`), delete old `recipe.db`.
-2. **Phase 1 — pure core:** `normalize.py`, `units.py`, ingredient parser + tests (no HTTP).
-3. **Phase 2 — auth:** User/Session models, bearer-token login, `auth.py` router, gating. Tests: 401 on missing token.
-4. **Phase 3 — structured recipes + photo:** Replace flat `ingredients`/`instructions` with `RecipeIngredient` child table (qty/unit/item/note) + JSON `steps/tags`. Photo upload to `/uploads/`. Tests expand.
-5. **Phase 4 — inventory + availability:** `InventoryItem` CRUD, `check_availability` service for per-ingredient status (ok/short/missing/to_taste/have_uncertain). Tests: netting + unit conversion.
-6. **Phase 5 — cook deducts stock:** `POST /api/recipes/{id}/cook` + `CookLog` audit trail. Deduction is one-shot (no unwind). Tests: clamp at 0, unit mismatches reported.
-7. **Phase 6 — grocery lists:** `GroceryList` + `GroceryListItem` tables. `POST /api/grocery` generates from hand-picked recipes, netted against stock. `POST /api/grocery/{id}/submit` adds checked lines to inventory (one-shot, frozen after). Tests: consolidation, netting, idempotency.
-8. **Phase 7 — URL import** (backend-ready, not v1): `services/import_recipe.py` wraps `recipe-scrapers`, lightweight ingredient-string parser. Tests: monkeypatched fetch (no live HTTP).
-9. **Phase 8 — docs:** README, CLAUDE.md, `.env.example` updated (new vars, `rm recipe.db` procedure, API surface).
-
-Each phase is independently testable and independently pushable. Phase 7 (URL import) is backend-ready code but not shipped in v1. See `docs/plan.md` §Build sequence for full pseudocode and migration steps.
-
-## Deferred features (post-v2)
+## Additional deferred features
 
 | Feature | v1 status | Hook already in place | Work to add |
 | --- | --- | --- | --- |
@@ -129,7 +227,7 @@ Each phase is independently testable and independently pushable. Phase 7 (URL im
 ### Staples / low-stock alerts
 
 - **v1 status:** excluded; data model accommodates.
-- **Hook in v1:** `inventory_items` table; `CHECK(quantity >= 0)` constraint;
+- **Hook in v1:** `inventory_items` table; `CHECK(quantity_base >= 0)` constraint;
   `updated_at` timestamp.
 - **Work to add:**
   - **Schema:** add `is_staple: Mapped[bool] = mapped_column(default=False)` and

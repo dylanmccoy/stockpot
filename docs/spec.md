@@ -1,29 +1,20 @@
 # Backend v1 — Implementation Specification
 
-Derived from `docs/plan.md` (6 review passes) + the decisions recorded below.
-This document is meant to be implementable end-to-end without further questions.
-Where it and `docs/plan.md` disagree, **this document wins** for v1; the plan
-retains the rationale and the v2 roadmap.
+This is the normative implementation contract for backend v1. It defines data
+models, pure services, infrastructure, HTTP behavior, transaction semantics, and
+acceptance tests. When another planning document disagrees with this file,
+**this file wins for v1 behavior**.
 
----
+Related documents:
 
-## Open questions / assumptions
+- [`plan.md`](plan.md) — delivery order and status.
+- [`phases/`](phases/) — execution checklists that link back here.
+- [`issues.md`](issues.md) — unresolved decisions that must update this file
+  before their owning phase is implemented.
+- [`decisions.md`](decisions.md) — historical rationale.
+- [`features.md`](features.md) — deferred work and upgrade paths.
 
-### A. Resolved in review (2026-08-31) — decisions carried into this spec
-
-| # | Area | Decision | Rationale |
-|---|---|---|---|
-| 1 | N5 / N6 / N7 (`docs/issues.md`) | **Left open.** This spec implements the plan's *current* behavior for each and marks the sharp edge inline (`⚠ N5/6/7`). Not blockers for a trusted-household LAN app. | Deferred to each finding's owning phase. |
-| 2a | Recipe ingredient input | `ingredients: list[RecipeIngredientIn \| str]`. A **string** element is parsed by `services/ingredient_parse.py`; its verbatim text is stored in `recipe_ingredients.raw_text`. An **object** element is structured (`raw_text = NULL`). `raw_text` is now an **active v1 column**, not reserved. | Direct reading of "ingredients should be pasted in as a list"; keeps the structured object clean for the later form UI and for `types.ts`; unions mirror fine in TS. |
-| 2b | `PATCH /api/inventory/{id}` | Setting `quantity` **requires** `unit` in the same request → else **422**. The `(quantity, unit)` pair is converted to canonical base. Bare `{quantity: N}` is no longer accepted. `{unit: X}` alone (display-unit change, `quantity_base` untouched) is still allowed. | Removes the "200 could mean 200 kg" footgun in the plan's pseudocode. "Convert to canonical base where possible; PATCH must carry a unit." |
-| 2c | `to_taste` availability lines | Fully vacuous: `need = null`, `need_unit = <group canonical unit>`, `group_need / group_have / group_short = null`, `group_key` still set, `nettable = false`. Excluded from `all_available`. A group with **only** `to_taste` members contributes nothing and leaves `all_available` unaffected (vacuously `true` if the whole recipe is to-taste). | Simplest consistent rule; a to-taste line is vacuous regardless of quantified siblings in the same group. |
-| 2d | Consolidated display label (`item`) for an aggregated availability group / grocery requirement | **Stable sort, first writer wins.** Iterate recipes in `recipe_ids` order, ingredients in `position` order; the first ingredient row seen for a `normalized_name` sets the display `item`; later rows never overwrite. | Deterministic given input order; avoids "last-loop-iteration wins" nondeterminism. |
-| 2e | Cook stock draw-down across multiple compatible inventory rows for one food | **FIFO by inventory-row `id` ascending** within the compatible bucket. Clamp at 0. | Deterministic; oldest stock first. |
-| 2f | Grocery line deletion | `DELETE /api/grocery/{list_id}/items/{item_id}` → **204** on an unfrozen line; **409** if the line is frozen (`added_to_inventory = true`) or the list is `archived`. | Plan covered add + PATCH + list-delete but not per-line delete. |
-| 3 | Service ↔ router contract | The pure `services/inventory_math.py` boundary is specified as concrete frozen dataclasses in **§4**. Services never touch ORM objects or a `Session`; the router marshals ORM ⇆ DTO and owns the single transaction. | Plan's pseudocode reads ORM attributes but the stated rule forbids ORM in services — the DTO shapes had to be designed. |
-| 4 | Username uniqueness | **Case-insensitive.** A `UNIQUE` index on `lower(username)`; login looks up by `lower(username) = lower(:input)`. Original casing is preserved in storage and in every response. | "make usernames unique not case sensitive". |
-
-### B. Mechanical defaults applied without a decision
+## Mechanical defaults
 
 - **Error bodies:** FastAPI defaults — `{"detail": "<msg>"}` for `HTTPException`,
   `{"detail": [{"loc", "msg", "type"}, …]}` for request-validation 422s.
@@ -56,7 +47,7 @@ retains the rationale and the v2 roadmap.
   → bad/missing `code` `403` → duplicate username `409` → create.
 - **Registration `code` comparison** uses `secrets.compare_digest`.
 
-### C. Security posture — accepted for a LAN-only, trusted-household deployment
+## Accepted security posture
 
 Listed so it is a conscious choice, not an oversight. None of these are fixed in v1.
 
@@ -565,7 +556,7 @@ For each group:
 - `need_base` = Σ over quantified members of `to_base(qty*M, unit).amount`
   (known dims) or `qty*M` (opaque / count).
 - `members` = `[(ingredient_id, own_need_base)]` in **`position` order**.
-- `display_item` = the **first** member's `item` (decision 2d).
+- `display_item` = the **first** member's `item` (decision S4).
 - `to_taste_members` = ingredient ids with `quantity is None`.
 
 ### 4.2 `check_availability(reqs: list[ReqLine], stock: list[StockRow]) -> list[AvailabilityLineDTO]`
@@ -575,7 +566,7 @@ groups = aggregate(reqs, M)                       # M already folded into ReqLin
 for g in groups:
     canon = canon_unit(g.bucket)
 
-    # to-taste members: one vacuous line each (decision 2c)
+    # to-taste members: one vacuous line each (decision SD1)
     for ing_id in g.to_taste_members:
         emit AvailabilityLineDTO(
             ingredient_id=ing_id, item=<that row's item>,
@@ -1052,7 +1043,7 @@ if not S:                                             return read(row)          
 for f in ("item", "match_name", "quantity"):
     if f in S and getattr(body, f) is None:           422  f"{f} cannot be null"
 
-if "quantity" in S and "unit" not in S:               422  "unit is required when setting quantity"   # decision 2b
+if "quantity" in S and "unit" not in S:               422  "unit is required when setting quantity"   # decision S2
 
 if "unit" in S:
     if bucket_of(normalize_unit_token(body.unit)) != row.unit_bucket:
@@ -1187,7 +1178,7 @@ Manual amounts are stored exactly as typed.
   - `checked` given → set; `checked_at = now()` when `true`, `null` when `false`.
 - No inventory side effect. Nothing reaches stock until `submit`.
 
-#### `DELETE /api/grocery/{id}/items/{item_id}`  → `204`  (decision 2f)
+#### `DELETE /api/grocery/{id}/items/{item_id}`  → `204`  (decision S5)
 
 `404` if the list or line does not exist. `409` if `line.added_to_inventory` or
 `list.status == "archived"`.
@@ -1299,42 +1290,3 @@ RECIPE_ALLOW_REGISTRATION=true RECIPE_REGISTRATION_CODE=devcode uv run uvicorn a
 8. `GET /api/cook-logs` newest-first across recipes; `GET /api/cook-logs/{id}` returns one; delete that recipe → the log still resolves.
 9. Any data route with no / malformed (`garbage`) / wrong-scheme (`Basic x`) / unknown / expired token → `401`.
 10. Recipe ingredient `quantity: -1` or `0`, grocery `multiplier: 0` / `inf` → `422`.
-
----
-
-## 8. Build sequence
-
-Each phase ends `uv run pytest` green. Delete `backend/recipe.db` at the start of
-Phase 0 and again after every schema-expanding phase (3, 4, 5, 6).
-
-| Phase | Scope |
-|---|---|
-| **0 — reset & deps** | `uv add "pwdlib[argon2]"`. Delete `backend/recipe.db`. `.gitignore` unchanged. Old tests still green. |
-| **1 — pure core** | `normalize.py`, `units.py`, `services/ingredient_parse.py` + `test_units.py`, `test_ingredient_parse.py`. Nothing else touched. |
-| **2 — auth + app factory** | `make_engine` / `make_session_factory` + importable `get_db(request)` + `SessionDep` + `connect`/`begin` listeners in `database.py` (one module-level default `engine`, **no `SessionLocal`**). `create_app(settings, engine)` in `main.py` storing `session_factory` + `settings` on `app.state` (+ `get_settings`), the two 409 exception handlers, `/api/health`, module-level `app`. `User` / `Session` models (case-insensitive username index). `security.py` (`get_current_user` — optional header, 5 explicit 401s, `SessionDep` + `get_settings`, `last_used_at` bump). `schemas/auth.py` (with `code`). `routers/auth.py`. `config` additions. `conftest.py` rebuilt around the factory — **no `dependency_overrides`** — `user` + `auth_client`; migrate `test_recipes.py` to `auth_client`; gate the recipes router. `test_auth.py`. |
-| **3 — structured recipes** | Expand `Recipe`; add `RecipeIngredient` **with active `raw_text`**; drop the old freeform text columns; keep `photo_path` as a reserved nullable column. `schemas/recipe.py` nested (`ingredients: list[RecipeIngredientIn \| str]`). Wire `parse_ingredient` into `routers/recipes.py` (string elements → parse, structured → as-is). Expand `test_recipes.py`; add `test_validation.py`. Delete `recipe.db`. **No photo.** |
-| **4 — inventory + math services** | `InventoryItem` model (`(match_name, unit_bucket)` unique, `quantity_base` + `CHECK`, `display_unit`). `services/inventory_math.py` — `check_availability`, `add_to_inventory_calc`, `deduct_calc` (pure, propose-only). `schemas/inventory.py` — `InventoryItemCreate` vs `InventoryItemUpdate` (`model_fields_set`-driven, explicit-null → 422, decision 2b unit-required rule). `routers/inventory.py` — `POST` additive upsert, `PATCH /{id}` absolute replace, `DELETE`. `GET /api/recipes/{id}/availability`. `test_inventory.py`, `test_inventory_math.py`, availability tests. |
-| **5 — cook = deduct + made-tracking** | `CookLog` model (`deducted: bool` from the start; full-key-set `deductions`). `POST /api/recipes/{id}/cook` (service proposes, router applies in one `BEGIN IMMEDIATE` txn; skip-but-still-log on `deduct=false`). `GET /api/recipes/{id}/cook-logs`. `routers/cook_logs.py` — `GET /api/cook-logs` (paginated) + `GET /api/cook-logs/{log_id}`. Cook + made-history tests in `test_recipes.py`; `test_cook_logs.py`; `test_concurrency.py` cook-race. |
-| **6 — grocery lists** | `GroceryList` / `GroceryListItem` models. `generate_lines` in `inventory_math.py`. `routers/grocery.py` — create-from-recipes, get, list (`?status=`), add manual item, `PATCH` item, `DELETE` item, `POST /{id}/submit` (no auto-archive), `POST /{id}/archive`, `DELETE` list. `test_grocery.py`; `test_concurrency.py` submit-race. Backend feature-complete. |
-| **7 — docs** | `README.md`, `CLAUDE.md`, `backend/.env.example` — new `RECIPE_*` vars (`SESSION_TTL_DAYS`, `ALLOW_REGISTRATION`, `REGISTRATION_CODE`); `rm backend/recipe.db` reset note; the full v1 API surface; LAN deploy line (`uvicorn app.main:app --host 0.0.0.0 --port 8000`); "set `RECIPE_ALLOW_REGISTRATION=true` + a code to add accounts, then set it back"; note that cook and grocery `submit` are forward-only. Pointer to `docs/plan.md` §"Deferred to v2" and `git show 5144c25:docs/plan.md`. |
-
----
-
-## 9. Deferred to v2
-
-Out of scope for this spec; the data model does not preclude any of them. See
-`docs/plan.md` §"Deferred to v2" (authoritative for the v1↔v2 boundary) and
-`docs/features.md`:
-
-- Photo upload · URL import · recipe research · per-cook reviews · grocery-receipt OCR
-- "What can we make now" · staples / low-stock alerts · undo for forward-only actions
-- Alembic migrations · multi-user ownership · remote hosting / HTTPS · the `FoodItem` shared-identity table
-- The full frontend rebuild
-
-### Known open findings carried through v1 (revisit at the named phase)
-
-| ⚠ | Where | Current v1 behavior | Intended fix |
-|---|---|---|---|
-| **N5** | inventory `match_name` (Phase 4) | stored `.strip()`ed only; collision check on the stripped value | run through `normalize_name`; reject empty → 422; collide on the normalized value |
-| **N6** | grocery line `PATCH` (Phase 6) | `quantity` / `unit` / `item` applied independently; no conversion; `nettable` untouched | make `(quantity, unit)` an atomic pair or convert on unit-only change; canonicalize or re-mark `source="manual"`; recompute/clear `nettable` after an edit |
-| **N7** | `CookLog.deductions` (Phase 5) | `list[dict]`; every entry carries the full key set with `null`s | promote to a typed `CookDeductionRead`, `list[CookDeductionRead]` in `CookLogRead` |
