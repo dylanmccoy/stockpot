@@ -94,7 +94,7 @@ Phase 8 in the current v1 plan.
 
 | Phase | Outcome | Depends on | Status |
 |---|---|---|---|
-| [0 — reset and dependencies](phases/phase-0.md) | Clean database and Argon2 dependency | — | Not started |
+| [0 — reset and dependencies](phases/phase-0.md) | Clean database and Argon2 dependency | — | Complete |
 | [1 — pure core](phases/phase-1.md) | Normalization, units, and ingredient parser | Phase 0 | Not started |
 | [2 — auth and app factory](phases/phase-2.md) | App-local DB wiring, transactions, sessions, and route gating | Phase 1 | Not started |
 | [3 — structured recipes](phases/phase-3.md) | Nested recipe ingredients and validation | Phase 2 | Not started |
