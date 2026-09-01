@@ -7,8 +7,16 @@ checked lines into inventory.
 
 ## Gate
 
-- [ ] Resolve **N6** in [`../issues.md`](../issues.md), update grocery edit
-      semantics in `spec.md`, and close the issue before implementation.
+- [x] **N6 resolved** (2026-08-31) — grocery-line PATCH treats `quantity` + `unit`
+      as an atomic pair (one without the other → `422`, no conversion), and any
+      `item` / `quantity` / `unit` edit reclassifies the line `source → "manual"`,
+      `nettable → true`. See [`../decisions.md`](../decisions.md#n6). Normative in
+      `spec.md` §5.6 / §7.
+- [ ] **R-7 contract tests accepted before implementation** — a fresh-context
+      reviewer writes and reviews the §7 `generate_lines`, grocery mutation,
+      submit, and submit-race contract cases before implementation. Accepted
+      cases are locked under
+      [`plan.md` §Independent contract-test gate](../plan.md#independent-contract-test-gate).
 
 ## Specification
 
@@ -22,16 +30,32 @@ checked lines into inventory.
 
 - [ ] Delete `backend/recipe.db` before running the expanded schema.
 - [ ] Add grocery-list and grocery-list-item models with applied snapshots.
-- [ ] Implement pure consolidated shortfall generation.
+- [ ] Implement pure consolidated shortfall generation. Build each `ReqLine` with
+      `quantity = None if ing.quantity is None else ing.quantity * multipliers.get(rid, 1)`
+      so a to-taste line never hits `None * multiplier` (R-1).
 - [ ] Add `schemas/grocery.py`, re-export its public schemas, and implement
       list/create/read/delete routes.
-- [ ] Add manual-item create, item edit, and item delete behavior.
+- [ ] Add manual-item create, item edit, and item delete behavior. On PATCH:
+      reject a body with exactly one of `quantity` / `unit` (`model_fields_set`)
+      → `422 "quantity and unit must be set together"`; any `item` / `quantity` /
+      `unit` edit sets `source="manual"`, `nettable=true` (a `checked`-only PATCH
+      does not) (N6).
 - [ ] Implement forward-only submit with line freezing and no auto-archive.
 - [ ] Implement explicit guarded archive.
-- [ ] Add `test_grocery.py` and the file-backed HTTP submit race.
+- [ ] Add remaining `test_grocery.py` coverage without changing the accepted
+      contract cases, including the file-backed HTTP submit race. A generate
+      fixture recipe carries a to-taste line; assert it scales with `multipliers`
+      without `TypeError` and emits a `quantity=null, unit=null` line (R-1
+      regression guard). N6: on a generated `500 g` line, `PATCH {unit:"kg"}`
+      alone and `PATCH {quantity:200}` alone → `422`; `PATCH {quantity:0.5,
+      unit:"kg"}` → `200` with `source="manual"`, `nettable=true`, and `submit`
+      adds `0.5 kg`, not `500 kg`; `PATCH {item:...}` on a `nettable=false` line
+      → `source="manual"`, `nettable=true`; `PATCH {checked:true}` leaves both.
 
 ## Verification
 
+- [ ] Every accepted §7 generation, grocery-mutation, submit, and submit-race
+      contract case passes unchanged.
 - [ ] Generated lines are consolidated, canonical, and correctly marked when
       incompatible positive stock makes the shortfall uncertain.
 - [ ] Checking a line has no inventory side effect; submit applies it once.
@@ -41,6 +65,14 @@ checked lines into inventory.
 
 ## Exit criteria
 
-- [ ] N6 is closed.
+- [x] N6 is closed (resolved 2026-08-31; see [`../decisions.md`](../decisions.md#n6)).
+- [ ] The R-7 contract-test gate is checked and its accepted cases were not
+      changed by the implementation pass.
+- [ ] Scope fence passed (R-10, [`../plan.md` §Phase scope fence](../plan.md#phase-scope-fence-and-handoff-contract)):
+      every changed behavior traces to this phase, its linked spec, or an
+      accepted contract test; no deferred/context document authorized work.
+- [ ] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
+      a non-author reviewer walked every consolidation / shortfall-uncertainty /
+      submit branch in this phase's diff and tests against `spec.md` §7 and §5.6.
 - [ ] Backend behavior is feature-complete.
 - [ ] Phase complete; update the status table in [`../plan.md`](../plan.md).
