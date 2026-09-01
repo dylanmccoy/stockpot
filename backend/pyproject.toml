@@ -9,6 +9,7 @@ dependencies = [
     "sqlalchemy>=2.0",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "pwdlib[argon2]>=0.3.1",
 ]
 
 [dependency-groups]
