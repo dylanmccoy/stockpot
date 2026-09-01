@@ -33,9 +33,11 @@ Related documents:
 - **`quantity = null`** on a recipe ingredient ⇒ **to-taste**, even if `unit` is set (the `unit` is ignored).
 - **Additive `POST /api/inventory` into an existing `(match_name, unit_bucket)` row**
   keeps that row's existing `item` / `normalized_name`. Rename via `PATCH`.
-- **`match_name` supplied to inventory `POST` / `PATCH`** is `.strip()`ed only,
-  **not** run through `normalize_name` (⚠ N5, revisit Phase 4). Collision detection
-  is on the stripped value.
+- **`match_name` is a canonical server-owned key.** A `match_name` supplied to
+  inventory `POST` / `PATCH` is run through `normalize_name` (not merely
+  `.strip()`ed); a value that normalizes to `""` → `422`. Collision detection and
+  the additive-upsert `ON CONFLICT` both key off the normalized value. Display
+  `item` is stored exactly as typed.
 - **`created_by_id` / `cooked_by_id`** are never reassigned on update.
 - **Session lifetime is a fixed window** from creation: `expires_at = created_at +
   SESSION_TTL_DAYS`. `last_used_at` is bumped on every authenticated request;
@@ -142,7 +144,7 @@ Relationship: `ingredients` → `RecipeIngredient`, `order_by="RecipeIngredient.
 | `item` | `str(200)` | display text |
 | `note` | `str(200)?` | |
 | `normalized_name` | `str(200)` | **server-computed** `normalize_name(item)`; indexed |
-| `raw_text` | `str(300)?` | **active in v1**: the verbatim source line when the row came from a pasted string; `NULL` for structured rows |
+| `raw_text` | `str(300)?` | **active in v1**: the verbatim source line when the row came from a pasted string; `NULL` for structured rows. Stored value is `<= 200` — pasted lines are truncated to 200 before parse (§5.2, R-4); the extra column headroom is left intentionally. |
 
 Index: `(recipe_id, position)`.
 
@@ -153,7 +155,7 @@ Index: `(recipe_id, position)`.
 | `id` | int PK | |
 | `item` | `str(200)` | display text; set on first insert into a `(match_name, unit_bucket)` row, only changed by `PATCH` |
 | `normalized_name` | `str(200)` | `normalize_name(item)`; indexed; tracks `item` |
-| `match_name` | `str(200)` | the recipe↔inventory match key; indexed. Defaults to `normalize_name(item)`. **User-editable.** Stored `.strip()`ed only (⚠ N5) |
+| `match_name` | `str(200)` | the recipe↔inventory match key; indexed. **User-editable but canonical:** every value (default or supplied) is `normalize_name(...)`ed before store; normalizes-to-`""` → `422` |
 | `unit_bucket` | `str(30)` | `"mass"` \| `"volume"` \| `"count"` \| `"opaque:<canonical-token>"` |
 | `quantity_base` | `float` | **source of truth**, in the bucket's canonical unit (g / ml / count / raw opaque amount). `CHECK(quantity_base >= 0)`, finite. Default `0` |
 | `display_unit` | `str(30)?` | **preferred display unit only** — never drives math. `NULL` / opaque ⇒ display in the canonical unit |
@@ -206,7 +208,7 @@ Relationship: `items` → `GroceryListItem`, `cascade="all, delete-orphan"`, `or
 | `deducted` | bool | default `true`; `false` = logged without touching stock |
 | `cooked_at` | datetime(tz) | |
 | `cooked_by_id` | int FK → `users.id`? | nullable, no cascade |
-| `deductions` | JSON `list[dict]` | one entry per member ingredient; `[]` when `deducted=false`. Entry shape in §5.4. ⚠ N7: stays `list[dict]`, not a typed schema, in v1 |
+| `deductions` | JSON `list[dict]` | one entry per member ingredient; `[]` when `deducted=false`. Stored raw; **serialized through `list[CookDeductionRead]` on read** (§5.4), so every entry is validated. |
 
 ---
 
@@ -225,14 +227,19 @@ Pipeline, in order:
 3. collapse whitespace: `re.sub(r"\s+", " ", s).strip()`
 4. **strip leading descriptor tokens**: while the first space-delimited token is in
    `LEADING_DESCRIPTORS`, drop it.
-5. **singularize the final token** only:
+5. **singularize the final token** only, via `_singularize_token` (below).
+6. return; an empty string is a valid (degenerate) result.
+
+`_singularize_token(tok: str) -> str` — the shared singularization rule. Also
+called by `units.normalize_unit_token` (§2.2), so the two never drift. Rule, in
+order:
    - irregular map first: `{tomatoes: tomato, potatoes: potato, leaves: leaf,
      loaves: loaf, halves: half, knives: knife, wolves: wolf}` (extend freely — tuning knob)
    - `-ies` → `-y`
    - `-ses` / `-xes` / `-zes` / `-ches` / `-shes` → drop `-es`
    - `-oes` → `-o`
-   - else trailing `-s` (not `-ss`) → drop
-6. return; an empty string is a valid (degenerate) result.
+   - trailing `-s`, and not `-ss` → drop the `-s`
+   - otherwise (no trailing `-s`, or ends `-ss`) → unchanged
 
 `LEADING_DESCRIPTORS` — initial set, **documented tuning knob**:
 `diced, chopped, minced, sliced, shredded, grated, crushed, cubed, julienned,
@@ -240,6 +247,27 @@ large, small, medium, jumbo, boneless, skinless, ripe, peeled`.
 
 **Not stripped** (identity-bearing, #R4): `fresh, dried, ground, cooked, raw,
 smoked, frozen, canned, roasted, toasted`.
+
+**Locked normalization oracles (R-7):**
+
+| Input | Exact output | Contract exercised |
+|---|---|---|
+| `"  Diced Tomatoes! "` | `"tomato"` | trim, case, punctuation, descriptor, irregular |
+| `"large eggs"` | `"egg"` | descriptor + trailing `-s` |
+| `"chopped   red onions"` | `"red onion"` | whitespace + final-token-only singularization |
+| `"fresh tomatoes"` | `"fresh tomato"` | identity-bearing word retained |
+| `"ground beef"` | `"ground beef"` | identity-bearing word retained |
+| `"berries"` | `"berry"` | `-ies` rule |
+| `"boxes"` | `"box"` | `-xes` rule |
+| `"potatoes"` | `"potato"` | irregular map before suffix rules |
+| `"glass"` | `"glass"` | terminal `-ss` retained |
+| `"Chef's   choice"` | `"chefs choice"` | punctuation removal + whitespace |
+| `"!!!"` | `""` | valid degenerate result |
+
+These exact cases are the v1 oracle. **Global idempotence is not a v1
+invariant:** the deliberately small open-vocabulary heuristic can map
+`"buses" → "bus" → "bu"` on repeated calls. Callers normalize source text
+once; robust name inflection remains deferred (D1).
 
 ### 2.2 `backend/app/units.py`
 
@@ -276,10 +304,15 @@ bulb, bunch, sprig, pinch, handful, dash, splash, "to taste"`.
 ```python
 def normalize_unit_token(s: str | None) -> str | None
     # None or "" -> None
-    # else: lower -> strip -> strip one trailing "." -> naive-singularize -> return
+    # else: lower -> strip -> strip one trailing "." ->
+    #       normalize._singularize_token (§2.1 step 5) applied to the WHOLE string
+    #       (not final-token-only; unit tokens are <=2 words) -> return
+    # e.g. "Cups." -> "cup"; "boxes" -> "box"; "bunches" -> "bunch";
+    #      "fl oz" -> "fl oz" (unchanged); "lbs" -> "lb"
 
 def parse_unit(s: str | None) -> UnitDef | None
-    # normalize_unit_token then dict lookup; None => unknown/opaque
+    # normalize_unit_token then dict lookup; normalized None is the COUNT token;
+    # a non-None token absent from the table => unknown/opaque (return None)
 
 def to_base(amount: float, unit: str | None) -> tuple[float, Dimension] | None
     # unit resolves to None-token  -> (amount, COUNT)
@@ -315,6 +348,54 @@ each already expressed in its **canonical unit**:
 - **`None` units** — merged into the COUNT partition.
 - If **every** amount in a partition is `None`, emit `Quantity(None, <unit>)` for it.
   A `None` amount mixed with numbers is treated as `0` for the sum.
+- Partitions are emitted in **first-seen input order**. This makes grocery-line
+  insertion order deterministic (decision SD4) and is consistent with the
+  recipe/ingredient traversal order used by first-writer-wins decision S4.
+
+For all numeric assertions in §2 and §7, use
+`pytest.approx(expected, rel=1e-9, abs=1e-9)`; do not compare conversion results
+by exact binary-float equality.
+
+**Locked conversion oracles (R-7):** each successful row also asserts that
+`from_base(base, dimension, input_unit)` returns the original amount within the
+tolerance above.
+
+| Amount | Unit | Exact `to_base` result | Round-trip result |
+|---:|---|---|---:|
+| `1` | `kg` | `(1000, MASS)` | `1` |
+| `16` | `oz` | `(453.592, MASS)` | `16` |
+| `2` | `cup` | `(473.176, VOLUME)` | `2` |
+| `3` | `dozen` | `(36, COUNT)` | `3` |
+| `5` | `null` | `(5, COUNT)` | `5` |
+| `1` | `can` | `null` | n/a |
+
+Additionally, parameterize the round-trip over **every known synonym-table
+token** and amounts `0.125`, `1`, and `17.5`; cross-dimension `from_base` and an
+opaque target unit return `None`.
+
+**Locked `add_quantities` oracles (R-7):** tuples below are shorthand for
+`Quantity(amount, unit)`. Output list order is exact.
+
+| Input | Exact output |
+|---|---|
+| `[]` | `[]` |
+| `[(1, "kg"), (500, "g")]` | `[(1500, "g")]` |
+| `[(1, "cup"), (2, "tbsp")]` | `[(266.1616, "ml")]` |
+| `[(2, "can"), (1, "cans")]` | `[(3, "can")]` |
+| `[(2, "can"), (1, "jar")]` | `[(2, "can"), (1, "jar")]` |
+| `[(2, null), (1, "dozen")]` | `[(14, "unit")]` |
+| `[(null, "can"), (2, "can")]` | `[(2, "can")]` |
+| `[(null, "kg"), (null, "g")]` | `[(null, "g")]` |
+| `[(1, "can"), (1, "kg"), (1, null), (1, "jar")]` | `[(1, "can"), (1000, "g"), (1, "unit"), (1, "jar")]` |
+
+Interpretation-independent checks over finite numeric inputs:
+
+- `parse_ingredient(text)` never raises for the deterministic adversarial corpus
+  and returns `quantity is None` or a positive finite float.
+- Unit conversion round-trips as specified above for every known token.
+- `add_quantities` conserves the approximate sum of base-unit numeric amounts
+  per known dimension, and the raw numeric sum per normalized opaque token;
+  `None` contributes zero unless every member of its partition is `None`.
 
 ### 2.3 `backend/app/services/ingredient_parse.py`
 
@@ -323,9 +404,10 @@ def parse_ingredient(text: str) -> dict
     # -> {"quantity": float | None, "unit": str | None, "item": str, "note": str | None}
 ```
 
-**Contract:** never raises. `item` is always non-empty (falls back to the whole
-cleaned line). `quantity` is either a **positive finite float** or `None` — the
-parser never emits `0`, negative, or non-finite.
+**Contract:** callers skip blank/whitespace-only strings before calling (§5.2).
+For every non-blank input, the parser never raises. `item` is always non-empty
+(falls back to the whole cleaned line). `quantity` is either a **positive finite
+float** or `None` — the parser never emits `0`, negative, or non-finite.
 
 Heuristic (implementer's exact regex is free, but it must satisfy the table):
 
@@ -351,6 +433,11 @@ Heuristic (implementer's exact regex is free, but it must satisfy the table):
 | `3 large eggs` | `3.0` | `null` | `large eggs` | `null` |
 | `1 (14 oz) can tomatoes` | `1.0` | `can` | `tomatoes` | `14 oz` |
 | `asdfghjkl` | `null` | `null` | `asdfghjkl` | `null` |
+
+The deterministic adversarial corpus for the no-raise/positive-finite invariant
+is: `"0 eggs"`, `"-1 cup flour"`, `"1/0 cup flour"`, `"NaN cups flour"`,
+`"1e309 cups flour"`, and `"not a quantity"`. Exact fallback parsing is free;
+each result must satisfy the contract above.
 
 ---
 
@@ -616,7 +703,7 @@ reqs = {}   # normalized_name -> {quantities: list[Quantity], display_item, to_t
 for recipe_reqs in reqs_by_recipe:                        # recipe_ids order
     for ing in recipe_reqs:                               # position order
         slot = reqs.setdefault(ing.normalized_name, {...})
-        slot.display_item = slot.display_item or ing.item     # first writer wins (2d)
+        slot.display_item = slot.display_item or ing.item     # first writer wins (decision S4)
         if ing.quantity is None: slot.to_taste = True; continue
         slot.quantities.append(Quantity(ing.quantity, ing.unit))   # * M already folded in
 
@@ -652,7 +739,9 @@ a      = max(amount, 0.0)
 add_base = a if (bucket.startswith("opaque:") or normalize_unit_token(unit) is None) \
            else to_base(a, unit)[0]
 return InventoryDelta(
-    match_name = (match_name or normalize_name(display_item)).strip(),   # ⚠ N5: strip only
+    # canonical key: normalize the supplied value, or derive from the display item.
+    # The router rejects a "" result (422) before it reaches the upsert.
+    match_name = normalize_name(match_name) if match_name else normalize_name(display_item),
     unit_bucket = bucket,
     item = display_item,
     normalized_name = normalize_name(display_item),
@@ -682,7 +771,7 @@ for g in groups:
     if not g.members: continue
 
     pos    = [r for r in stock if r.match_name == g.norm and live[r.id] > 0]
-    compat = sorted([r for r in pos if r.unit_bucket == g.bucket], key=lambda r: r.id)   # FIFO (2e)
+    compat = sorted([r for r in pos if r.unit_bucket == g.bucket], key=lambda r: r.id)   # deterministic ascending row-ID order (decision SD2)
 
     if not pos:
         log.append(_entry(item=g.display_item, normalized_name=g.norm,
@@ -719,8 +808,10 @@ return DeductProposal(row_updates, log)
 `_entry(...)` returns a plain `dict` carrying **all eleven keys** every time
 (`item, normalized_name, requested, requested_unit, deducted, deducted_unit,
 inventory_unit, before, after, applied, reason`), with `null` where the branch
-does not populate one. This is the JSON contract clients code against even though
-the column stays `list[dict]` (⚠ N7).
+does not populate one. Its signature names all eleven parameters as **required**
+(no defaults) — omitting one is a `TypeError` at cook time, not a silently
+missing key. The stored column stays `list[dict]`; the read path validates each
+entry through `CookDeductionRead` (§5.4).
 
 Cook deliberately does **not** adopt the #N3 uncertainty split — it draws down the
 compatible bucket and clamps, logging `"clamped to 0"` for any remainder even when
@@ -832,6 +923,7 @@ RecipeRead   = RecipeBase + {
 rows = []
 for element in payload.ingredients:
     if isinstance(element, str):
+        element = element[:200]                             # bound the pasted line (R-4)
         if element.strip() == "": continue                 # blank pasted line -> skip
         parsed = parse_ingredient(element)
         rows.append({**parsed, "raw_text": element})
@@ -846,6 +938,16 @@ for i, r in enumerate(rows):
 
 `quantity` from a parsed string is trusted (parser guarantees `> 0` or `None`).
 `quantity` from an object element is Pydantic-validated (`> 0` or `None`, finite).
+
+**Length bound (R-4).** A pasted `str` element is truncated to **200 chars**
+before parsing. This is the single guard that keeps every string sink fed by a
+pasted line within its column: `raw_text` (`str(300)`), and the parser's
+`item` / `note` (`str(200)` each — `item` falls back to the whole cleaned line
+when nothing parses). SQLite does not enforce `String(n)`, so without this an
+over-length line stores verbatim in v1 and only breaks on a non-SQLite backend.
+Object-element `item` / `note` are already Pydantic-bounded and are not
+truncated. A pasted element is one ingredient line by contract; 200 is well
+above any real line, so this effectively never fires for a well-formed client.
 
 #### Endpoints
 
@@ -867,7 +969,9 @@ Query: `multiplier: float = 1.0` — `Query(1.0, gt=0)`, `allow_inf_nan=False` (
 
 - `404` if the recipe does not exist.
 - Router: load recipe + `selectinload(ingredients)`; load **all** `inventory_items`;
-  build `list[ReqLine]` with `quantity = ing.quantity * multiplier`; map inventory
+  build `list[ReqLine]` with
+  `quantity = None if ing.quantity is None else ing.quantity * multiplier`
+  (to-taste rows stay `None` — never `None * multiplier`); map inventory
   → `list[StockRow]`; call `check_availability`; assemble:
 
 ```
@@ -911,15 +1015,42 @@ Body `CookRequest`:
 - `404` if the recipe does not exist.
 - Build `CookLog(recipe_id, recipe_title=recipe.title, multiplier, deducted=deduct, cooked_by=user)`.
 - `deduct=false` → save log with `deductions=[]`, return.
-- `deduct=true` → map recipe ingredients + all inventory rows to DTOs, call
+- `deduct=true` → map recipe ingredients + all inventory rows to DTOs
+  (each `ReqLine` built with
+  `quantity = None if ing.quantity is None else ing.quantity * multiplier`
+  — to-taste rows stay `None`, never `None * multiplier`), call
   `deduct_calc`, then **within the request's single `BEGIN IMMEDIATE` transaction**
   apply every `RowDeduction` (`UPDATE inventory_items SET quantity_base=?, updated_at=now() WHERE id=?`),
   set `log.deductions = proposal.log_entries`, save.
 - `IntegrityError` / lock timeout → `409` (global handler), whole transaction rolled back.
 
-#### `CookDeductionRead` (JSON shape of each `deductions[]` entry — ⚠ N7: `dict`, not a Pydantic model)
+#### `CookDeductionRead` — Pydantic model; JSON shape of each `deductions[]` entry
+
+A real `BaseModel` (in `schemas/cook_logs.py`), used as
+`CookLogRead.deductions: list[CookDeductionRead]`. The DB column stays raw
+`JSON list[dict]` (written from `_entry()`); FastAPI validates every stored dict
+against this model on read, so a malformed or drifted entry is a loud `500`, not
+a silent shape change.
+
+```python
+class CookDeductionRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")   # stray / renamed key -> 500 on read
+    item:            str
+    normalized_name: str | None
+    requested:       float | None
+    requested_unit:  str | None
+    deducted:        float | None
+    deducted_unit:   str | None
+    inventory_unit:  str | None
+    before:          float | None
+    after:           float | None
+    applied:         bool
+    reason: Literal["ok", "clamped to 0", "to taste",
+                    "not in inventory", "have uncertain (incompatible unit)"]
+```
 
 Every entry carries **all** keys; `null` where the branch does not apply.
+`item`, `applied`, `reason` are never `null` — set in every branch.
 
 | Key | Type | `ok` / `clamped to 0` | `to taste` | `not in inventory` | `have uncertain (incompatible unit)` |
 |---|---|---|---|---|---|
@@ -984,12 +1115,12 @@ InventoryItemCreate {              # POST body — additive upsert
     item:       str            # 1..200, required
     quantity:   float          # >= 0, allow_inf_nan=False, required
     unit:       str | None     # <= 30 ; None => COUNT bucket
-    match_name: str | None     # <= 200 ; default normalize_name(item), else .strip() of the given value
+    match_name: str | None     # <= 200 ; normalize_name(match_name or item); "" after normalize => 422
 }
 
 InventoryItemUpdate {             # PATCH body — absolute replacement, model_fields_set-driven
     item:       str | None     # <= 200
-    match_name: str | None     # <= 200
+    match_name: str | None     # <= 200 ; stored as normalize_name(value); "" after normalize => 422
     quantity:   float | None   # >= 0, allow_inf_nan=False
     unit:       str | None     # <= 30
 }
@@ -1018,6 +1149,7 @@ Additive upsert via `add_to_inventory_calc` + the SQL below (SQLAlchemy
 
 ```
 delta = add_to_inventory_calc(body.match_name, body.item, body.quantity, body.unit)
+if not delta.match_name:                              422  "match_name normalizes to empty"
 
 INSERT INTO inventory_items
       (item, normalized_name, match_name, unit_bucket, quantity_base, display_unit, created_by_id, updated_at)
@@ -1051,7 +1183,8 @@ if "unit" in S:
     # (covers unit:null on a non-COUNT row -> 422 ; unit:null on a COUNT row -> ok)
 
 if "match_name" in S:
-    nm = body.match_name.strip()                       # ⚠ N5: strip only, not normalize_name
+    nm = normalize_name(body.match_name)               # canonical key, not strip
+    if nm == "":                                       422  "match_name normalizes to empty"
     if a *different* row exists with (nm, row.unit_bucket):
                                                       409  "match_name already in use for this bucket"
 
@@ -1077,7 +1210,9 @@ Examples:
 | `{"quantity": 200}` (no unit) | `422` |
 | `{"unit": "can"}` on a `mass` row | `422` (bucket change) |
 | `{"unit": null}` on a `mass` row | `422`; on a `count` row → sets `display_unit = null` |
+| `{"match_name": " Flour "}` on a `mass` row | stored as `flour` (normalized) |
 | `{"match_name": "flour"}` colliding with another `(flour, mass)` row | `409` |
+| `{"match_name": "!!!"}` (normalizes to `""`) | `422` |
 | `{}` | `200`, unchanged |
 
 #### `DELETE /api/inventory/{id}`  → `204`
@@ -1103,11 +1238,13 @@ GroceryListItemIn {                               # POST .../items  (manual)
     unit:     str | None     # <= 30
 }
 
-GroceryListItemUpdate {                           # PATCH .../items/{id}  (⚠ N6: fields applied independently)
+GroceryListItemUpdate {                           # PATCH .../items/{id}
     checked:  bool | None
     quantity: float | None   # > 0 when set, finite
     unit:     str | None
     item:     str | None
+    # quantity + unit are an atomic pair: if either key is present in the
+    # request body, both must be (values may be null) -> else 422 (N6).
 }
 
 GroceryListItemRead {
@@ -1132,7 +1269,8 @@ GroceryListRead {
 1. Validate `recipe_ids` non-empty + unique + all exist → else `422`.
 2. Validate `multipliers` keys ⊆ `recipe_ids`, values `> 0` finite → else `422`.
 3. For each recipe (in `recipe_ids` order) build `list[ReqLine]` with
-   `quantity = ing.quantity * multipliers.get(rid, 1)`.
+   `quantity = None if ing.quantity is None else ing.quantity * multipliers.get(rid, 1)`
+   (to-taste rows stay `None` — never `None * multiplier`).
 4. Load all inventory → `list[StockRow]`. Call `generate_lines`.
 5. Persist `GroceryList(name or default, status="active", source_recipe_ids=recipe_ids)`
    with one `GroceryListItem(source="generated", checked=false, added_to_inventory=false)`
@@ -1172,10 +1310,19 @@ Manual amounts are stored exactly as typed.
 
 - `404` if the list or the line does not exist.
 - `409` if `line.added_to_inventory` (frozen) **or** `list.status == "archived"`.
-- Apply supplied fields independently (⚠ N6):
+- `422` if exactly one of `quantity` / `unit` is present in the request body
+  (`model_fields_set`) — they are an atomic pair: `"quantity and unit must be
+  set together"` (N6). Values may be `null`; both keys must appear together.
+- Apply supplied fields:
+  - `quantity` + `unit` given → set as-is, no conversion. A unit-only edit
+    (`500 g` line + `{"unit": "kg"}`) is rejected by the rule above, so the
+    stored number always matches the unit the caller sent.
   - `item` given → set + recompute `normalized_name`.
-  - `quantity` / `unit` given → set as-is (no conversion, no forced pairing in v1).
   - `checked` given → set; `checked_at = now()` when `true`, `null` when `false`.
+- **Any `item` / `quantity` / `unit` edit reclassifies the line** (N6):
+  `source → "manual"`, `nettable → true`. The solver's shortfall claim is void
+  once a human overrides the substance of a generated line, so it is treated as
+  hand-entered. A `checked`-only PATCH does **not** reclassify.
 - No inventory side effect. Nothing reaches stock until `submit`.
 
 #### `DELETE /api/grocery/{id}/items/{item_id}`  → `204`  (decision S5)
@@ -1250,17 +1397,113 @@ engine carrying the same `connect` / `begin` listeners. **No `dependency_overrid
 Fixtures: `user` (registers a default user), `auth_client` (**new default**,
 `Authorization` preset), `client` (anonymous, for auth/401 tests).
 
+### Locked contract oracles (R-7)
+
+These cases are authored and accepted independently before their owning
+production pass under `plan.md` §Independent contract-test gate. They are
+black-box contracts, not implementation sketches. The implementation pass may
+add cases but may not alter these expected values.
+
+#### Availability
+
+Shorthand used only in this table:
+
+- `R(id, item, norm, amount, unit)` = `ReqLine`.
+- `S(id, norm, bucket, base)` = `StockRow`.
+- `A(id, need, unit, group_need, group_have, group_short, status, nettable)` =
+  one `AvailabilityLineDTO`. Its `item` comes from that requirement;
+  `group_key = f"{norm}|{bucket_of(unit)}"` and `group_unit = unit`.
+
+Unless shown otherwise, requirements use `item="Tomatoes"`, `norm="tomato"`.
+Groups are emitted in first-seen order. Within a group, to-taste lines are
+emitted first in their stored order, followed by quantified members in stored
+order, matching §4.2.
+
+| Case | Requirements | Stock | Exact availability outputs |
+|---|---|---|---|
+| missing | `[R(1,"Tomatoes","tomato",3,"can")]` | `[]` | `[A(1,3,"can",3,0,3,"missing",false)]` |
+| compatible short | same as missing | `[S(10,"tomato","opaque:can",1)]` | `[A(1,3,"can",3,1,2,"short",true)]` |
+| mixed-bucket uncertain short | same as missing | `[S(10,"tomato","opaque:can",1), S(11,"tomato","opaque:jar",1)]` | `[A(1,3,"can",3,1,2,"have_uncertain",false)]` |
+| compatible fully covers despite other bucket | same as missing | `[S(10,"tomato","opaque:can",3), S(11,"tomato","opaque:jar",1)]` | `[A(1,3,"can",3,3,0,"ok",true)]` |
+| only incompatible | same as missing | `[S(11,"tomato","opaque:jar",1)]` | `[A(1,3,"can",3,0,3,"have_uncertain",false)]` |
+| zero stock is absent | same as missing | `[S(10,"tomato","opaque:can",0)]` | `[A(1,3,"can",3,0,3,"missing",false)]` |
+| duplicate members aggregate once | `[R(1,"Tomatoes","tomato",2,"can"), R(2,"Canned tomato","tomato",1,"can")]` | `[S(10,"tomato","opaque:can",2)]` | `[A(1,2,"can",3,2,1,"short",true), A(2,1,"can",3,2,1,"short",true)]` |
+| canonical mass | `[R(1,"Flour","flour",1,"kg")]` | `[S(10,"flour","mass",500)]` | `[A(1,1000,"g",1000,500,500,"short",true)]` |
+| to taste | `[R(1,"Salt","salt",null,"can")]` | `[]` | `[A(1,null,"can",null,null,null,"to_taste",false)]` |
+
+The router's `all_available` is true only for the fully-covered row above and
+for an empty/all-to-taste report; it is false for every other quantified case.
+
+#### Grocery generation
+
+`G(item, norm, quantity, unit, nettable)` means one `GroceryLineDTO`.
+Requirements use the `R(...)` shorthand above; the outer list preserves
+`recipe_ids` order. Output order is exact first-seen normalized-name then
+first-seen `add_quantities` partition order.
+
+| Case | Requirements by recipe | Stock | Exact output |
+|---|---|---|---|
+| missing opaque | `[[R(1,"Tomatoes","tomato",2,"can")]]` | `[]` | `[G("Tomatoes","tomato",2,"can",true)]` |
+| compatible partial | same as missing opaque | `[S(10,"tomato","opaque:can",1)]` | `[G("Tomatoes","tomato",1,"can",true)]` |
+| mixed-bucket partial | `[[R(1,"Tomatoes","tomato",3,"can")]]` | `[S(10,"tomato","opaque:can",1), S(11,"tomato","opaque:jar",1)]` | `[G("Tomatoes","tomato",2,"can",false)]` |
+| only incompatible | same as missing opaque | `[S(11,"tomato","opaque:jar",1)]` | `[G("Tomatoes","tomato",2,"can",false)]` |
+| fully covered | same as missing opaque | `[S(10,"tomato","opaque:can",3), S(11,"tomato","opaque:jar",1)]` | `[]` |
+| cross-recipe known consolidation | `[[R(1,"Flour","flour",1,"kg")], [R(2,"Plain flour","flour",500,"g")]]` | `[S(10,"flour","mass",200)]` | `[G("Flour","flour",1300,"g",true)]` |
+| first-seen partition order | `[[R(1,"Tomatoes","tomato",2,"can"), R(2,"Tomatoes","tomato",500,"g")]]` | `[]` | `[G("Tomatoes","tomato",2,"can",true), G("Tomatoes","tomato",500,"g",true)]` |
+| only to taste | `[[R(1,"Salt","salt",null,null)]]` | `[]` | `[G("Salt","salt",null,null,false)]` |
+
+#### Deduction
+
+`D(row_id, new_base)` means one `RowDeduction`. `L(requested, deducted,
+before, after, applied, reason)` abbreviates a log entry for `item="Tomatoes"`,
+`normalized_name="tomato"`, and canonical `requested_unit`, `deducted_unit`,
+and `inventory_unit` `="can"`. Every actual entry has all eleven keys. Output
+and log order are exact.
+
+| Case | Requirements | Stock | Exact row updates | Exact log values |
+|---|---|---|---|---|
+| not in inventory | `[R(1,"Tomatoes","tomato",3,"can")]` | `[]` | `[]` | `[L(3,0,null,null,false,"not in inventory")]` |
+| only incompatible | same as above | `[S(11,"tomato","opaque:jar",2)]` | `[]` | `[L(3,0,null,null,false,"have uncertain (incompatible unit)")]` |
+| enough compatible | same as above | `[S(10,"tomato","opaque:can",5)]` | `[D(10,2)]` | `[L(3,3,5,2,true,"ok")]` |
+| clamp compatible | same as above | `[S(10,"tomato","opaque:can",2)]` | `[D(10,0)]` | `[L(3,2,2,0,true,"clamped to 0")]` |
+| compatible wins over incompatible | same as above | `[S(10,"tomato","opaque:can",1), S(11,"tomato","opaque:jar",9)]` | `[D(10,0)]` | `[L(3,1,1,0,true,"clamped to 0")]` |
+| ascending row-ID draw | same as above | `[S(20,"tomato","opaque:can",2), S(10,"tomato","opaque:can",2)]` | `[D(10,0), D(20,1)]` | `[L(3,2,2,0,true,"clamped to 0"), L(null,1,2,1,true,"ok")]` |
+
+For a to-taste requirement, deduction produces no row update and one log entry
+whose `item="Salt"`, `normalized_name`, all quantity/unit and before/after
+fields are `null`, `applied=false`, and `reason="to taste"`.
+
+#### Add-to-inventory proposal
+
+| Inputs `(match_name, display_item, amount, unit)` | Exact proposal fields |
+|---|---|
+| `(null, "Flour", 1, "kg")` | `match_name="flour"`, `unit_bucket="mass"`, `item="Flour"`, `normalized_name="flour"`, `add_base=1000`, `display_unit="kg"`, `canonical_added=(1000,"g")` |
+| `(" Tomatoes ", "Canned Tomatoes", 2, "cans")` | `match_name="tomato"`, `unit_bucket="opaque:can"`, `item="Canned Tomatoes"`, `normalized_name="canned tomato"`, `add_base=2`, `display_unit="cans"`, `canonical_added=(2,"can")` |
+| `("flour", "Flour", -2, "g")` | `add_base=0`, `canonical_added=(0,"g")` (pure-service clamp; HTTP validation rejects the negative input) |
+
+#### Interpretation-independent checks
+
+- For each availability group, every quantified member repeats the same exact
+  `group_*`, status, and `nettable` values; stock is never spent once per member.
+- `deduct_calc` never emits a negative `new_quantity_base`; for every applied
+  entry, `before - deducted == after` within the §2 tolerance.
+- Grocery output never has a negative quantity; compatible positive stock that
+  fully covers a requirement emits no line.
+- Reordering inventory input does not change availability or grocery values;
+  deduction order is determined by ascending row ID, not input order.
+
 | File | Must assert |
 |---|---|
-| `test_units.py` | both-way conversions; plurals/abbrevs; unknown → `None`; cross-dimension incompatible; `dozen`/`pair`; `add_quantities` — known merge by dimension, `2 can + 1 can → 3 can`, `can` vs `jar` stay separate, `None`-unit merges as COUNT; `bucket_of` / `canon_unit`. |
-| `test_ingredient_parse.py` | the 7-row acceptance table in §2.3 exactly; unicode `½`; mixed `1 1/2` → `1.5`; garbage → raw fallback with non-empty `item`; parser never returns `quantity ≤ 0`. |
-| `test_inventory_math.py` | availability — all 5 statuses; duplicate ingredient rows aggregated (stock not double-counted); per-line `need` + `group_*` all canonical, `group_unit` set; `clove` need vs `bulb` stock → `have_uncertain`; `quantity_base = 0` row treated as absent → cook-to-zero food → `missing`; #N3 three-way: `need 3 can / 1 can + 1 jar` → `have_uncertain` + `nettable=false`, `group_have=1`, `group_short=2`; `need 3 can / 1 can` only → `short` + `nettable=true`; `need 2 can / 3 can + 1 jar` → `ok`, no line; `have_uncertain` ⇒ `all_available=false`. `generate_lines` — consolidation across 2 recipes; net vs summed positive compatible `quantity_base`; `2 can − 1 can → 1 can` canonical; skip in-stock; zero-stock row ignored; #N3 line `nettable` flag. `deduct_calc` — clamp at 0; incompatible bucket → `"have uncertain (incompatible unit)"`, not applied; FIFO by row id; opaque same-unit deducts; canonical `requested`/`deducted`/`deducted_unit`; `before − deducted == after`; kg-from-g (stock `2000 g`, recipe `1 kg` → `deducted 1000`, `after 1000`, all `g`). `add_to_inventory_calc` — new bucket row; cross-unit add (`1 kg` row + `500 g` → `1500` base); incompatible unit → a second row, never `1 + 500 → 501`; returns a canonical `Quantity`. |
+| `test_normalize.py` | every locked §2.1 input/output row exactly; descriptor and identity-bearing lists; final-token-only singularization; punctuation/whitespace; degenerate empty result. Global idempotence is deliberately **not** asserted (D1). |
+| `test_units.py` | every locked §2.2 conversion and `add_quantities` row, including exact output order, plus every listed invariant using the specified tolerance; plurals/abbrevs; unknown → `None`; cross-dimension incompatible; `dozen`/`pair`; `bucket_of` / `canon_unit`. **R-3 — plural round-trip:** for every synonym-table token, `parse_unit(plural) is parse_unit(singular_key)`; for every deliberately-opaque token, `normalize_unit_token(plural) == normalize_unit_token(singular)`. `boxes → box`, `bunches → bunch`, `dashes → dash`, `splashes → splash`, `pinches → pinch` asserted explicitly (a bare trailing-`s` strip would leave `boxe` / `dashe` and split the opaque bucket). |
+| `test_ingredient_parse.py` | the 7-row acceptance table in §2.3 exactly; the deterministic adversarial corpus never raises and always returns a non-empty `item` plus `quantity=None` or a positive finite float; unicode `½`; mixed `1 1/2` → `1.5`; garbage → raw fallback. |
+| `test_inventory_math.py` | every locked §7 availability, grocery-generation, deduction, add-to-inventory, and invariant case. Also: `clove` need vs `bulb` stock → `have_uncertain`; canonical `requested`/`deducted`/`deducted_unit`; kg-from-g (stock `2000 g`, recipe `1 kg` → `deducted 1000`, `after 1000`, all `g`); every log entry has all 11 keys and each round-trips through `CookDeductionRead` (`_entry` requires every kwarg — a missing one is a `TypeError`) (N7). |
 | `test_auth.py` | anonymous `client`. register `201` / `409` dup / `409` **case-insensitive** dup (`Alice` vs `alice`) / `403` when `allow_registration=false` / `403` wrong `code` when configured / `422` short pw / `422` bad username. login `200` + token / `401` bad pw / `401` unknown user. logout invalidates. **Five `get_current_user` 401s:** missing header, malformed (`"garbage"`), wrong scheme (`"Basic xyz"`), unknown token, expired (`sessions.expires_at` in the past) — each on a gated route and on `/me`; `/me` `200` with a good token. |
 | `test_validation.py` | negative / `0` / `inf` / `nan` rejected `422` on: recipe ingredient `quantity`, inventory `POST`/`PATCH` `quantity`, `cook` `multiplier`, grocery `multipliers`, `availability?multiplier=`. `recipe_ids` empty or with a duplicate → `422`. A `multipliers` key not in `recipe_ids` → `422`. |
-| `test_recipes.py` | `auth_client`. nested create/read (positions 0..n-1, computed `normalized_name`); **string elements in `ingredients` are parsed and `raw_text` stored; object elements store `raw_text=null`; blank string elements skipped**; PUT clears old ingredient rows; steps/tags round-trip; `DELETE` cascades ingredients and nulls `cook_logs.recipe_id`. `/availability?multiplier=2` — per-line `need` + `group_*` canonical, `group_unit` present, no `have`/`short` on the line; cook-to-zero food → `missing`. `/cook` writes a `CookLog` and mutates inventory (clamp; incompatible bucket); deduction entries carry the full key set (canonical, `null` where N/A); `cook {deduct:false}` leaves inventory untouched but still writes a `CookLog`; `GET .../cook-logs` newest-first across both modes. |
+| `test_recipes.py` | `auth_client`. nested create/read (positions 0..n-1, computed `normalized_name`); **string elements in `ingredients` are parsed and `raw_text` stored; object elements store `raw_text=null`; blank string elements skipped**; a pasted line > 200 chars is truncated to 200 before parsing — `raw_text`, `item`, and `note` all fit their columns and the recipe still creates (no 422) (R-4); PUT clears old ingredient rows; steps/tags round-trip; `DELETE` cascades ingredients and nulls `cook_logs.recipe_id`. the happy-path recipe includes a to-taste line (`"salt to taste"` → `quantity=None`); `/availability?multiplier=2` — per-line `need` + `group_*` canonical, `group_unit` present, no `have`/`short` on the line; the to-taste line survives `multiplier` scaling (no `TypeError`) and reports `status="to_taste"`; cook-to-zero food → `missing`. `/cook` writes a `CookLog` and mutates inventory (clamp; incompatible bucket); the to-taste line yields a `"to taste"` deduction entry and is never applied; every deduction entry validates against `CookDeductionRead` — all 11 keys present, `reason` in the allowed `Literal` set, `null` only where the §5.4 table permits; a stored entry with an extra/unknown key or an unlisted `reason` → `500` on read (N7); `"ok"`, `"clamped to 0"`, `"not in inventory"`, `"have uncertain (incompatible unit)"`, `"to taste"` each exercised at least once across the cook tests; `cook {deduct:false}` leaves inventory untouched but still writes a `CookLog`; `GET .../cook-logs` newest-first across both modes. |
 | `test_cook_logs.py` | `auth_client`. `GET /api/cook-logs` paginates newest-first across recipes (`limit`/`offset`, `total`); `GET /api/cook-logs/{id}` returns one; both still resolve after the recipe is deleted (`recipe_id` null, `recipe_title` stands). |
-| `test_inventory.py` | `auth_client`. `POST` additive upsert (two `POST`s to the same `(match_name, unit_bucket)` sum in `quantity_base`; `POST` missing `item` or `quantity` → `422`). `PATCH {quantity:200, unit:"g"}` absolute set; `PATCH {unit:"kg"}` display-only change (`quantity_base` untouched, `display_quantity` changes); **`PATCH {quantity:200}` with no unit → `422`**; `PATCH {unit:"can"}` on a mass row → `422`; `PATCH {unit:null}` on a non-COUNT row → `422`, on a COUNT row → `200`; `PATCH {item:null}` / `{quantity:null}` / `{match_name:null}` → `422`; `PATCH {}` → `200` no-op; `PATCH {match_name:...}` onto an occupied `(match_name, unit_bucket)` → `409`; add → cook → `GET` shows `display_quantity` recomputed from the reduced `quantity_base`; composite uniqueness; cross-unit add merges via `quantity_base`; same food in two incompatible units → two rows; editing `match_name` re-points matching; negative / non-finite qty → `422`. |
-| `test_grocery.py` | generate from 2 selected recipes (consolidation + netting; generated `quantity`/`unit` canonical; food cooked to `quantity_base=0` still produces a full-need line); manual item add (amounts as typed); check off → inventory unchanged; edit a checked line then `submit` → inventory reflects the edited value; `POST /submit` → inventory up + line frozen (`added_to_inventory`, canonical `applied_quantity`); `PATCH` a frozen line → `409`; `DELETE` a frozen line → `409`; `DELETE` an unfrozen line → `204`; uncheck before submit → no-op; `submit` does **not** archive — check a further line and re-submit picks it up; `submit` with nothing checked → `200` no-op; `POST /archive` → `status=archived`, later `PATCH`/`submit`/item-`POST`/item-`DELETE` → `409`; sequential double-submit idempotency; delete list cascades items; non-nettable line present; #N3: `need 3 can / 1 can + 1 jar` → a `2 can` line `nettable=false`; `1 can` only → `nettable=true`. |
+| `test_inventory.py` | `auth_client`. `POST` additive upsert (two `POST`s to the same `(match_name, unit_bucket)` sum in `quantity_base`; `POST` missing `item` or `quantity` → `422`). `PATCH {quantity:200, unit:"g"}` absolute set; `PATCH {unit:"kg"}` display-only change (`quantity_base` untouched, `display_quantity` changes); **`PATCH {quantity:200}` with no unit → `422`**; `PATCH {unit:"can"}` on a mass row → `422`; `PATCH {unit:null}` on a non-COUNT row → `422`, on a COUNT row → `200`; `PATCH {item:null}` / `{quantity:null}` / `{match_name:null}` → `422`; `PATCH {}` → `200` no-op; `PATCH {match_name:...}` onto an occupied `(match_name, unit_bucket)` → `409`; add → cook → `GET` shows `display_quantity` recomputed from the reduced `quantity_base`; composite uniqueness; cross-unit add merges via `quantity_base`; same food in two incompatible units → two rows; editing `match_name` re-points matching; negative / non-finite qty → `422`. **N5 — `match_name` is canonical:** `POST` / `PATCH` `match_name` `" Flour "` or `"FLOUR"` is stored as `flour` (matches a recipe ingredient whose canonical name is `flour`); `match_name` that normalizes to `""` (`"  "`, `"!!!"`) → `422`; `PATCH {match_name}` whose *normalized* value collides with a different `(match_name, unit_bucket)` row → `409`; two `POST`s with `match_name` `"Flour"` then `"flour"` (same unit) hit the same row (additive), not two rows. |
+| `test_grocery.py` | generate from 2 selected recipes (consolidation + netting; generated `quantity`/`unit` canonical; a to-taste ingredient (`quantity=None`) in a selected recipe survives `multipliers` scaling (no `TypeError`) and emits a `quantity=null, unit=null` line; food cooked to `quantity_base=0` still produces a full-need line); manual item add (amounts as typed); check off → inventory unchanged; edit a checked line then `submit` → inventory reflects the edited value; `POST /submit` → inventory up + line frozen (`added_to_inventory`, canonical `applied_quantity`); `PATCH` a frozen line → `409`; `DELETE` a frozen line → `409`; `DELETE` an unfrozen line → `204`; uncheck before submit → no-op; `submit` does **not** archive — check a further line and re-submit picks it up; `submit` with nothing checked → `200` no-op; `POST /archive` → `status=archived`, later `PATCH`/`submit`/item-`POST`/item-`DELETE` → `409`; sequential double-submit idempotency; delete list cascades items; non-nettable line present; #N3: `need 3 can / 1 can + 1 jar` → a `2 can` line `nettable=false`; `1 can` only → `nettable=true`. **N6 — atomic quantity/unit + reclassify:** on a generated `500 g` line, `PATCH {unit:"kg"}` alone → `422`, `PATCH {quantity:200}` alone → `422`; `PATCH {quantity:0.5, unit:"kg"}` → `200`, line now `source="manual"`, `nettable=true`, and `submit` adds the `0.5 kg` the caller sent (not `500 kg`); `PATCH {item:"almond flour"}` on a generated `nettable=false` line → `source="manual"`, `nettable=true`, `normalized_name` recomputed; `PATCH {checked:true}` alone leaves `source`/`nettable` unchanged. |
 | `test_concurrency.py` | **file-backed SQLite (`tmp_path`), two independent engines/connections, authenticated HTTP through `TestClient`.** Two `cook`s racing a shared ingredient → final `quantity_base` is the correct total, both `CookLog`s honest (no lost update). Two `submit`s racing → each checked line applied exactly once. A read racing a write never observes a torn value. |
 
 ### End-to-end verification (via `/docs`)
@@ -1272,7 +1515,7 @@ RECIPE_ALLOW_REGISTRATION=true RECIPE_REGISTRATION_CODE=devcode uv run uvicorn a
 
 1. `POST /api/auth/register {username, password, code:"devcode"}` → copy token → Authorize.
    **Stop the server, restart without those two env vars.** A second `POST /api/auth/register` → `403`.
-2. `POST /api/recipes` with a mix of pasted-string and structured ingredient rows + `steps`; `GET` it back nested and ordered.
+2. `POST /api/recipes` with a mix of pasted-string and structured ingredient rows (include one to-taste line, e.g. `"salt to taste"`) + `steps`; `GET` it back nested and ordered. Later `availability` / `cook` / `grocery` on this recipe must not `TypeError` on the to-taste line.
 3. `POST /api/inventory` `{item:"flour", quantity:500, unit:"g"}` and `{item:"tomatoes", quantity:1, unit:"can"}`.
    A second `POST` `{item:"flour", quantity:250, unit:"g"}` → the flour row `quantity_base = 750`.
    `PATCH /api/inventory/{flour_id} {quantity:200, unit:"g"}` → `quantity_base = 200`.
@@ -1282,7 +1525,9 @@ RECIPE_ALLOW_REGISTRATION=true RECIPE_REGISTRATION_CODE=devcode uv run uvicorn a
 4. `POST /api/recipes/{id}/cook {multiplier:1}` → inventory `quantity_base` drops; `CookLog` has canonical `requested`/`deducted`/`deducted_unit`/`before`/`after` and `before − deducted == after`.
    Cook a food to `0` → follow-up `availability` reports it `missing`; `POST /api/grocery` emits a full-need line for it.
 5. `POST /api/grocery {recipe_ids:[id]}` → only shortfalls, consolidated, canonical `quantity`.
-   `PATCH` a line `{checked:true}` → inventory unchanged.
+   `PATCH` a line `{checked:true}` → inventory unchanged, `source`/`nettable` unchanged.
+   `PATCH` a generated line `{unit:"kg"}` alone → `422`; `{quantity, unit}` together → `200`,
+   line flips to `source:"manual"`, `nettable:true`.
    `POST /api/grocery/{id}/submit` → inventory rises, line `added_to_inventory` + canonical `applied_quantity` set, **`status` still `active`**.
    Check another line, `submit` again → only that line added. `PATCH` / `DELETE` a frozen line → `409`.
 6. `POST /api/grocery/{id}/archive` → `status:archived`; further `PATCH` / `submit` → `409`.

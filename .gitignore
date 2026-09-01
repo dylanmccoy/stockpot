@@ -15,3 +15,7 @@ frontend/dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Tooling-local state (Claude Code, etc.)
+.claude/worktrees/
+.claude/settings.local.json

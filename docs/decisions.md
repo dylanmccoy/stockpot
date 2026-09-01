@@ -45,8 +45,9 @@ These identifiers are used by comments in `spec.md`.
 | S6 | `unit_bucket` is `str(30)` | Allows `opaque:` plus a reasonably long unknown unit token. |
 | S7 | Archiving an already archived grocery list returns 409 | Keeps the guarded one-way transition explicit. |
 | SD1 | `to_taste` availability lines are vacuous and excluded from `all_available` | A quantity-free instruction cannot participate in stock arithmetic. |
-| SD2 | Cook deduction draws from compatible inventory rows by ascending row ID | Gives deterministic FIFO-like behavior. |
+| SD2 | Cook deduction draws from compatible inventory rows by ascending row ID | Gives deterministic behavior without implying inventory rows are purchase lots. |
 | SD3 | Inventory services accept and return frozen DTOs, never ORM objects or sessions | Keeps calculation pure and transaction ownership in routers. |
+| SD4 | `add_quantities` emits partitions in first-seen input order | Keeps generated grocery insertion order deterministic across mixed unit buckets. |
 
 ## Revisions — adversarial review pass 2 (historical record)
 
@@ -182,7 +183,7 @@ rationale and the v2 roadmap.
 Gap-fills folded in at the same time (the plan was silent, the spec decided):
 `to_taste` availability lines carry `need_unit = <group canonical unit>` and
 `group_need`/`group_have`/`group_short` `= null` (`group_key` still set); cook
-draws down compatible rows **FIFO by inventory-row `id`**; every
+draws down compatible rows in **ascending inventory-row `id` order**; every
 `CookLog.deductions` entry carries the **full key set** (`null` where a branch
 does not populate one), though the column stays `list[dict]` (⚠ N7 still open as
 a typed schema); manual grocery items are added via `POST /api/grocery/{id}/items`;
@@ -190,6 +191,109 @@ a typed schema); manual grocery items are added via `POST /api/grocery/{id}/item
 defaults `limit=50` (`1..200`), `offset=0`; list endpoints have explicit
 orderings; the registration `code` is compared with `secrets.compare_digest`;
 `IntegrityError` / `database is locked` → `409` via global exception handlers.
+
+## Revisions — phase-gate issue resolutions
+
+Issues raised in review pass 6 that were deferred to their owning phase, now
+resolved and folded into `spec.md`. `docs/issues.md` holds only what is still
+open.
+
+### N5 — Inventory `match_name` is a canonical server-owned key (2026-08-31)
+
+**Decision:** `match_name` is always canonical, even when its source text comes
+from a user. There is no use case in v1 for a deliberately non-canonical match
+key.
+
+**Resolution:**
+
+- Every `match_name` — the `normalize_name(item)` default **and** any value
+  supplied to `POST` / `PATCH /api/inventory/{id}` — is passed through
+  `normalize_name` before store (was `.strip()` only).
+- A value that normalizes to `""` (`"  "`, `"!!!"`) → **422**
+  (`"match_name normalizes to empty"`).
+- Collision detection and the additive-upsert `ON CONFLICT (match_name,
+  unit_bucket)` both key off the normalized value. A `PATCH` whose *normalized*
+  `match_name` collides with a different row → **409** (no auto-merge in v1 —
+  consistent with #P1).
+- Display `item` is still stored exactly as typed.
+
+**Consequence:** two `POST`s with `match_name` `"Flour"` then `"flour"` (same
+unit) now land on one row additively, instead of creating two logical
+duplicates; an edited `match_name` like `" Flour "` matches a recipe ingredient
+whose canonical name is `flour`. Descriptor-stripping in `normalize_name` (e.g.
+`"large eggs"` → `egg`) applies to `match_name` too — intentional, since recipe
+ingredient names are normalized the same way.
+
+**Spec sites:** §1 model notes + `inventory_items` table, §4.4
+`add_to_inventory_calc`, §5.5 schemas + `POST` + `PATCH` algorithm + examples,
+§7 `test_inventory.py`. **Phase:** `phases/phase-4.md` gate + work + exit.
+
+### N6 — Grocery-line edits: atomic quantity/unit pair + reclassify on content edit (2026-08-31)
+
+**Decision:** On `PATCH /api/grocery/{id}/items/{item_id}`, `quantity` and `unit`
+move together, with no server-side conversion; and any edit to the *substance* of
+a line (`item` / `quantity` / `unit`) drops the solver's classification.
+
+**Resolution:**
+
+- If exactly one of `quantity` / `unit` is present in the request body
+  (`model_fields_set`) → **422** `"quantity and unit must be set together"`.
+  Values may be `null`; both keys must appear together. No conversion is done —
+  the stored number always matches the unit the caller sent in the same body.
+- Any `item` / `quantity` / `unit` edit reclassifies the line: `source →
+  "manual"`, `nettable → true`. A generated line is a solver claim ("short
+  exactly X, certain/uncertain"); a human override of item/amount/unit voids the
+  claim, so the line is treated as hand-entered. A `checked`-only PATCH does
+  **not** reclassify.
+- Rejected alternatives: auto-converting on a unit-only edit (duplicates
+  `to_base`/`from_base` into a new call site and still guesses wrong for the
+  "the number is already in the new unit" intent); keeping `source="generated"`
+  and only clearing `nettable` (leaves `source` describing data the solver never
+  saw); re-running netting on edit (high surprise — user types `2 lb`, row
+  silently becomes `907 g`).
+
+**Consequence:** the N6 failure mode is closed — a generated `500 g` line can no
+longer become `500 kg` (a 1000× inventory overshoot) via a `{"unit":"kg"}` edit,
+and an edited line never carries a stale `generated` / `nettable=false` flag.
+`nettable` remains inert in v1 (it informs the shopper; it never gates `submit`),
+so reclassification has no algorithmic effect beyond honesty of the stored row.
+
+**Spec sites:** §5.6 `GroceryListItemUpdate` schema + `PATCH` algorithm, §7
+`test_grocery.py` + E2E step 5. **Phase:** `phases/phase-6.md` gate + work +
+exit.
+
+### N7 — `CookDeductionRead` is an enforced Pydantic model (2026-08-31)
+
+**Decision:** The cook-deduction audit shape is guaranteed at the Pydantic
+boundary, not by convention. The spec already designed `CookDeductionRead` (full
+11-field table, `list[CookDeductionRead]` on `CookLogRead`); N7 makes it a real
+model.
+
+**Resolution:**
+
+- `CookDeductionRead` is a `BaseModel` in `schemas/cook_logs.py` with all 11
+  fields typed, nullable exactly where the §5.4 branch table permits (`item`,
+  `applied`, `reason` never `null`), `reason` a `Literal` of the 5 allowed
+  strings, and `model_config = ConfigDict(extra="forbid")`.
+- `CookLogRead.deductions: list[CookDeductionRead]`. FastAPI validates every
+  stored dict on read — a malformed, drifted, or extra-key entry is a loud
+  `500`, not a silent shape change.
+- The `cook_logs.deductions` **DB column is unchanged** — raw `JSON list[dict]`,
+  written from `_entry()`.
+- `_entry()` keeps returning a dict but its signature names all 11 params as
+  **required** (no defaults) — a missing kwarg is a `TypeError` at cook time.
+- Rejected: typing the log in the pure `deduct_calc` layer as well (a second
+  type to keep in sync with the schema; the read boundary is where the stated
+  "response validation cannot enforce it" gap actually lives).
+
+**Consequence:** the promised audit format can no longer vary by branch. Deferred
+undo / review features consume a shape the API guarantees. No migration — the
+JSON column and `_entry()` writer are untouched.
+
+**Spec sites:** §1 `cook_logs.deductions` note, §4.5 `_entry()` prose, §5.4
+`CookDeductionRead` model + `CookLogRead`, §7 `test_recipes.py` +
+`test_inventory_math.py`. **Phase:** `phases/phase-5.md` gate + work +
+verification + exit.
 
 ## Review pass 6 source record
 
@@ -229,9 +333,9 @@ Phases 4/5/6 respectively.
 | N2 | **Resolved** | §Revisions pass 6 row N2; §Module/router layout (`database.py`, `security.py`, `main.py` lines); §Schema management (importable `get_db(request)` + `SessionDep`, `app.state.session_factory` only, no `SessionLocal`); Phase 2; Critical files. |
 | N3 | **Resolved** | §Revisions pass 6 row N3; availability + grocery-generation pseudocode (three-way `compat`/`incomp`/none partition); #R6 and #P4 revision rows (refinement notes); Done criteria items 4 & 6; cook narrative (deliberate non-adoption); test strategy `test_inventory_math.py` / `test_grocery.py`. |
 | N4 | **Resolved via N2** | §Revisions pass 6 row N4; §Schema management "Unit of work" bullet — `get_db` commits on clean return / rolls back on exception; routers `flush()` only; auth `last_used_at` bump rides the request's one transaction. |
-| N5 | Open — Phase 4 | `match_name` normalization / non-empty enforcement — address when Phase 4 lands. |
-| N6 | Open — Phase 6 | Atomic quantity/unit pair on grocery-line edits — address when Phase 6 lands. |
-| N7 | Open — Phase 5 | Typed `CookDeductionRead` with all keys present — address when Phase 5 lands. |
+| N5 | **Resolved 2026-08-31** | §Revisions — phase-gate issue resolutions → N5; `spec.md` §1 / §4.4 / §5.5 / §7; `phases/phase-4.md`. |
+| N6 | **Resolved 2026-08-31** | §Revisions — phase-gate issue resolutions → N6; `spec.md` §5.6 + §7; `phases/phase-6.md`. |
+| N7 | **Resolved 2026-08-31** | §Revisions — phase-gate issue resolutions → N7; `spec.md` §1 / §4.5 / §5.4 / §7; `phases/phase-5.md`. |
 
 ### Findings
 

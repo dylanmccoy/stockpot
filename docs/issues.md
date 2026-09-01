@@ -1,103 +1,90 @@
 # Open Backend v1 Issues
 
-Only unresolved findings belong here. Resolved review findings N1–N4 and their
-rationale are preserved in [`decisions.md`](decisions.md).
+Two kinds of item live here:
+
+- **Phase-gate issues** — unresolved findings that block an owning phase. Each
+  becomes a gate for its owning phase and must be resolved in the normative
+  [`spec.md`](spec.md) before that phase is implemented. Resolved review
+  findings N1–N4 and their rationale are preserved in
+  [`decisions.md`](decisions.md).
+- **Deferred items** — acknowledged gaps that are **not** v1-blocking and carry
+  no phase gate. Tracked here so they are not lost; the substantive write-up
+  lives in [`features.md`](features.md).
+
+## Phase-gate issues
 
 These issues do not block Phases 0–3. Each becomes a gate for its owning phase
 and must be resolved in the normative [`spec.md`](spec.md) before that phase is
 implemented.
 
-| ID | Severity | Owner | Summary | Confidence | Status |
-|---|---|---|---|---:|---|
-| N5 | High | Phase 4 | Canonicalize and validate editable inventory `match_name` | 0.97 | Open |
-| N7 | Medium | Phase 5 | Type and stabilize every cook-deduction response entry | 0.99 | Open |
-| N6 | Medium | Phase 6 | Make grocery quantity/unit edits physically safe | 0.96 | Open |
+_No open issues._
 
-## N5 — Inventory `match_name` is not canonicalized
+_All review-pass-6 phase-gate findings are resolved:_
 
-**Current specification:** An explicitly supplied `match_name` is trimmed but
-not passed through `normalize_name`; collision checks use the trimmed value.
+- _N5 (inventory `match_name` canonicalization) — 2026-08-31_
+- _N6 (grocery quantity/unit edit safety) — 2026-08-31_
+- _N7 (typed cook-deduction response) — 2026-08-31_
 
-**Failure scenario:** Editing a row to `" Flour "` or `"Flour"` fails to match a
-recipe ingredient whose canonical name is `"flour"`. An empty string creates an
-effectively unreachable stock row, and differently cased values can represent
-the same logical identity without colliding.
+_See [`decisions.md`](decisions.md) §Revisions — phase-gate issue resolutions._
 
-**Impact:** The repair mechanism can disconnect stock or create duplicate
-logical identities, producing false missing/short results.
+## Deferred items (non-blocking, no phase gate)
 
-**Required decision:** Confirm that `match_name` is a canonical server-owned key
-even when its source text comes from a user.
+No timeline. No `spec.md` or phase change in v1. Revisit per each item's trigger.
 
-**Recommended resolution:**
+### D1 — Robust singularization for ingredient names
 
-- Run every supplied `match_name` through `normalize_name`.
-- Reject an empty normalized result with 422.
-- Detect `(match_name, unit_bucket)` collisions after normalization.
-- Test casing, surrounding punctuation/whitespace, empty input, and collision
-  after normalization.
+**Opened:** 2026-08-31, alongside the R-3 readiness fix.
 
-**Resolution must update:** `spec.md` inventory model, inventory POST/PATCH
-algorithms, tests, and [`phases/phase-4.md`](phases/phase-4.md).
+**Context:** R-3 pinned `normalize._singularize_token` for **unit tokens** — a
+closed ~35-item set where a hand rule + irregular map is provably complete.
+Ingredient **names** (`normalize_name`) are open-vocabulary: `cherries`,
+`berries`, `gnocchi`, `biscotti`, `roux`, `feta` vs `feta cheese`. The same
+small ruleset applies there and will mis-singularize or under-match some real
+inputs. v1 accepts this — the editable inventory `match_name` is the manual
+escape hatch.
 
-## N7 — Cook deductions are untyped
+**When to revisit:** with the `FoodItem` upgrade (canonical identity + aliases),
+or sooner if name mismatches become a real household annoyance. A library
+(`inflect`) is a reasonable option **here**, unlike for units, because the
+vocabulary is genuinely open.
 
-**Current specification:** `CookLog.deductions` is stored and returned as
-`list[dict]`. The prose requires a consistent full key set, using nulls when a
-field is inapplicable, but response validation cannot enforce it.
+**Write-up:** `features.md` §`FoodItem — canonical ingredient identity` →
+"Current approach (v1)" rough edges.
 
-**Failure scenario:** A client reads `deducted_unit`, `before`, or `after`
-successfully for applied entries but encounters a missing or misspelled key for
-`to_taste`, missing-stock, or incompatible-stock entries.
+### D2 — Multi-line ingredient paste is not split
 
-**Impact:** The promised audit format varies by branch and becomes fragile
-before deferred undo and review features consume it.
+**Opened:** 2026-08-31, alongside the R-4 readiness fix.
 
-**Required decision:** Decide whether v1 guarantees the deduction audit shape at
-the Pydantic boundary rather than by convention alone.
+**Context:** each element of `payload.ingredients` is one ingredient line *by
+contract*. §5.2 does no newline splitting — a `str` element with embedded `\n`
+(`"2 tbsp oil\n3 eggs\n1 onion"`) is passed whole to `parse_ingredient`, which
+reads it as a single line: `quantity=2`, `unit=tbsp`, `item` = the rest of the
+blob. With the R-4 fix the blob is truncated to 200 chars first, so it can no
+longer overflow a column, but it still produces one garbled ingredient row
+instead of three.
 
-**Recommended resolution:**
+**Why deferred, not fixed:** splitting a pasted block server-side is a real
+input-handling feature (how to treat blank lines, headers like "For the sauce:",
+bullet characters, wrapped lines), not a one-line precision fix. The eventual
+frontend paste box is the natural place to split; until then, callers send a
+pre-split array. No v1 client is affected.
 
-- Add a typed `CookDeductionRead` schema.
-- Make inapplicable fields explicitly nullable while keeping every key present.
-- Use `list[CookDeductionRead]` in `CookLogRead`; the database JSON column can
-  remain unchanged.
-- Test every deduction reason against the same response key set.
+**When to revisit:** with the frontend SPA effort, or if an API consumer needs
+to POST a raw pasted block. If done server-side, split on `\n`, `strip()` each,
+drop blanks, then run the existing per-line build.
 
-**Resolution must update:** `spec.md` cook-log model/API/test matrix and
-[`phases/phase-5.md`](phases/phase-5.md).
-
-## N6 — Grocery quantity and unit edits are not atomic
-
-**Current specification:** Grocery-line PATCH independently applies optional
-`item`, `quantity`, and `unit` fields, leaving `source` and `nettable` untouched.
-
-**Failure scenario:** A generated line contains `500 g flour`. A PATCH that only
-sets `unit: "kg"` leaves the number at 500, so submit adds 500 kg. Editing the
-item or units can also leave a stale generated/nettable classification attached
-to different data.
-
-**Impact:** A normal edit can add orders of magnitude too much inventory and
-violate the generated-line canonical-unit contract.
-
-**Required decision:** Choose whether unit-only edits preserve physical quantity
-or whether changing a unit requires an explicit quantity/unit pair.
-
-**Recommended resolution:**
-
-- Treat quantity and unit as an atomic pair, or convert the existing quantity
-  when only the unit changes.
-- After a semantic item/quantity/unit edit, either canonicalize the line or
-  reclassify it as manual.
-- Recompute or explicitly clear `nettable` after semantic edits.
-- Test `500 g` followed by a unit-only `kg` edit.
-
-**Resolution must update:** `spec.md` grocery update schema/algorithm/test matrix
-and [`phases/phase-6.md`](phases/phase-6.md).
+**Write-up:** `features.md` §`Additional deferred features` → "Multi-line
+ingredient paste".
 
 ## Closing an issue
+
+Phase-gate issues:
 
 1. Record the chosen behavior in `spec.md`.
 2. Update its phase checklist and acceptance tests.
 3. Move the resolution summary to `decisions.md`.
 4. Remove the issue from this file rather than leaving a resolved-history table.
+
+Deferred items are closed either by shipping the feature (write-up moves to the
+relevant phase / `spec.md`) or by an explicit decision to drop them (record in
+`decisions.md`); then delete the entry here.

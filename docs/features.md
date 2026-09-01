@@ -212,6 +212,7 @@ requirements.
 | Staples / low-stock alerts | Excluded | `inventory_items` row structure | `is_staple: bool` + `min_quantity: float` columns; `GET /api/inventory/low` |
 | Undo for forward-only actions | Excluded | `CookLog.deductions` (requested/deducted/before/after) and `GroceryListItem.applied_quantity/unit` snapshot what was applied; `ReceiptItem.applied_quantity/unit` joins them once receipt OCR lands | One uniform reverse-apply op across cook + grocery (+ receipt in v2); no per-action `/undo` route until designed |
 | Frontend (React SPA) | Excluded; v1 backend only | Skeleton in place (`App.tsx` / `api.ts` / `types.ts`); **does not work against v1 API** and was left untouched | `react-router-dom` + pages; auth.tsx + bearer-token injection in api.ts; mirror types.ts to v1 schemas |
+| Multi-line ingredient paste | Excluded; caller pre-splits | §5.2 per-line ingredient build; `parse_ingredient` per line | Server-side split of a pasted block on `\n` (blank/header/bullet handling) before the existing per-line build; `issues.md` §Deferred item D2 |
 
 ### "What can we make now"
 
@@ -283,6 +284,22 @@ requirements.
   - **Build:** TypeScript strict mode; `npm run build` → production bundle.
   - **Tests:** mirror backend patterns — `api` fetch wrapper under test via
     fetch mock / `msw` / plain stubs.
+
+### Multi-line ingredient paste
+
+- **v1 status:** excluded. Each element of `payload.ingredients` is one
+  ingredient line by contract; §5.2 does no newline splitting. A `str` element
+  with embedded `\n` is parsed as a single line (with R-4 it is first truncated
+  to 200 chars, so it cannot overflow a column — it just yields one garbled
+  row).
+- **Hook in v1:** the per-line build loop in §5.2 and `parse_ingredient`
+  already handle a clean array of lines; a splitter would feed that loop.
+- **Work to add:** accept a raw pasted block, split on `\n`, `strip()` each
+  line, drop blanks, and decide how to treat non-ingredient lines (section
+  headers like `"For the sauce:"`, leading bullets `- `/`* `, soft-wrapped
+  lines). Natural home is the frontend paste box; a server-side endpoint is
+  only needed if an API consumer must POST an unsplit block. No timeline
+  (`issues.md` §Deferred item D2).
 
 ## Excluded by design (not deferred)
 
@@ -385,7 +402,8 @@ because several rough edges point at it.
 ### Current approach (v1)
 
 Recipe ingredients → `normalized_name` (computed server-side via `normalize.py`:
-strip descriptors, lowercase, singularize naively).
+lowercase, strip descriptors, `_singularize_token` on the final token — a small
+hand ruleset, not a full inflection engine).
 
 Inventory items → `match_name` (user-editable, defaults to their own
 `normalized_name`).
@@ -397,6 +415,17 @@ Matching: recipe ingredient's `normalized_name` == inventory item's `match_name`
 descriptor stripping, but a recipe says "feta cheese" and inventory says "feta
 block"). Editable `match_name` per inventory row lets users correct mismatches
 manually, but it does not scale (every item must be corrected independently).
+
+**Deferred: robust name singularization (`issues.md` §Deferred item D1).** `normalize.py`
+uses one small hand ruleset (`_singularize_token`: irregular map, `-ies→-y`,
+`-es`-group, trailing `-s`). It was pinned in v1 for the *closed* unit-token set
+(readiness R-3), where it is provably complete. Ingredient **names** are
+open-vocabulary — `cherries`/`berries` (fine), but also `gnocchi`, `biscotti`,
+`roux`, mass nouns, and multi-word heads — and the ruleset will mis-handle some.
+A library (`inflect`) is a defensible choice for names specifically, since the
+vocabulary is genuinely open; it was rejected for units only. Fold this in with
+the `FoodItem` upgrade below, or sooner if name mismatches become a real
+annoyance. No v1 change.
 
 ### Upgrade path: `FoodItem` table
 

@@ -11,6 +11,10 @@ Make repository guidance match the backend that actually shipped.
 - [`../features.md`](../features.md)
 - Completed phase files in this directory.
 
+**R-10 read-only exception:** Phase 7 may read `features.md` only to link
+deferred work and verify exclusions. It must not implement a deferred feature
+or describe one as part of the shipped v1 surface.
+
 ## Work
 
 - [ ] Update `README.md` with setup, authentication, v1 workflows, API surface,
@@ -39,4 +43,10 @@ Make repository guidance match the backend that actually shipped.
 ## Exit criteria
 
 - [ ] All requirements in [`../plan.md`](../plan.md) are complete.
+- [ ] Scope fence passed (R-10, [`../plan.md` §Phase scope fence](../plan.md#phase-scope-fence-and-handoff-contract)):
+      every shipped-behavior statement traces to the backend or normative spec;
+      `features.md` was used only to link deferrals and verify exclusions.
+- [ ] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
+      a non-author reviewer confirmed every command, env var, and behavior
+      statement in the updated docs against the shipped backend and `spec.md`.
 - [ ] Phase complete; mark v1 complete in the master status table.
