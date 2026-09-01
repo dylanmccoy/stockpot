@@ -402,7 +402,9 @@ phase status is authoritative in `plan.md`.
       (#S4), `DELETE` grocery line endpoint (#S5), `unit_bucket` `str(30)` (#S6),
       re-archive → 409 (#S7), plus gap-fills. **`docs/spec.md` is authoritative
       for v1 build detail.**
-- [ ] Phase 0 — reset & deps (not started; awaiting go-ahead)
+- [x] Phase 0 — reset & deps (complete, 2026-08-31, PR #12). Phase 1 — pure
+      core (complete, 2026-09-01, PR #16). See the status table in
+      [`plan.md`](plan.md) for live phase state.
 
 ## Supersession rules
 
