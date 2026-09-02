@@ -14,6 +14,7 @@ It deliberately does not repeat the implementation contract.
 | [`issues.md`](issues.md) | Open findings: phase-gate issues (an owning phase must resolve before completion) + non-blocking deferred items |
 | [`decisions.md`](decisions.md) | Historical decisions and review rationale; non-normative when it conflicts with the spec |
 | [`features.md`](features.md) | Deferred v2 capabilities, infrastructure upgrades, and excluded product directions |
+| [`frontend/`](frontend/) | **Not backend authority.** Frontend-only planning and an informal, non-normative mirror of the API. No backend phase reads, satisfies a requirement from, or edits it. |
 
 When documents disagree, use this order:
 
@@ -128,6 +129,11 @@ Every implementation handoff uses this boundary (R-10):
   elsewhere. In particular, do not introduce deferred frontend, upload/import,
   research/OCR, review, receipt, `FoodItem`, migration, remote-hosting, or
   authorization work into backend v1.
+- **`docs/frontend/` is off-limits to every backend phase.** It is frontend-only
+  planning and an informal, non-normative mirror of the API. No backend phase may
+  treat it as authority, satisfy a requirement from it, edit it, or add frontend
+  code because of it. Phase 7 may link to it as the frontend's planning home but
+  must not restate or act on its contents.
 - If the authorized sources are incomplete, contradictory, or appear to require
   deferred behavior, stop that part of the implementation. Resolve it through a
   reviewed scope/spec change before writing the behavior; do not infer that a
@@ -142,8 +148,9 @@ Use this copyable handoff at the start of every implementation pass:
 Implement only the current phase file and the spec.md sections it links.
 Treat accepted contract tests as locked oracles and plan.md as process guidance.
 You may inspect existing code/tests needed for this work.
-features.md, decisions.md, historical reviews, and deferred issues are context
-only and do not authorize implementation. Do not add adjacent or deferred work.
+features.md, decisions.md, historical reviews, deferred issues, and docs/frontend/
+are context only and do not authorize implementation. Do not touch docs/frontend/
+or add adjacent or deferred work.
 If required behavior is absent or conflicting, stop that part and report the
 scope/spec gap instead of guessing.
 ```
@@ -157,7 +164,7 @@ Phase 8 in the current v1 plan.
 |---|---|---|---|
 | [0 — reset and dependencies](phases/phase-0.md) | Clean database and Argon2 dependency | — | Complete |
 | [1 — pure core](phases/phase-1.md) | Normalization, units, and ingredient parser | Phase 0 | Complete |
-| [2 — auth and app factory](phases/phase-2.md) | App-local DB wiring, transactions, sessions, and route gating | Phase 1 | Not started |
+| [2 — auth and app factory](phases/phase-2.md) | App-local DB wiring, transactions, sessions, and route gating | Phase 1 | Complete |
 | [3 — structured recipes](phases/phase-3.md) | Nested recipe ingredients and validation | Phase 2 | Not started |
 | [4 — inventory and availability](phases/phase-4.md) | Inventory CRUD and availability math | Phase 3 (gate N5 ✅) | Not started |
 | [5 — cooking and history](phases/phase-5.md) | Stock deduction and durable cook logs | Phase 4 (gate N7 ✅) | Not started |

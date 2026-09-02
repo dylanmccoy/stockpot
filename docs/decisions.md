@@ -295,7 +295,20 @@ JSON column and `_entry()` writer are untouched.
 `test_inventory_math.py`. **Phase:** `phases/phase-5.md` gate + work +
 verification + exit.
 
-## Review pass 6 source record
+### Phase 2 close-out — §7 test-seam registration code (2026-09-01)
+
+**Decision:** The §7 test-seam description said `test_settings.allow_registration
+= true` "(no code)". That contradicts `phases/phase-2.md` Verification bullet 1,
+which requires the suite to exercise "requires the configured code when enabled".
+The R-8 seam (`conftest.py`) therefore sets a fixed `registration_code` and the
+anonymous `client` fixture passes it on register.
+
+**Resolution:** §7 opening paragraph updated to state the seam configures a fixed
+`registration_code` alongside `allow_registration = true`. Behavior-neutral —
+the seam already worked this way; only the stale parenthetical changed.
+
+**Spec sites:** §7 opening paragraph. **Phase:** `phases/phase-2.md` R-6 / R-10
+close-out.
 
 This subsection preserves the original review verdict, resolution map, and
 full N1–N4 failure scenarios. References to sections in `docs/plan.md` describe
