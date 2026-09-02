@@ -213,6 +213,8 @@ requirements.
 | Undo for forward-only actions | Excluded | `CookLog.deductions` (requested/deducted/before/after) and `GroceryListItem.applied_quantity/unit` snapshot what was applied; `ReceiptItem.applied_quantity/unit` joins them once receipt OCR lands | One uniform reverse-apply op across cook + grocery (+ receipt in v2); no per-action `/undo` route until designed |
 | Frontend (React SPA) | Excluded; v1 backend only | Skeleton in place (`App.tsx` / `api.ts` / `types.ts`); **does not work against v1 API** and was left untouched | `react-router-dom` + pages; auth.tsx + bearer-token injection in api.ts; mirror types.ts to v1 schemas |
 | Multi-line ingredient paste | Excluded; caller pre-splits | §5.2 per-line ingredient build; `parse_ingredient` per line | Server-side split of a pasted block on `\n` (blank/header/bullet handling) before the existing per-line build; `issues.md` §Deferred item D2 |
+| Availability / grocery uncertainty naming | v1 ships `AvailabilityStatus="have_uncertain"` and a negated `nettable` bool | `check_availability` / `generate_lines` set both; locked oracle tables in §7 | Investigate renaming to a positively-phrased `units_comparable` / `incomparable_units`, and a status enum on grocery lines for parity; raised by the frontend track (`frontend/decisions.md` §Q19 follow-up) — no user-facing effect, frontend copy already covers it |
+| Display-unit conversion on output | Excluded; every response is canonical-unit | `inventory_items.display_unit` already stores a per-row preference; `units.from_base` already converts | Apply a display preference when serializing availability / grocery / cook-log quantities, or accept a `?units=` request parameter; see below |
 
 ### "What can we make now"
 
@@ -300,6 +302,35 @@ requirements.
   lines). Natural home is the frontend paste box; a server-side endpoint is
   only needed if an API consumer must POST an unsplit block. No timeline
   (`issues.md` §Deferred item D2).
+
+### Display-unit conversion on output
+
+- **v1 status:** excluded (decision #P5). Every quantity outside a recipe body is
+  emitted in its bucket's **canonical unit** — `g`, `ml`, `unit`, or the opaque
+  token. `inventory_items.display_unit` is honored on `InventoryItemRead` only;
+  availability `need_unit` / `group_unit`, generated grocery-line `unit`, and
+  every cook-log quantity/unit are canonical with no preference applied.
+- **Consequence a user sees:** add `2 lb` of chicken and the grocery list asks for
+  `453.592 g` more; add `1 cup` of stock and availability reports `ml`. Someone
+  who types `1 kg flour` never sees `kg` again outside the inventory list.
+- **Why deferred, not fixed:** one representation is what makes the netting,
+  consolidation, and deduction math auditable — `add_quantities` partitions by
+  bucket and sums in base units, and the R-7 locked oracles are all expressed in
+  canonical units. Converting at the edge is a serialization concern, but
+  choosing *which* preference wins is a real design question (per-row
+  `display_unit`? a per-user setting? a request parameter?) and every answer
+  multiplies the values a test has to pin.
+- **Hook in v1:** `units.from_base(amount, dim, unit)` already does the
+  conversion and already returns `None` for a cross-dimension or opaque target.
+  `inventory_items.display_unit` already stores a per-row preference, and
+  `InventoryItemRead.display_quantity` already demonstrates the pattern.
+- **Work to add:** decide the preference source, then apply `from_base` in the
+  read-model assembly for availability, grocery, and cook-log responses. Keep the
+  canonical value in the payload alongside the converted one so clients and tests
+  can still assert on an unambiguous number. Do **not** change what is stored:
+  `quantity_base` and the locked service-layer oracles stay canonical.
+- **When to revisit:** with the frontend SPA effort, which is where the
+  formatting burden actually lands. No timeline.
 
 ## Excluded by design (not deferred)
 

@@ -1392,7 +1392,9 @@ item-`POST` on an archived list → `409`.
 
 Every phase ends with `cd backend && uv run pytest` green. `conftest.py` builds
 the app through the factory — `create_app(test_settings, test_engine)` — with
-`test_settings.allow_registration = true` (no code) and an in-memory `StaticPool`
+`test_settings.allow_registration = true` and a fixed `test_settings.registration_code`
+(so the "requires the configured code when enabled" path is exercised; the
+anonymous `client` fixture supplies that code), over an in-memory `StaticPool`
 engine carrying the same `connect` / `begin` listeners. **No `dependency_overrides`.**
 Fixtures: `user` (registers a default user), `auth_client` (**new default**,
 `Authorization` preset), `client` (anonymous, for auth/401 tests).
