@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { Route, Routes } from "react-router-dom";
 import { AppShell } from "./AppShell";
 import { RequireAuth } from "./RequireAuth";
@@ -11,12 +12,29 @@ import GroceryListDetail from "../pages/GroceryListDetail";
 import History from "../pages/History";
 import NotFound from "../pages/NotFound";
 
+// Dev-only primitive gallery. The `import()` sits in a dead branch under a
+// production build, so its chunk is dropped entirely.
+const DevComponentsRoute = import.meta.env.DEV
+  ? lazy(() => import("../pages/dev/ComponentsDemo"))
+  : null;
+
 // Classic component routing (docs/frontend/spec.md §3). TanStack Query owns data;
 // there are no data-router loaders/actions.
 export function AppRouter() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+
+      {DevComponentsRoute && (
+        <Route
+          path="/dev/components"
+          element={
+            <Suspense fallback={null}>
+              <DevComponentsRoute />
+            </Suspense>
+          }
+        />
+      )}
 
       <Route
         element={

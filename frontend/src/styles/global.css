@@ -1,9 +1,7 @@
-/* Phase 0 baseline reset. The token layer (styles/tokens.css) and full base
-   element styling land in Phase 1 (docs/frontend/spec.md §8). */
+/* Global reset + base element styling, on the token layer (docs/frontend/spec.md
+ * §8). Component-scoped styling lives in `*.module.css` (decision Q8). */
 
-:root {
-  color-scheme: light dark;
-}
+@import "./tokens.css";
 
 *,
 *::before,
@@ -11,13 +9,89 @@
   box-sizing: border-box;
 }
 
+html {
+  color-scheme: light dark;
+}
+
 body {
   margin: 0;
-  font-family:
-    system-ui,
-    -apple-system,
-    "Segoe UI",
-    Roboto,
-    sans-serif;
-  line-height: 1.5;
+  min-height: 100vh;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-md);
+  line-height: var(--line-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure {
+  margin: 0;
+}
+
+h1 {
+  font-size: var(--font-size-2xl);
+  line-height: var(--line-tight);
+}
+
+h2 {
+  font-size: var(--font-size-xl);
+  line-height: var(--line-tight);
+}
+
+h3 {
+  font-size: var(--font-size-lg);
+  line-height: var(--line-tight);
+}
+
+a {
+  color: var(--color-accent);
+}
+
+img {
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* One visible focus treatment for the whole app. Primitives never set
+ * `outline: none` without restoring an equivalent ring. */
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Screen-reader-only text (visually hidden, still announced). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

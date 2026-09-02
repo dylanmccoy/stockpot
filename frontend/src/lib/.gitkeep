@@ -1,2 +1,0 @@
-# Pure client-owned logic (parseIngredients, format, apiError).
-# Modules land in Phases 1 and 3 under the locked-oracle gate (docs/frontend/plan.md).

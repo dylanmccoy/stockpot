@@ -1,41 +1,59 @@
-import { NavLink, Outlet } from "react-router-dom";
-import { useAuth } from "../auth/useAuth";
-
-// Phase 0 shell: a minimal semantic frame with the four primary destinations.
-// Phase 1 replaces this with the responsive top-bar / bottom-tab-bar chrome,
-// the token-driven theme, and the user menu.
+import { useEffect, useRef } from "react";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { UserMenu } from "./UserMenu";
+import styles from "./AppShell.module.css";
 
 const DESTINATIONS = [
-  { to: "/", label: "Recipes", end: true },
-  { to: "/inventory", label: "Inventory", end: false },
-  { to: "/groceries", label: "Groceries", end: false },
-  { to: "/history", label: "History", end: false },
+  { to: "/", label: "Recipes", icon: "🍳", end: true },
+  { to: "/inventory", label: "Inventory", icon: "🧺", end: false },
+  { to: "/groceries", label: "Groceries", icon: "🛒", end: false },
+  { to: "/history", label: "History", icon: "📖", end: false },
 ];
 
 export function AppShell() {
-  const { user, logout } = useAuth();
+  const location = useLocation();
+  const mainRef = useRef<HTMLElement>(null);
+  const firstRender = useRef(true);
+
+  // Route change (not the cold load) moves focus to the content region
+  // (docs/frontend/spec.md §9).
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    mainRef.current?.focus();
+  }, [location.pathname]);
 
   return (
-    <>
-      <header>
-        <strong>Recipes</strong>
-        <nav aria-label="Primary">
-          {DESTINATIONS.map((d) => (
-            <NavLink key={d.to} to={d.to} end={d.end}>
-              {d.label}
-            </NavLink>
-          ))}
+    <div className={styles.shell}>
+      <header className={styles.topbar}>
+        <NavLink to="/" className={styles.brand} end>
+          Recipes
+        </NavLink>
+
+        <nav className={styles.nav} aria-label="Primary">
+          <ul>
+            {DESTINATIONS.map((d) => (
+              <li key={d.to}>
+                <NavLink to={d.to} end={d.end} className={styles.navlink}>
+                  <span className={styles.navIcon} aria-hidden="true">
+                    {d.icon}
+                  </span>
+                  <span>{d.label}</span>
+                </NavLink>
+              </li>
+            ))}
+          </ul>
         </nav>
-        <div>
-          {user ? <span>{user.username}</span> : null}
-          <button type="button" onClick={() => void logout()}>
-            Log out
-          </button>
-        </div>
+
+        <span className={styles.spacer} />
+        <UserMenu />
       </header>
-      <main>
+
+      <main id="main" ref={mainRef} tabIndex={-1} className={styles.main}>
         <Outlet />
       </main>
-    </>
+    </div>
   );
 }
