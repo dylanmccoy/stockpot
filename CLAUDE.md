@@ -42,6 +42,9 @@ All backend commands run from `backend/`; all frontend commands from `frontend/`
 | Lint frontend | `npm run lint` (ESLint; `.eslintrc.cjs`) |
 | Format frontend | `npm run format` / check with `npm run format:check` (Prettier) |
 | Run frontend tests | `npm run test:run` (Vitest + MSW) |
+| Run browser E2E / visual tests | `npm run test:e2e` (Playwright; boots the dev server itself) |
+| Update visual baselines | `npm run test:e2e:update` (regenerate on the same OS CI uses) |
+| One-time Playwright browser setup | `npx playwright install --with-deps chromium` (the `--with-deps` half needs root) |
 
 Local dev needs two terminals: backend and frontend.
 

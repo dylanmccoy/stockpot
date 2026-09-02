@@ -11,6 +11,12 @@ node_modules/
 frontend/dist/
 *.tsbuildinfo
 
+# Playwright (browser E2E) — keep e2e/__snapshots__/ committed as baselines
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/playwright/.cache/
+
 # Editors / OS
 .DS_Store
 .idea/
