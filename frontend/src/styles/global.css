@@ -1,0 +1,23 @@
+/* Phase 0 baseline reset. The token layer (styles/tokens.css) and full base
+   element styling land in Phase 1 (docs/frontend/spec.md §8). */
+
+:root {
+  color-scheme: light dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  line-height: 1.5;
+}

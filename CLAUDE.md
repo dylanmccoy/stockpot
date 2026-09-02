@@ -39,8 +39,11 @@ All backend commands run from `backend/`; all frontend commands from `frontend/`
 | Run frontend (dev) | `npm run dev` (serves on :5173, proxies `/api` → `:8000`) |
 | Type-check + build frontend | `npm run build` |
 | Type-check only | `npm run typecheck` |
+| Lint frontend | `npm run lint` (ESLint; `.eslintrc.cjs`) |
+| Format frontend | `npm run format` / check with `npm run format:check` (Prettier) |
+| Run frontend tests | `npm run test:run` (Vitest + MSW) |
 
-There is no linter configured. Local dev needs two terminals: backend and frontend.
+Local dev needs two terminals: backend and frontend.
 
 ## Architecture
 
@@ -67,13 +70,35 @@ pytest + FastAPI `TestClient` (httpx under the hood). `conftest.py`'s `client` f
 
 ### Frontend (`frontend/src/`)
 
-Vite + React 18 + TS, strict mode, no router, no state library.
+Vite + React 18 + TS strict, `react-router-dom` v6 (classic component routing),
+TanStack Query for all server state, CSS Modules + a token layer, MSW for tests.
+The normative contract is `docs/frontend/spec.md` (§1 has the module layout);
+delivery is phased in `docs/frontend/plan.md` (Phases 0–8). Being built
+**mock-first** against MSW and wired to real endpoints as each backend phase lands.
 
-- `types.ts` — hand-maintained mirror of the backend Pydantic schemas. Keep in sync when the API changes.
-- `api.ts` — the single `fetch` wrapper (`api.list/create/remove`). All network access goes through here; it throws on non-2xx and handles 204. Calls are same-origin `/api/...` — the Vite dev proxy (`vite.config.ts`) forwards to the backend, so no base URL or CORS in dev.
-- `App.tsx` — the whole UI: local `useState`, `refresh()` re-fetches the list after every mutation. New screens/components hang off here.
+Import direction is one-way: `types → lib → api/client → api/<resource> →
+components → pages → app`. Key modules:
 
-`tsconfig.json` is a solution file referencing `tsconfig.app.json` (src) and `tsconfig.node.json` (vite config).
+- `types.ts` — hand-maintained mirror of `docs/spec.md` §5 (R-1). Update it and
+  `docs/frontend/spec.md` §5 together when the API changes.
+- `api/client.ts` — the one `fetch` wrapper: `/api` prefix, `Authorization:
+  Bearer` from `localStorage`, normalizes both FastAPI error shapes to a thrown
+  `ApiError`, handles 204, fires a 401 seam. Same-origin `/api/...` via the Vite
+  dev proxy — no base URL or CORS in dev.
+- `api/{auth,recipes,inventory,cookLogs,grocery}.ts` — thin typed adapters (R-2).
+- `auth/` — `AuthProvider` + `useAuth` (+ `context.ts`): token in `localStorage`
+  under `recipe.token`, login/logout, `me` hydration, cache drop on 401.
+- `app/` — `router.tsx` (`<Routes>` table), `AppShell.tsx` (responsive nav),
+  `RequireAuth.tsx` (→ `/login?next=`).
+- `lib/` — pure leaf helpers (`parseIngredients`, `format`, `apiError`) under a
+  locked-oracle gate (`docs/frontend/plan.md`).
+- `test/` — MSW `server.ts` + `handlers.ts` (happy path per `docs/spec.md` §5) +
+  `errorHandlers.ts` (one per `docs/frontend/spec.md` §6 row), wired into
+  `setupTests.ts` with `onUnhandledRequest: "error"`.
+
+`tsconfig.json` is a solution file referencing `tsconfig.app.json` (src) and
+`tsconfig.node.json` (vite config). `npm run lint` (ESLint + Prettier) joins
+`test:run` and `build` in CI.
 
 ## Agent skills
 

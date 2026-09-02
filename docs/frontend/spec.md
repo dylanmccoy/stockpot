@@ -73,9 +73,9 @@ Every added dep is listed here; adding one not listed needs a spec update.
 
 ```
 src/
-  main.tsx                 # providers: QueryClientProvider, AuthProvider, RouterProvider
+  main.tsx                 # providers: QueryClientProvider, AuthProvider, BrowserRouter
   app/
-    router.tsx             # route table (§3)
+    router.tsx             # <Routes> route table (§3) — classic component routing
     AppShell.tsx           # nav chrome: top bar >=640px, bottom tab bar <640px
     RequireAuth.tsx        # redirects to /login?next=<path> when unauthenticated
   styles/
@@ -86,7 +86,9 @@ src/
     auth.ts recipes.ts inventory.ts cookLogs.ts grocery.ts   # thin typed wrappers (adapters, R-2)
   types.ts                 # hand mirror of ../spec.md §5 (R-1)
   auth/
-    AuthProvider.tsx useAuth.ts     # token in localStorage, login/logout, 401 handling
+    AuthProvider.tsx useAuth.ts context.ts   # token in localStorage, login/logout, 401 handling
+                                             # (context.ts holds the createContext object so
+                                             #  useAuth.ts and AuthProvider.tsx don't cycle)
   lib/
     parseIngredients.ts    # paste-block splitter (§7.1)
     format.ts              # quantity / number / fraction / datetime formatting (§7.2)
@@ -99,12 +101,16 @@ src/
     GroceryLists.tsx GroceryListDetail.tsx
     History.tsx
   test/
-    server.ts handlers.ts  # MSW: shared handler set + error-case handlers
+    server.ts handlers.ts  # MSW: shared happy-path set
+    errorHandlers.ts       # one handler per §6 catalog row
+    helpers.ts             # shared test utilities (rejection, lastLoc)
 ```
 
 Import direction is one-way:
-`types → api/client → api/<resource> → lib → components → pages → app`.
-`auth/` sits beside `api/` (client injects the token that `auth/` owns).
+`types → lib → api/client → api/<resource> → components → pages → app`.
+`lib/` is a pure leaf layer (`parseIngredients`, `format`, `apiError`) with no
+I/O; `api/client.ts` may import `lib/apiError.ts` for `parseApiError`. `auth/`
+sits beside `api/` (client injects the token that `auth/` owns).
 
 ---
 
