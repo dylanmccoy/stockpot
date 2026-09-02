@@ -9,7 +9,14 @@ from app.schemas.auth import (
     UserRead,
 )
 from app.schemas.common import ORMModel
-from app.schemas.recipe import RecipeBase, RecipeCreate, RecipeRead, RecipeUpdate
+from app.schemas.recipe import (
+    RecipeBase,
+    RecipeCreate,
+    RecipeIngredientIn,
+    RecipeIngredientRead,
+    RecipeRead,
+    RecipeUpdate,
+)
 
 __all__ = [
     # Common
@@ -26,4 +33,6 @@ __all__ = [
     "RecipeCreate",
     "RecipeUpdate",
     "RecipeRead",
+    "RecipeIngredientIn",
+    "RecipeIngredientRead",
 ]

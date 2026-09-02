@@ -558,6 +558,7 @@ def create_app(settings: Settings, engine: Engine) -> FastAPI:
     app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins,
                        allow_methods=["*"], allow_headers=["*"], allow_credentials=False)
 
+    app.add_exception_handler(RequestValidationError, _validation_error_to_422)
     app.add_exception_handler(IntegrityError, _to_409)
     app.add_exception_handler(OperationalError, _to_409_if_locked_else_500)
 
@@ -575,6 +576,20 @@ app = create_app(settings, engine)          # module-level, for `uvicorn app.mai
 `_to_409(request, exc)` → `JSONResponse(status_code=409, content={"detail": "conflict"})`.
 `_to_409_if_locked_else_500` → 409 when `"database is locked"` / `"database is busy"`
 in `str(exc.orig)`, otherwise re-raise (→ 500).
+
+`_validation_error_to_422(request, exc)` → `JSONResponse(status_code=422,
+content={"detail": <errors>})`, where `<errors>` is
+`jsonable_encoder(exc.errors())` with every non-finite `float` (anywhere in the
+structure) replaced by its `repr` (`"inf"` / `"-inf"` / `"nan"`). This exists
+because `json.loads` accepts the JSON literals `Infinity` / `NaN`, so a raw
+client can put a non-finite `float` into a request that §7 requires to `422`
+(negative / `0` / `inf` / `nan` quantities, multipliers, servings). Validation
+does reject it — but FastAPI's default handler echoes the offending value into
+the error body's `input`, and `JSONResponse` encodes with `allow_nan=False`, so
+the mandated 422 would raise an unhandled `ValueError` at encode time. The
+scrub is the only change from FastAPI's default 422 body; the
+`{"detail": [{"loc", "msg", "type"}, …]}` shape in §Mechanical defaults is
+unchanged for all finite inputs.
 
 These handlers cover **commit-time** failures as well as in-handler ones, because
 `TransactionRoute` (§3.2) commits inside the exception-handling window. An

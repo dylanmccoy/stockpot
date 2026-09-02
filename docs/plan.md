@@ -165,7 +165,7 @@ Phase 8 in the current v1 plan.
 | [0 — reset and dependencies](phases/phase-0.md) | Clean database and Argon2 dependency | — | Complete |
 | [1 — pure core](phases/phase-1.md) | Normalization, units, and ingredient parser | Phase 0 | Complete |
 | [2 — auth and app factory](phases/phase-2.md) | App-local DB wiring, transactions, sessions, and route gating | Phase 1 | Complete |
-| [3 — structured recipes](phases/phase-3.md) | Nested recipe ingredients and validation | Phase 2 | Not started |
+| [3 — structured recipes](phases/phase-3.md) | Nested recipe ingredients and validation | Phase 2 | Complete |
 | [4 — inventory and availability](phases/phase-4.md) | Inventory CRUD and availability math | Phase 3 (gate N5 ✅) | Not started |
 | [5 — cooking and history](phases/phase-5.md) | Stock deduction and durable cook logs | Phase 4 (gate N7 ✅) | Not started |
 | [6 — grocery lists](phases/phase-6.md) | Netted lists, submit, archive, and concurrency behavior | Phase 5 (gate N6 ✅) | Not started |
@@ -214,6 +214,14 @@ the first post-v1 schema change triggers the Alembic work described in
 - Review passes 2–8 are resolved or tracked in
   [`decisions.md`](decisions.md) and [`issues.md`](issues.md).
 - The implementation specification is complete and is authoritative for v1.
-- Phases 0, 1, and 2 are complete. Phase 2's first pass shipped (PR #20);
+- Phases 0, 1, 2, and 3 are complete. Phase 2's first pass shipped (PR #20);
   review pass 8 (2026-09-01) reopened it for hardening, which shipped as PR #23
-  and closed its second R-6 gate. Phase 3 follows.
+  and closed its second R-6 gate. Phase 4 follows.
+- Phase 3 added a `RequestValidationError` handler in `create_app`. It is
+  required by §7 — a request carrying the JSON literal `Infinity` or `NaN`
+  validates correctly, but the default handler echoes the offending value into
+  the error body and `JSONResponse` (`allow_nan=False`) then fails to encode it,
+  turning the mandated `422` into an unhandled `ValueError`. The handler
+  reproduces FastAPI's default body verbatim except that non-finite floats are
+  replaced by their `repr`, so the §Mechanical defaults shape is unchanged.
+  `spec.md` §3.3 was amended to list it (2026-09-02).
