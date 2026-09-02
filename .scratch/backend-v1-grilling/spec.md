@@ -3,6 +3,8 @@
 Status: ready-for-agent
 Type: task
 Source: `.scratch/backend-v1-grilling/map.md` (design grilling, 2026-09-01) — decisions Q1, Q6, Q7, Q9, Q12, Q13, Q22, Q24
+Spec-edit PR: #22 (`docs/spec-edit-grilling-decisions`) — once merged, `docs/spec.md`
+§§1, 3.1–3.4, 5.1, 5.2, 5.5, 6, 7 and `docs/phases/phase-2.md` are the authority; this file is history.
 
 > **This is a staging document, not implementation authority.**
 > `plan.md`'s scope fence authorizes only the current phase file, the `spec.md`
