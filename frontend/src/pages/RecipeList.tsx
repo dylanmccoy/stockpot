@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { recipesApi } from "../api/recipes";
@@ -46,6 +46,11 @@ export function filterByFacets(
   });
 }
 
+/** Case-insensitive string order. */
+function ciCompare(a: string, b: string): number {
+  return a.localeCompare(b, undefined, { sensitivity: "base" });
+}
+
 /** Returns a new array; "newest" keeps the server order (`created_at DESC, id DESC`). */
 export function sortRecipes(
   recipes: RecipeRead[],
@@ -53,20 +58,18 @@ export function sortRecipes(
 ): RecipeRead[] {
   const copy = [...recipes];
   if (mode === "title") {
-    return copy.sort((a, b) =>
-      a.title.localeCompare(b.title, undefined, { sensitivity: "base" }),
-    );
+    return copy.sort((a, b) => ciCompare(a.title, b.title));
   }
   if (mode === "updated") {
-    return copy.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    return copy.sort(
+      (a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at),
+    );
   }
   return copy;
 }
 
 function uniqueSorted(values: string[]): string[] {
-  return [...new Set(values)].sort((a, b) =>
-    a.localeCompare(b, undefined, { sensitivity: "base" }),
-  );
+  return [...new Set(values)].sort(ciCompare);
 }
 
 function toggle(list: string[], value: string): string[] {
@@ -110,6 +113,15 @@ function FacetGroup({
         ))}
       </div>
     </fieldset>
+  );
+}
+
+/** A `<Link>` to the create form, styled as the primary action. */
+function CtaLink({ children }: { children: ReactNode }) {
+  return (
+    <Link to="/recipes/new" className={cx(styles.cta, styles.ctaPrimary)}>
+      {children}
+    </Link>
   );
 }
 
@@ -179,15 +191,22 @@ export default function RecipeList() {
     <section className={styles.page} aria-busy={isFetching || undefined}>
       <header className={styles.head}>
         <h1>Recipes</h1>
-        <Link to="/recipes/new" className={cx(styles.cta, styles.ctaPrimary)}>
-          Add recipe
-        </Link>
+        <CtaLink>Add recipe</CtaLink>
       </header>
 
       {status === "pending" && (
-        <p role="status" className={styles.status}>
-          Loading recipes…
-        </p>
+        <>
+          <p role="status" className="sr-only">
+            Loading recipes…
+          </p>
+          <ul className={styles.grid} aria-hidden="true">
+            {Array.from({ length: 6 }, (_, i) => (
+              <li key={i}>
+                <div className={styles.skeleton} />
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {status === "error" && (
@@ -203,10 +222,8 @@ export default function RecipeList() {
 
       {status === "success" && recipes.length === 0 && (
         <div className={styles.empty}>
-          <p>No recipes yet — add your first recipe.</p>
-          <Link to="/recipes/new" className={cx(styles.cta, styles.ctaPrimary)}>
-            Add your first recipe
-          </Link>
+          <p>No recipes yet.</p>
+          <CtaLink>Add your first recipe</CtaLink>
         </div>
       )}
 
@@ -251,7 +268,9 @@ export default function RecipeList() {
           )}
 
           {visible.length === 0 ? (
-            <p className={styles.noMatch}>No recipes match your search.</p>
+            <p className={styles.noMatch}>
+              No recipes match your search or filters.
+            </p>
           ) : (
             <ul className={styles.grid}>
               {visible.map((recipe) => (

@@ -33,8 +33,19 @@
   background: var(--color-accent-hover);
 }
 
-.status {
-  color: var(--color-muted);
+.skeleton {
+  height: 100%;
+  min-height: 8rem;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-alt);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .errorPanel {
