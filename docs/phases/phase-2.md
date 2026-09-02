@@ -117,9 +117,15 @@ four modules and land as one reviewable diff.
 - [x] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
       a non-author reviewer checked this phase's diff and new tests against
       `spec.md` §7 and §§1, 3, 5.1, 6.
-- [ ] **Hardening diff review gate passed (R-6)** — a non-author reviewer
+- [x] **Hardening diff review gate passed (R-6)** — a non-author reviewer
       checked the hardening diff and its new tests against `spec.md` §7 and
       §§1, 3.1, 3.2, 3.3, 3.4, 5.1, 6, walking the commit-time failure path
-      rather than trusting a green suite.
-- [ ] Phase complete; update the status table in [`../plan.md`](../plan.md)
+      rather than trusting a green suite. Separate model pass, PASS with no
+      blocking or should-fix findings. The reviewer traced FastAPI 0.141.1's
+      `get_request_handler` to confirm serialization completes and the commit
+      runs before any bytes reach the wire, and ran four mutation probes — the
+      caller's-own-session-survives regression, a removed `TransactionRoute`
+      commit, a dropped `route_class=`, and a naive `process_result_value` —
+      each of which a test caught.
+- [x] Phase complete; update the status table in [`../plan.md`](../plan.md)
       back to `Complete`.
