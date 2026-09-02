@@ -1,6 +1,10 @@
+"""Recipe schemas."""
+
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
+
+from app.schemas.common import ORMModel
 
 
 class RecipeBase(BaseModel):
@@ -17,8 +21,9 @@ class RecipeUpdate(RecipeBase):
     pass
 
 
-class RecipeRead(RecipeBase):
-    model_config = ConfigDict(from_attributes=True)
-
+class RecipeRead(ORMModel):
     id: int
+    title: str
+    ingredients: str
+    instructions: str
     created_at: datetime
