@@ -46,6 +46,8 @@ There is no linter configured. Local dev needs two terminals: backend and fronte
 
 Two independent apps in one repo; the only contract between them is the JSON HTTP API under `/api`.
 
+**Doc partition.** Backend v1 planning lives in `docs/` (`spec.md`, `plan.md`, `phases/`, `issues.md`, `decisions.md`, `features.md`). Frontend planning lives in `docs/frontend/` and is **not backend implementation authority** — a backend phase must not read it as a requirement source or edit it (`docs/plan.md` §"Phase scope fence"). Frontend work reads `docs/spec.md` as the contract.
+
 ### Backend (`backend/app/`)
 
 Layered, import direction is one-way: `config` → `database` → `models` → `schemas`/`routers` → `main`.
@@ -72,3 +74,17 @@ Vite + React 18 + TS, strict mode, no router, no state library.
 - `App.tsx` — the whole UI: local `useState`, `refresh()` re-fetches the list after every mutation. New screens/components hang off here.
 
 `tsconfig.json` is a solution file referencing `tsconfig.app.json` (src) and `tsconfig.node.json` (vite config).
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles, each label string equal to its name (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root (created lazily by `/domain-modeling`). See `docs/agents/domain.md`.
