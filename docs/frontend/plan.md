@@ -51,7 +51,10 @@ receipt OCR — those are v2 (`../features.md`).
 - Extend `frontend/`; keep Vite + React 18 + TS strict, the `tsconfig` solution
   layout, and `npm run build` = `tsc -b && vite build`.
 - Dev uses the Vite proxy (`/api` → `:8000`); no base URL, no CORS in dev.
-- No live network calls in tests — MSW intercepts everything.
+- No live network calls in the **Vitest suite** — MSW intercepts everything.
+  (The separate `integration` Playwright project is the deliberate exception: it
+  boots the real backend beside Vite and drives it through the dev proxy — see
+  Phase 2.)
 - The frontend track does not edit `../spec.md`, `../plan.md`, `../phases/**`,
   `../issues.md`, `../decisions.md`, or `backend/**`. One row in `../features.md`
   is proposed for the backend track (Q19) and changed only through their process.
@@ -165,18 +168,45 @@ live regions); `parseApiError` oracle suite green.
 
 Spec: `spec.md` §4, §10.1; error rows `401` / `403` in §6.
 
-- [ ] `auth/AuthProvider` + `useAuth`: token in `localStorage` (`recipe.token`),
+- [x] `auth/AuthProvider` + `useAuth`: token in `localStorage` (`recipe.token`),
       `login` / `logout`, `me` hydration on load, cache drop on `401`.
-- [ ] `api/client.ts` 401 interceptor → clear token + cache + `Navigate
+- [x] `api/client.ts` 401 interceptor → clear token + cache + `Navigate
       /login?next=`.
-- [ ] `api/auth.ts`; `pages/Login.tsx`; Register form behind
+- [x] `api/auth.ts`; `pages/Login.tsx`; Register form behind
       `VITE_ENABLE_REGISTER` (+ `ImportMetaEnv` typing).
-- [ ] Tests: 5 × `get_current_user` 401 shapes surface as a redirect; login
+- [x] Tests: 5 × `get_current_user` 401 shapes surface as a redirect; login
       success → `next` redirect; login `401` → inline; logout clears; expired
-      token on load → logged out.
+      token on load → logged out. (`src/app/auth.flow.test.tsx` vs MSW.)
+- [x] Integrated against real BE Phase 2 (ticket 14): MSW handlers diffed
+      byte-for-byte against a running backend — bearer header, `token` field,
+      and every `401` / `403` / `409` / `422` body shape match, so `handlers.ts`
+      / `client.ts` need no change. End-to-end confirmed by
+      `frontend/e2e/auth.integration.spec.ts` (the `integration` Playwright
+      project boots `uv run uvicorn` beside Vite and drives the full login /
+      reload-`me` / logout / rejected-token / registration lifecycle through the
+      real dev proxy).
 
-**Exit:** the flow test passes against real BE Phase 2; no signup UI when the
-flag is unset.
+**Exit:** ✅ the flow test passes vs MSW **and** the same scenarios pass
+end-to-end against real BE Phase 2; no signup UI when the flag is unset
+(`src/pages/Login.test.tsx`).
+
+Notes on E2E coverage vs the MSW flow test:
+
+- The **five** `get_current_user` `401` shapes collapse to one real response
+  (`401 {"detail":"not authenticated"}`), so the E2E exercises one real
+  rejected-token redirect; the 5-way enumeration stays in `auth.flow.test.tsx`.
+- Registration refusal is exercised E2E via the real `403 "invalid
+  registration code"` (Playwright has no per-project `webServer`, so a
+  registration-**disabled** backend can't run in the same pass). Same status +
+  inline-banner surface per `spec.md` §6; the `"registration disabled"` string
+  itself is locked in `src/pages/Login.test.tsx` vs MSW.
+
+> **Cross-track note (backend conformance).** `docs/spec.md` §Mechanical
+> defaults guarantees datetimes serialize as `…+00:00`, but the running backend
+> (Pydantic 2.13) emits `…Z` with microseconds (e.g.
+> `2026-09-02T20:23:30.628187Z`). The frontend absorbs both (`lib/format.ts`
+> `formatDateTime` parses via `new Date`), and the MSW fixture keeps the
+> spec form per R-1. Flagged for the backend track; no frontend change.
 
 ---
 
