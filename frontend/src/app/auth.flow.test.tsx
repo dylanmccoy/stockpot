@@ -100,7 +100,9 @@ describe("auth flow", () => {
     expect(
       await screen.findByRole("heading", { name: "Recipes" }),
     ).toBeInTheDocument();
-    queryClient.setQueryData(["recipes"], ["cached"]);
+    // Any resident cache entry must be dropped on logout — use a key no mounted
+    // screen re-fetches, so the assertion reflects the logout wipe, not a refetch.
+    queryClient.setQueryData(["cook-logs"], ["cached"]);
 
     await userEvent.click(screen.getByRole("button", { name: "cook" }));
     await userEvent.click(screen.getByRole("button", { name: "Log out" }));
@@ -109,6 +111,6 @@ describe("auth flow", () => {
       await screen.findByRole("heading", { name: "Log in" }),
     ).toBeInTheDocument();
     expect(getToken()).toBeNull();
-    expect(queryClient.getQueryData(["recipes"])).toBeUndefined();
+    expect(queryClient.getQueryData(["cook-logs"])).toBeUndefined();
   });
 });
