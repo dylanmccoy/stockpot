@@ -125,28 +125,60 @@ function CtaLink({ children }: { children: ReactNode }) {
   );
 }
 
-function RecipeCard({ recipe }: { recipe: RecipeRead }) {
+function RecipeCard({
+  recipe,
+  selectMode,
+  checked,
+  onToggle,
+}: {
+  recipe: RecipeRead;
+  selectMode: boolean;
+  checked: boolean;
+  onToggle: (id: number) => void;
+}) {
   const time = timeSummary(recipe);
   const count = recipe.ingredients.length;
-  return (
-    <Link to={`/recipes/${recipe.id}`} className={styles.cardLink}>
-      <Card className={styles.card}>
-        <h2 className={styles.cardTitle}>{recipe.title}</h2>
-        {recipe.cuisine && <p className={styles.cuisine}>{recipe.cuisine}</p>}
-        {recipe.tags.length > 0 && (
-          <p className={styles.tags}>
-            {recipe.tags.map((tag) => (
-              <Badge key={tag}>{tag}</Badge>
-            ))}
-          </p>
-        )}
-        <p className={styles.meta}>
-          {time && <span>{time}</span>}
-          <span>
-            {count} ingredient{count === 1 ? "" : "s"}
-          </span>
+  const cardBody = (
+    <Card className={cx(styles.card, checked && styles.cardChecked)}>
+      <h2 className={styles.cardTitle}>{recipe.title}</h2>
+      {recipe.cuisine && <p className={styles.cuisine}>{recipe.cuisine}</p>}
+      {recipe.tags.length > 0 && (
+        <p className={styles.tags}>
+          {recipe.tags.map((tag) => (
+            <Badge key={tag}>{tag}</Badge>
+          ))}
         </p>
-      </Card>
+      )}
+      <p className={styles.meta}>
+        {time && <span>{time}</span>}
+        <span>
+          {count} ingredient{count === 1 ? "" : "s"}
+        </span>
+      </p>
+    </Card>
+  );
+
+  if (selectMode) {
+    return (
+      <label className={cx(styles.cardShell, styles.cardSelect)}>
+        <input
+          type="checkbox"
+          className={styles.cardCheckbox}
+          aria-label={recipe.title}
+          checked={checked}
+          onChange={() => onToggle(recipe.id)}
+        />
+        {cardBody}
+      </label>
+    );
+  }
+
+  return (
+    <Link
+      to={`/recipes/${recipe.id}`}
+      className={cx(styles.cardShell, styles.cardLink)}
+    >
+      {cardBody}
     </Link>
   );
 }
@@ -163,6 +195,29 @@ export default function RecipeList() {
   const [cuisines, setCuisines] = useState<string[]>([]);
   const [tags, setTags] = useState<string[]>([]);
   const [sort, setSort] = useState<SortMode>("newest");
+
+  // Multi-select "gather" mode: pick several recipes, then turn them into a
+  // grocery list. Leaving the mode drops the selection.
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+
+  function toggleSelectMode() {
+    if (selectMode) setSelected(new Set());
+    setSelectMode((on) => !on);
+  }
+
+  function toggleSelected(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function createGroceryList() {
+    // wired in ticket 12a
+  }
 
   const recipes = useMemo(() => data ?? [], [data]);
 
@@ -191,7 +246,18 @@ export default function RecipeList() {
     <section className={styles.page} aria-busy={isFetching || undefined}>
       <header className={styles.head}>
         <h1>Recipes</h1>
-        <CtaLink>Add recipe</CtaLink>
+        <div className={styles.headActions}>
+          {status === "success" && recipes.length > 0 && (
+            <Button
+              variant="secondary"
+              aria-pressed={selectMode}
+              onClick={toggleSelectMode}
+            >
+              {selectMode ? "Done" : "Select"}
+            </Button>
+          )}
+          <CtaLink>Add recipe</CtaLink>
+        </div>
       </header>
 
       {status === "pending" && (
@@ -275,10 +341,25 @@ export default function RecipeList() {
             <ul className={styles.grid}>
               {visible.map((recipe) => (
                 <li key={recipe.id}>
-                  <RecipeCard recipe={recipe} />
+                  <RecipeCard
+                    recipe={recipe}
+                    selectMode={selectMode}
+                    checked={selected.has(recipe.id)}
+                    onToggle={toggleSelected}
+                  />
                 </li>
               ))}
             </ul>
+          )}
+
+          <p className="sr-only" role="status">
+            {selected.size > 0 ? `${selected.size} selected` : ""}
+          </p>
+          {selected.size > 0 && (
+            <div className={styles.actionBar}>
+              <span aria-hidden="true">{selected.size} selected</span>
+              <Button onClick={createGroceryList}>Create grocery list</Button>
+            </div>
           )}
         </>
       )}

@@ -158,6 +158,64 @@ describe("RecipeList", () => {
   });
 });
 
+describe("RecipeList multi-select", () => {
+  const checkbox = (name: string) =>
+    screen.getByRole("checkbox", { name }) as HTMLInputElement;
+  const createButton = () =>
+    screen.queryByRole("button", { name: "Create grocery list" });
+  const count = () => screen.getByRole("status").textContent;
+
+  it("gathers recipes into a sticky bar and clears on exit", async () => {
+    useRecipes(threeRecipes);
+    renderList();
+    await screen.findByText("Pad Thai");
+
+    // No selection UI until the mode is entered.
+    expect(createButton()).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Select" }));
+
+    await userEvent.click(checkbox("Pad Thai"));
+    await userEvent.click(checkbox("Bibimbap"));
+
+    expect(count()).toBe("2 selected");
+    expect(createButton()).toBeInTheDocument();
+
+    // Untick both → the bar disappears.
+    await userEvent.click(checkbox("Pad Thai"));
+    await userEvent.click(checkbox("Bibimbap"));
+    expect(count()).toBe("");
+    expect(createButton()).not.toBeInTheDocument();
+
+    // Re-select, then leave the mode → selection is dropped.
+    await userEvent.click(checkbox("Pad Thai"));
+    expect(count()).toBe("1 selected");
+    await userEvent.click(screen.getByRole("button", { name: "Done" }));
+    expect(count()).toBe("");
+
+    await userEvent.click(screen.getByRole("button", { name: "Select" }));
+    expect(checkbox("Pad Thai").checked).toBe(false);
+  });
+
+  it("tapping a card ticks it instead of navigating", async () => {
+    useRecipes(threeRecipes);
+    renderList();
+    await screen.findByText("Pad Thai");
+    await userEvent.click(screen.getByRole("button", { name: "Select" }));
+
+    await userEvent.click(screen.getByText("Pad Thai"));
+
+    expect(count()).toBe("1 selected");
+    expect(checkbox("Pad Thai").checked).toBe(true);
+    expect(
+      screen.getByRole("heading", { name: "Recipes" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Recipe detail" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("RecipeList pure helpers", () => {
   it("searchRecipes matches title / cuisine / tag, case-insensitively", () => {
     expect(searchRecipes(threeRecipes, "  ").map((r) => r.id)).toEqual([
