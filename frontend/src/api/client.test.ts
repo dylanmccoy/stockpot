@@ -1,15 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "../test/server";
-import {
-  ApiError,
-  client,
-  request,
-  setToken,
-  setUnauthorizedHandler,
-} from "./client";
+import { client, request, setToken, setUnauthorizedHandler } from "./client";
+import { ApiError, fieldName } from "../lib/apiError";
 import type { ValidationIssue } from "../types";
-import { lastLoc, rejection } from "../test/helpers";
+import { rejection } from "../test/helpers";
 
 afterEach(() => {
   setToken(null);
@@ -96,7 +91,7 @@ describe("api/client", () => {
     expect(Array.isArray(err.detail)).toBe(true);
     const detail = err.detail as ValidationIssue[];
     expect(detail).toHaveLength(1);
-    expect(lastLoc(detail[0])).toBe("username");
+    expect(fieldName(detail[0])).toBe("username");
   });
 
   it("normalizes a 422 string detail verbatim (not an array)", async () => {
