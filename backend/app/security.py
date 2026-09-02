@@ -1,7 +1,7 @@
 """Authentication and token management."""
 
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -9,10 +9,10 @@ from pwdlib import PasswordHash
 from sqlalchemy.orm import Session as SQLAlchemySession
 from sqlalchemy.sql import select
 
-from app.config import Settings, settings
+from app.config import Settings
 from app.database import SessionDep
 from app.models import Session as SessionModel
-from app.models import User
+from app.models import User, _utcnow
 
 
 def _get_settings(request: Request) -> Settings:
@@ -38,17 +38,25 @@ def verify_password(pw: str, hashed: str) -> bool:
 _DUMMY_HASH = hash_password(secrets.token_hex(16))
 
 
-def issue_token(db: SQLAlchemySession, user: User) -> SessionModel:
+def issue_token(
+    db: SQLAlchemySession, user: User, settings: Settings
+) -> SessionModel:
     """Create a new session token for a user.
+
+    `settings` is passed in, never read from the module-level `Settings`: that is
+    what lets `create_app(test_settings, test_engine)` influence token lifetime,
+    and it leaves no module-global configuration read on a request path
+    (spec.md §3.4).
 
     Args:
         db: SQLAlchemy session.
         user: The user to create a token for.
+        settings: The request's settings, read for `session_ttl_days`.
 
     Returns:
         The created Session ORM row.
     """
-    now = datetime.now(timezone.utc)
+    now = _utcnow()
     token = secrets.token_urlsafe(32)
     expires_at = now + timedelta(days=settings.session_ttl_days)
 
@@ -114,13 +122,10 @@ def get_current_user(
             detail="not authenticated",
         )
 
-    # Check expiration (handle naive datetimes from SQLite).
-    now = datetime.now(timezone.utc)
-    expires_at = session_row.expires_at
-    # Normalize naive datetime to UTC.
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-    if expires_at <= now:
+    # Check expiration. `UtcDateTime` (spec.md §3.2) guarantees `expires_at` is
+    # tz-aware, so this is a plain aware comparison — no ad-hoc normalization.
+    now = _utcnow()
+    if session_row.expires_at <= now:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="not authenticated",

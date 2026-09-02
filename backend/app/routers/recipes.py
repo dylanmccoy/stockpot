@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.database import get_db
+from app.database import TransactionRoute, get_db
 from app.models import Recipe
 from app.schemas import RecipeCreate, RecipeRead, RecipeUpdate
 from app.security import get_current_user
@@ -10,6 +10,7 @@ from app.security import get_current_user
 router = APIRouter(
     prefix="/api/recipes",
     tags=["recipes"],
+    route_class=TransactionRoute,
     dependencies=[Depends(get_current_user)],
 )
 

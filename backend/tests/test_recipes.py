@@ -80,3 +80,29 @@ def test_update_is_atomic_with_the_request_transaction(auth_client: TestClient) 
     roundtrip = auth_client.get(f"/api/recipes/{recipe_id}").json()
     assert roundtrip["title"] == "Final"
     assert roundtrip["ingredients"] == "salt"
+
+
+def test_recipe_created_at_carries_an_explicit_utc_offset(
+    auth_client: TestClient,
+) -> None:
+    """`RecipeRead.created_at` round-trips through SQLite with its offset intact
+    (spec.md §1 "Mechanical defaults", §3.2 `UtcDateTime`).
+
+    The `created_at == updated_at` / "a PUT advances `updated_at`" half of the
+    same acceptance criterion lands with Phase 3, which is where `Recipe` gains
+    an `updated_at` column.
+    """
+    from datetime import datetime, timedelta
+
+    created = auth_client.post("/api/recipes", json={"title": "Timestamped"})
+    assert created.status_code == 201, created.text
+    created_at = created.json()["created_at"]
+    assert created_at.endswith("+00:00") or created_at.endswith("Z"), created_at
+
+    parsed = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    assert parsed.tzinfo is not None
+    assert parsed.utcoffset() == timedelta(0)
+
+    # Same value on a re-read through a fresh session.
+    recipe_id = created.json()["id"]
+    assert auth_client.get(f"/api/recipes/{recipe_id}").json()["created_at"] == created_at
