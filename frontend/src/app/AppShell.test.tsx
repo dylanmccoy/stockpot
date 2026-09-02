@@ -14,6 +14,7 @@ function renderShell(
     user: { id: 1, username: "dylan", created_at: "2026-01-01T00:00:00Z" },
     status: "authenticated",
     login: vi.fn(),
+    register: vi.fn(),
     logout: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };

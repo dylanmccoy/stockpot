@@ -7,6 +7,7 @@ import type { ValidationIssue } from "../types";
 import {
   ApiError,
   fieldName,
+  hasInlineFormError,
   isFieldError,
   parseApiError,
   useFormErrors,
@@ -120,6 +121,34 @@ describe("useFormErrors", () => {
     const first = result.current;
     rerender();
     expect(result.current).toBe(first);
+  });
+});
+
+describe("hasInlineFormError", () => {
+  it("is true for a field error and a client-error string banner", () => {
+    expect(
+      hasInlineFormError(
+        parseApiError(422, { detail: [issue(["body", "x"])] }),
+      ),
+    ).toBe(true);
+    expect(
+      hasInlineFormError(
+        parseApiError(403, { detail: "registration disabled" }),
+      ),
+    ).toBe(true);
+    expect(
+      hasInlineFormError(parseApiError(409, { detail: "username taken" })),
+    ).toBe(true);
+  });
+
+  it("is false when the failure belongs on a toast (§6)", () => {
+    for (const status of [0, 404, 500, 503]) {
+      expect(
+        hasInlineFormError(parseApiError(status, { detail: "server said no" })),
+      ).toBe(false);
+    }
+    expect(hasInlineFormError(new Error("boom"))).toBe(false);
+    expect(hasInlineFormError(null)).toBe(false);
   });
 });
 
