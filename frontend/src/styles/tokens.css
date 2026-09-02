@@ -1,0 +1,143 @@
+/* Design tokens (docs/frontend/spec.md §8).
+ *
+ * Three theme states, resolved on `<html>`:
+ *   - no override  + light OS  -> :root defaults (light)
+ *   - no override  + dark OS   -> @media (prefers-color-scheme: dark) block
+ *   - manual override          -> [data-theme] attribute, wins over the OS
+ *
+ * The `[data-theme="light" | "dark"]` blocks are not root-scoped, so a subtree
+ * (e.g. the dev component demo) can force either palette by setting the
+ * attribute on a wrapper. `app/theme.tsx` sets/removes it on `<html>` from a
+ * `recipe.theme` localStorage value. Every text/role pair clears 4.5:1 contrast
+ * in both themes (§9).
+ */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* color roles */
+  --color-bg: #f6f6f8;
+  --color-surface: #ffffff;
+  --color-surface-alt: #eef0f4;
+  --color-text: #1a1a1f;
+  --color-muted: #57575f;
+  --color-border: #d3d4da;
+
+  --color-accent: #1f5fd1;
+  --color-accent-hover: #1a4fb0;
+  --color-accent-fg: #ffffff;
+
+  --color-ok: #1a7f37;
+  --color-ok-surface: #e6f4ea;
+  --color-warn: #8a5300;
+  --color-warn-surface: #fbf0dd;
+  --color-danger: #c0272d;
+  --color-danger-hover: #a11f24;
+  --color-danger-surface: #fbe9e9;
+  --color-danger-fg: #ffffff;
+
+  --color-focus: #1f5fd1;
+  --color-overlay: rgb(20 20 28 / 55%);
+
+  --shadow-sm: 0 1px 2px rgb(20 20 28 / 8%);
+  --shadow-md: 0 6px 24px rgb(20 20 28 / 18%);
+}
+
+:root {
+  /* 4px spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* type scale */
+  --font-sans:
+    system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.25rem;
+  --font-size-xl: 1.5rem;
+  --font-size-2xl: 2rem;
+  --line-tight: 1.25;
+  --line-normal: 1.5;
+
+  /* radii */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* layout */
+  --shell-topbar-h: 56px;
+  --shell-tabbar-h: 56px;
+}
+
+/* Dark palette — shared by the OS default (no override) and the manual "dark"
+ * override. Kept in sync with the [data-theme="dark"] block below. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --color-bg: #15151a;
+    --color-surface: #1e1e25;
+    --color-surface-alt: #262630;
+    --color-text: #f1f1f4;
+    --color-muted: #aeaeb8;
+    --color-border: #34343e;
+
+    --color-accent: #6ea8fe;
+    --color-accent-hover: #8bbcff;
+    --color-accent-fg: #0b1220;
+
+    --color-ok: #4ac26b;
+    --color-ok-surface: #17301f;
+    --color-warn: #e0a83d;
+    --color-warn-surface: #33280f;
+    --color-danger: #ff7a7a;
+    --color-danger-hover: #ff9a9a;
+    --color-danger-surface: #3a1d1d;
+    --color-danger-fg: #0b1220;
+
+    --color-focus: #6ea8fe;
+    --color-overlay: rgb(0 0 0 / 65%);
+
+    --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+    --shadow-md: 0 8px 28px rgb(0 0 0 / 55%);
+  }
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: #15151a;
+  --color-surface: #1e1e25;
+  --color-surface-alt: #262630;
+  --color-text: #f1f1f4;
+  --color-muted: #aeaeb8;
+  --color-border: #34343e;
+
+  --color-accent: #6ea8fe;
+  --color-accent-hover: #8bbcff;
+  --color-accent-fg: #0b1220;
+
+  --color-ok: #4ac26b;
+  --color-ok-surface: #17301f;
+  --color-warn: #e0a83d;
+  --color-warn-surface: #33280f;
+  --color-danger: #ff7a7a;
+  --color-danger-hover: #ff9a9a;
+  --color-danger-surface: #3a1d1d;
+  --color-danger-fg: #0b1220;
+
+  --color-focus: #6ea8fe;
+  --color-overlay: rgb(0 0 0 / 65%);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-md: 0 8px 28px rgb(0 0 0 / 55%);
+}
