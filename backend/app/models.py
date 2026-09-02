@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import ForeignKey, Index, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.database import Base, UtcDateTime
 
 
 def _utcnow() -> datetime:
@@ -16,7 +16,7 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     username: Mapped[str] = mapped_column(String(50), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
 
     # Case-insensitive unique constraint on username.
     __table_args__ = (
@@ -36,9 +36,9 @@ class Session(Base):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    last_used_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    expires_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
 
     user: Mapped[User] = relationship(back_populates="sessions", passive_deletes=True)
 
@@ -50,4 +50,4 @@ class Recipe(Base):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     ingredients: Mapped[str] = mapped_column(Text, nullable=False, default="")
     instructions: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)

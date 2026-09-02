@@ -47,18 +47,18 @@ divergence in it; the spec sections above were amended before this work
 (`decisions.md` §Review pass 8). All five items are infrastructure in the same
 four modules and land as one reviewable diff.
 
-- [ ] Add `UtcDateTime` to `database.py` and apply it to **every** datetime
+- [x] Add `UtcDateTime` to `database.py` and apply it to **every** datetime
       column in `models.py`; delete the ad-hoc naive-datetime normalization in
       `security.py`'s expiry comparison. Give every timestamp a Python-side
       `default=_utcnow` and, where §1 says so, `onupdate=_utcnow`.
-- [ ] Move the commit out of `get_db` into `TransactionRoute` (§3.2/§6):
+- [x] Move the commit out of `get_db` into `TransactionRoute` (§3.2/§6):
       `get_db` stashes `request.state.db`, keeps rollback-on-exception and
       close, and no longer commits after `yield`. Build **every**
       database-touching router with `route_class=TransactionRoute`.
-- [ ] Change `issue_token` to `issue_token(db, user, settings)` and pass
+- [x] Change `issue_token` to `issue_token(db, user, settings)` and pass
       settings from both call sites in `routers/auth.py`.
-- [ ] Constrain `session_ttl_days` to `Field(30, ge=0)` in `config.py`.
-- [ ] Add `POST /api/auth/change-password` (§5.1): `403` on a wrong current
+- [x] Constrain `session_ttl_days` to `Field(30, ge=0)` in `config.py`.
+- [x] Add `POST /api/auth/change-password` (§5.1): `403` on a wrong current
       password, delete every session for the user including the caller's, issue
       a fresh token, return `200 TokenResponse`.
 
@@ -76,22 +76,31 @@ four modules and land as one reviewable diff.
 
 ### Hardening verification
 
-- [ ] Every response datetime carries an explicit UTC offset; a freshly created
-      resource has `created_at == updated_at`, and a `PUT` advances
-      `updated_at`.
-- [ ] A failure at `COMMIT` (not at `flush()`) returns `409 {"detail": "conflict"}`
+- [x] Every response datetime carries an explicit UTC offset — `UserRead` and
+      `RecipeRead` both, on create and on re-read. **The `created_at ==
+      updated_at` / `PUT` advances `updated_at` half is deferred to Phase 3**,
+      which is where `Recipe` gains an `updated_at` column (`spec.md` §1). No
+      table in the Phase 2 schema has one, so there is nothing here to assert
+      and adding the column would be Phase 3 work.
+- [x] A failure at `COMMIT` (not at `flush()`) returns `409 {"detail": "conflict"}`
       and leaves no row behind — `test_transactions.py`, following the
-      throwaway-route pattern in `test_exception_handlers.py`.
-- [ ] The route-class guard test fails if any `/api` route depending on `get_db`
-      is not a `TransactionRoute`.
-- [ ] The expired-token test builds the app with `Settings(session_ttl_days=0)`
+      throwaway-route pattern in `test_exception_handlers.py`. The route asserts
+      its `flush()` succeeded, so the test cannot silently degrade into a
+      duplicate of the in-handler path. Verified against the pre-fix code: it
+      returns `200 {"status": "flushed"}` with the write discarded.
+- [x] The route-class guard test fails if any `/api` route depending on `get_db`
+      is not a `TransactionRoute`. It walks nested `_IncludedRouter` mounts and
+      the full dependency tree, and carries a meta-test that adds a
+      `route_class`-less router and asserts the guard catches it — without which
+      the guard would pass vacuously.
+- [x] The expired-token test builds the app with `Settings(session_ttl_days=0)`
       instead of rewriting `sessions.expires_at` in the database; the old
       reach-around is deleted.
-- [ ] `Settings(session_ttl_days=-1)` raises `ValidationError`; `0` is accepted.
-- [ ] `change-password`: wrong current password `403`; short new password `422`;
+- [x] `Settings(session_ttl_days=-1)` raises `ValidationError`; `0` is accepted.
+- [x] `change-password`: wrong current password `403`; short new password `422`;
       success `200` with a working new token, the caller's old token and a
       second device's token both `401`.
-- [ ] `cd backend && uv run pytest` passes.
+- [x] `cd backend && uv run pytest` passes.
 
 ## Exit criteria
 

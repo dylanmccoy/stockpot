@@ -32,6 +32,19 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    """Request body for rotating the current user's password."""
+
+    current_password: str = Field(
+        description="The caller's current password; must match the stored hash",
+    )
+    new_password: str = Field(
+        min_length=8,
+        max_length=128,
+        description="New password: 8-128 characters (the same rule register applies)",
+    )
+
+
 class UserMini(ORMModel):
     """Minimal user representation."""
 

@@ -15,6 +15,9 @@ structured and pasted-string ingredient input.
 
 - [ ] Delete `backend/recipe.db` before running the expanded schema.
 - [ ] Expand `Recipe` and add `RecipeIngredient` with ordered child rows.
+      `Recipe` gains the `updated_at` column §1 specifies — `UtcDateTime`,
+      `default=_utcnow`, `onupdate=_utcnow`, matching the pattern Phase 2's
+      hardening pass established on the existing datetime columns.
 - [ ] Keep `photo_path` reserved and nullable; make `raw_text` active for pasted
       ingredient input.
 - [ ] Add `schemas/recipe.py` to the schema package created in Phase 2 and
@@ -46,6 +49,10 @@ structured and pasted-string ingredient input.
 - [ ] `{"item": "flour", "qty": 500}` → `422` naming `qty`, never a `201`
       storing a to-taste row.
 - [ ] A title-only `POST` → `201` with `ingredients: []`.
+- [ ] A freshly created recipe has `created_at == updated_at`, both ending in
+      an explicit UTC offset, and a `PUT` advances `updated_at` past
+      `created_at` (§7). Deferred here from Phase 2's hardening pass, which
+      had no `updated_at` column to assert against.
 - [ ] A pasted line over 200 chars is truncated to 200 before parsing; the
       recipe still creates and every stored string field fits its column (R-4).
 - [ ] `cd backend && uv run pytest` passes.

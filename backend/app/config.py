@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -6,7 +7,9 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./recipe.db"
     cors_origins: list[str] = ["http://localhost:5173"]
-    session_ttl_days: int = 30
+    # 0 is legal and meaningful: an instantly-expired token, which is how the
+    # expiry branch is exercised in tests. A negative value is a ValidationError.
+    session_ttl_days: int = Field(30, ge=0)
     allow_registration: bool = False
     registration_code: str | None = None
 

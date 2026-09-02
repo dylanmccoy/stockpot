@@ -1,6 +1,7 @@
 """Schema definitions and exports."""
 
 from app.schemas.auth import (
+    ChangePasswordRequest,
     LoginRequest,
     RegisterRequest,
     TokenResponse,
@@ -15,6 +16,7 @@ __all__ = [
     "ORMModel",
     # Auth
     "RegisterRequest",
+    "ChangePasswordRequest",
     "LoginRequest",
     "UserMini",
     "UserRead",
