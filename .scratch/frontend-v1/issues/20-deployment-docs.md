@@ -2,7 +2,7 @@
 
 **What to build:** Written operator notes for serving the SPA on the household LAN and bootstrapping the first user.
 
-**Blocked by:** 19. External gate: backend Phase 7 (docs) merged.
+**Blocked by:** 19a, 19b. External gate: backend Phase 7 (docs) merged.
 
 **Status:** ready-for-agent
 

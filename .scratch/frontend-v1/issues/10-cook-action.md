@@ -2,7 +2,7 @@
 
 **What to build:** Recording that a recipe was made, optionally deducting the scaled amounts from inventory. After this ticket a user can mark a recipe cooked at the current multiplier with a deduct toggle, and the availability and inventory views refresh to reflect the new stock; there is no undo.
 
-**Blocked by:** 09, 08.
+**Blocked by:** 09, 08a.
 
 **Status:** ready-for-agent
 

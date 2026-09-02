@@ -2,7 +2,7 @@
 
 **What to build:** Wire the three recipe screens to the real backend and confirm recipe CRUD, the paste-and-save flow, and error mapping against it.
 
-**Blocked by:** 05, 06, 07. External gate: backend Phase 3 (structured recipes) merged.
+**Blocked by:** 05a, 06a, 06b, 06c, 07. External gate: backend Phase 3 (structured recipes) merged.
 
 **Status:** ready-for-agent
 

@@ -1,16 +1,12 @@
-# 19: Hardening
+# 19: Hardening — SPLIT
 
-**What to build:** A cross-screen quality pass — every catalogued error exercised, an accessibility sweep across all nine screens, and consistent loading/empty/error states everywhere.
+**Status:** split — do not implement this ticket directly.
 
-**Blocked by:** 14, 15, 16, 17, 18.
+Split into vertical slices:
 
-**Status:** ready-for-agent
+- **19a — Error-catalog coverage + React Query defaults.** Every `docs/frontend/spec.md` §6 row driven by an MSW error handler with the asserted surface checked; RQ retry/stale/refetch reviewed for the store-walk case + "reconnecting" hint. Blocked by 14, 15, 16, 17, 18.
+- **19b — Accessibility sweep + loading/empty/error states + DoD.** A11y across all nine screens; consistent loading / empty / error-with-retry / in-app not-found states; final types re-diff; §12 definition-of-done checklist (minus deployment docs). Blocked by 14, 15, 16, 17, 18.
 
-- [ ] Every `docs/frontend/spec.md` §6 error-catalog row is exercised by a test: an MSW error handler drives it and the asserted surface (toast / inline-field / inline-form / redirect) is checked.
-- [ ] Accessibility sweep across all nine screens: keyboard traversal, focus moved on route change, `aria-live` on toasts, contrast in both themes, no status conveyed by color alone, reduced-motion honored for spinners and transitions.
-- [ ] Loading (skeleton/spinner with nav still usable), empty, error-with-retry, and in-app not-found states are present and consistent on every screen.
-- [ ] types module re-diffed against `docs/spec.md` §5 after all Phase 2–6 integration churn.
-- [ ] React Query defaults (stale time, retry, refetch-on-focus) reviewed for the store-walk case, with a visible "reconnecting" hint and no offline machinery.
-- [ ] `docs/frontend/spec.md` §12 definition-of-done checklist complete except deployment docs.
+**Downstream edges retargeted:** 20 → 19a, 19b.
 
 **Refs:** `docs/frontend/spec.md` §6, §9, §12; plan Phase 7.
