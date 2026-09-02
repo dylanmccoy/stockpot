@@ -370,6 +370,63 @@ Phases 4/5/6 respectively.
 - `last_used_at` is intended to persist on ordinary authenticated GET requests;
   otherwise the per-request write and its locking cost should be removed.
 
+## Revisions — review pass 8, design grilling (2026-09-01)
+
+An interactive design interview over the whole v1 surface: five rounds, 24
+questions, 23 decisions (Q3 was superseded by Q8). Working record and full
+rationale: `.scratch/backend-v1-grilling/map.md`. Four of the decisions came
+from defects found by reading and running the shipped Phase 2 code, not from an
+agenda:
+
+| # | Finding | Evidence |
+|---|---|---|
+| F1 | `DateTime(timezone=True)` columns come back from SQLite **naive**, so every read path violated §Mechanical defaults' `…+00:00` promise. One column had already been hand-patched. | `security.py` expiry comparison |
+| F2 | `issue_token` read `session_ttl_days` from the **module-global** `Settings`, so `create_app(test_settings, …)` could not influence token lifetime; the expired-token test worked around it by rewriting `expires_at` in the database. | `security.py`, `test_auth.py` |
+| F3 | `get_db` committed **after** `yield`, which runs after the response is generated. A failing commit returned **`200` with the write silently discarded** — not the `409` §6 promises, and not even a `500`. Reproduced both ways: under the real server configuration the handler was never invoked; with server exceptions raised, Starlette reported `Caught handled exception, but response already started`. | repro during the session |
+| F4 | `test_concurrency.py` as specified **cannot fail**: `BEGIN IMMEDIATE` on every transaction makes the lost-update interleave unconstructable, so it passes vacuously. | `database.py` `on_begin` |
+
+Decisions, numbered as asked. Each is now normative in `spec.md`; this table is
+rationale only.
+
+| # | Decision | Rationale |
+|---|---|---|
+| Q1 | **`UtcDateTime` type decorator** in `database.py`, applied to every datetime column; the ad-hoc naive-datetime patch in `security.py` is deleted. | The only fix that holds for every read path including raw-SQL ones, and it removes existing debt instead of adding a second workaround. *Rejected:* per-schema Pydantic validators (miss raw-SQL paths); amending the spec to allow naive output. |
+| Q2 | **Account lifecycle:** keep the env-var first-user bootstrap and let Phase 7 document it as *the* procedure; **add `POST /api/auth/change-password`**; accept unbounded `sessions` growth in v1. | Without the endpoint, a rotated credential is a `sqlite3` shell job forever. A household generates a few session rows a month. *Rejected:* session reaping on login or by sweep. |
+| Q4 | **Normalize the recipe-ingredient `unit` on both input paths** — lower-case, strip one trailing `.`, **no singularization**. | The only raw consumer of `recipe_ingredients.unit` is `RecipeRead`; every math path already calls `normalize_unit_token`, which singularizes internally. Singularizing on write would change exactly one displayed string while costing a locked R-7 oracle (§2.3 "`cups` stays `cups`") and reading wrong (`2 cup flour`). *Rejected:* singularizing on write; normalizing neither path. |
+| Q5 | **Zero-content recipes are permanently legal.** Only `title` is required. | A title-only stub is a legitimate capture-now-fill-later flow, and every downstream case is already total. The explicit §5.2 line stops a later reviewer "fixing" it. *Rejected:* a minimum-content rule. |
+| Q6 | **Python-side timestamps everywhere** — `default=_utcnow`, `onupdate=_utcnow`, and an explicitly bound `_utcnow()` in the §5.5 upsert and the §5.4 Core `UPDATE`. §1's "server default `now()`" wording is corrected. | SQLite's `CURRENT_TIMESTAMP` is a naive, second-precision string; it fights Q1 and drops sub-second ordering. One clock. *Rejected:* server defaults as §1 previously specified. |
+| Q7 | **`change-password` contract:** `403 {"detail": "incorrect password"}` on a wrong current password; revoke the user's sessions. Phase 2 owns it. | The token is valid and the *action* is refused; `401` would wrongly tell the client to re-authenticate. Revocation is what makes the endpoint worth having. *Rejected:* `401`; leaving other sessions alive; deferring to Phase 7. |
+| Q8 | **Rewrite `test_concurrency.py`'s contract** (supersedes Q3): assert serialization, the `409` lock mapping, and post-commit freshness; keep one threaded HTTP smoke test. | Fixes F4 — the test must assert the property that *prevents* the race, since `BEGIN IMMEDIATE` makes the race itself unconstructable. It also exercises `_to_409_if_locked_else_500`, which nothing else covers. *Rejected:* the raw two-`Session` lost-update interleave originally recommended in Q3 (impossible to construct); threaded HTTP alone (flaky, gets skipped). |
+| Q9 | **`issue_token(db, user, settings)`.** | Fixes F2; removes the last module-global configuration read from a request path and makes `issue_token` a function of its arguments. Both call sites already have settings injected. *Rejected:* reading `request.app.state` inside `issue_token`. |
+| Q10 | **Keep canonical-unit-only responses (#P5)**; record display-unit conversion as v2. | One representation is what makes the netting, consolidation, and deduction math auditable, and every R-7 oracle is expressed in canonical units. Choosing *which* display preference wins is a real design question. Noted in `features.md` with the user-visible consequence (`2 lb` in → `453.592 g` on the grocery list) and the `units.from_base` hook. |
+| Q11 | **`ConfigDict(extra="forbid")` on `RecipeIngredientIn` only.** | It is the only schema where a dropped key produces a *successful wrong write* rather than an error: `{"item": "flour", "qty": 500}` would return `201` and silently store a to-taste ingredient. *Rejected:* `extra="forbid"` on every request schema — touches every Phase 3–6 schema; wait for evidence. |
+| Q12 | **`change-password` rotates the caller's token too:** delete every session for the user, issue a fresh one, return `200 TokenResponse`. | Makes revocation one unconditional `DELETE WHERE user_id = :me` with no `AND id != current` special case, and a full-window reset is what someone changing a password actually wants. *Rejected:* reusing the caller's row — a session spanning a credential change. |
+| Q13 | **`TransactionRoute(APIRoute)` owns the commit**, running it after the endpoint returns but before the response is built. Add a test that fails at `COMMIT` specifically. | Fixes F3. The only option where a client is never told a write succeeded when it did not; silent data loss is the one failure a household recipe box cannot absorb. Verified by prototype during the session: the wrapper returns `409 {"detail": "conflict"}`, and serialization completes before the commit, so `expire_on_commit` needs no change. *Rejected:* mandating a trailing `flush()` in every mutating handler (catches constraint violations only, never a lock at `COMMIT`); accepting the behavior and narrowing §6. |
+| Q14 | **Leave the two import-time module globals alone** (`database.engine`, `main.app`). | They are the documented `uvicorn app.main:app` entrypoint. SQLAlchemy engines are lazy, so the test-suite side effect is a file that never gets touched. Revisit only if a test is observed writing `recipe.db`. *Rejected:* a `--factory` entrypoint. |
+| Q15 | **Document a backup procedure in Phase 7** — `sqlite3 recipe.db ".backup …"` plus restore. Leave the Alembic trigger where `features.md` puts it. | Schema changes are `rm backend/recipe.db`, Alembic is deferred to the first change *after* v1, and nothing told an operator to take a copy — so the moment data becomes valuable and the moment a tool exists to protect it were separated by an unbounded gap. `.backup`, not `cp`: safe on a live database. *Rejected:* pulling Alembic into v1 (contradicts a deliberate deferral); a `GET /api/export` endpoint. |
+| Q17 | **Rewrite §6's transaction-ownership paragraph** to name `TransactionRoute` as owner, keep `rollback()` + `close()` in `get_db`, narrow `flush()` to "call it when you need a generated id", and state that a commit-time conflict or lock now converts to `409`. §3.2/§3.3 get matching edits. | *Unchanged:* a route raising `HTTPException(404)` still rolls back, so `get_current_user`'s `last_used_at` bump is still lost on an error response. |
+| Q18 | **One "Operating the server" section in `README.md`** with ordered runbooks: bootstrap, backup, schema reset / restore. Phase 7's checklist points at it. | All three are the same activity — a human at a terminal, server stopped, doing something irreversible — and the ordering that matters is exactly what gets lost when they are scattered across three documents. |
+| Q19 | **Commit `docs/frontend/`.** | `plan.md`'s document map has a row for it and `phase-7.md` is told to link to it; not committing it left two documents pointing at nothing. The scope fence already handles the risk in prose, and untracked planning docs rot. |
+| Q20 | **One spec-edit PR, then one Phase 2 hardening PR, then Phase 3.** | `plan.md` requires spec edits before the owning phase implements. The Phase 2 items are all infrastructure in the same four modules and want one R-6 reviewer pass. One spec PR is *more* reviewable than five scattered ones, because the decisions interlock — Q1 and Q6 are one paragraph, Q13 and Q17 are one section. *Rejected:* per-phase spec edits; folding the Phase 2 reopen into Phase 3. |
+| Q21 | **No new R-7 contract-test gate for Phase 3**; add explicit §7 rows instead. | The gate exists to stop implementation and validation sharing an interpretation error in *arithmetic*. Q4/Q5/Q11 are single-branch rules where a spec sentence and a test row are the same statement. |
+| Q22 | **`session_ttl_days: Field(30, ge=0)`**; leave `cors_origins` alone. | Zero is meaningful — it is the clean way to test the expiry branch now that Q9 makes lifetime injectable. Negative is pure misconfiguration. `cors_origins`' default is inert in v1 and Phase 7 owns explaining it. *Rejected:* `ge=1`, which would close the door Q9 just opened. |
+| Q23 | **One `decisions.md` entry** (this one); **Phase 2 reverts to "In progress"** until the hardening lands. | The decisions interlock, so scattered entries lose that. Phase 2 was marked Complete while nothing was in version control. |
+| Q24 | **`TransactionRoute` lives in `database.py`**; `get_db` stashes `request.state.db`; the route class no-ops when it is absent. **Add a guard test** iterating `app.routes`. | `route_class` is a property of the `APIRouter` a route is *declared* on, and `include_router` cannot apply it retroactively. Phases 4–6 each add a router; a forgotten `route_class=` silently reverts that router to F3 with no test failing. The guard test is the only mechanism that catches it. *Rejected:* `main.py` as the home — routers cannot import `main` without a cycle; relying on a `make_router()` helper alone. |
+
+Not resolved, deliberately: **D1** (open-vocabulary singularization) and **D2**
+(multi-line ingredient paste) were not opened; **Alembic** stays deferred to the
+first schema change after v1, with Q15 mitigating the data-loss window through
+documentation rather than by moving the trigger; **no linter** is configured.
+
+No ADR was written. Nothing here clears hard-to-reverse **and** surprising
+**and** a real trade-off. Q13 comes closest, and it is a bug fix with one
+sensible answer.
+
+`CONTEXT.md` was created at the repository root during the session — a glossary
+only. It pins the vocabulary Q4 forced open, since three distinct things were
+all being called "unit": **author's unit**, **canonical unit**, **display
+unit**, **unit bucket**, and **opaque unit**.
+
 ## Planning status at the refactor boundary
 
 This is the preserved status record from the former monolithic plan. Current
@@ -416,12 +473,25 @@ phase status is authoritative in `plan.md`.
       re-archive → 409 (#S7), plus gap-fills. **`docs/spec.md` is authoritative
       for v1 build detail.**
 - [x] Phase 0 — reset & deps (complete, 2026-08-31, PR #12). Phase 1 — pure
-      core (complete, 2026-09-01, PR #16). See the status table in
+      core (complete, 2026-09-01, PR #16). Phase 2 — auth and app factory
+      (first pass, 2026-09-02, PR #20). See the status table in
       [`plan.md`](plan.md) for live phase state.
+- [x] Review pass 8 folded in (2026-09-01): design grilling over the whole v1
+      surface — `UtcDateTime` + Python-side timestamps (Q1, Q6), `change-password`
+      with full session revocation and token rotation (Q2, Q7, Q12),
+      `issue_token(db, user, settings)` + `session_ttl_days` `ge=0` (Q9, Q22),
+      `TransactionRoute` owning the commit + the route-class guard test (Q13,
+      Q17, Q24), symmetric ingredient-unit normalization + `extra="forbid"` +
+      zero-content recipes (Q4, Q5, Q11), the `test_concurrency.py` contract
+      rewrite (Q8), and the Phase 7 backup and runbook items (Q15, Q18).
+      **Phase 2 reopened for hardening (Q23).**
 
 ## Supersession rules
 
 - Later rows refine earlier rows with the same subject.
+- Review pass 8 refines the earlier passes where they overlap: it supersedes
+  #N2's "`get_db` owns the commit" with `TransactionRoute`, and #R3's
+  `test_concurrency.py` contract with the properties in Q8.
 - The specification pass refines the review-pass summaries.
 - A closed issue must update `spec.md`; closing it only in this log has no
   implementation effect.

@@ -9,6 +9,8 @@ sessions, registration/login, and authentication gating.
 
 - [`spec.md` §1 — users and sessions](../spec.md#1-data-model--backendappmodelspy)
 - [`spec.md` §3 — app infrastructure](../spec.md#3-app-infrastructure)
+- [`spec.md` §3.1 — settings](../spec.md#31-backendappconfigpy)
+- [`spec.md` §3.2 — `UtcDateTime`, `get_db`, `TransactionRoute`](../spec.md#32-backendappdatabasepy)
 - [`spec.md` §5.1 — auth API](../spec.md#51-auth--routersauthpy-prefix-apiauth)
 - [`spec.md` §6 — concurrency and transactions](../spec.md#6-concurrency--transactions)
 - Auth and concurrency rows in [`spec.md` §7](../spec.md#7-acceptance-criteria--test-matrix)
@@ -38,6 +40,28 @@ sessions, registration/login, and authentication gating.
       green through it before the implementation pass extends it per phase.
 - [x] Add `test_auth.py` and migrate existing recipe tests to `auth_client`.
 
+### Hardening (review pass 8, reopened 2026-09-01)
+
+The first pass shipped in PR #20. Review pass 8 found three defects and one
+divergence in it; the spec sections above were amended before this work
+(`decisions.md` §Review pass 8). All five items are infrastructure in the same
+four modules and land as one reviewable diff.
+
+- [ ] Add `UtcDateTime` to `database.py` and apply it to **every** datetime
+      column in `models.py`; delete the ad-hoc naive-datetime normalization in
+      `security.py`'s expiry comparison. Give every timestamp a Python-side
+      `default=_utcnow` and, where §1 says so, `onupdate=_utcnow`.
+- [ ] Move the commit out of `get_db` into `TransactionRoute` (§3.2/§6):
+      `get_db` stashes `request.state.db`, keeps rollback-on-exception and
+      close, and no longer commits after `yield`. Build **every**
+      database-touching router with `route_class=TransactionRoute`.
+- [ ] Change `issue_token` to `issue_token(db, user, settings)` and pass
+      settings from both call sites in `routers/auth.py`.
+- [ ] Constrain `session_ttl_days` to `Field(30, ge=0)` in `config.py`.
+- [ ] Add `POST /api/auth/change-password` (§5.1): `403` on a wrong current
+      password, delete every session for the user including the caller's, issue
+      a fresh token, return `200 TokenResponse`.
+
 ## Verification
 
 - [x] Registration defaults off and requires the configured code when enabled.
@@ -49,6 +73,25 @@ sessions, registration/login, and authentication gating.
       so a missing `connect` / `begin` listener fails a test instead of silently
       disabling the lock.
 - [x] `cd backend && uv run pytest` passes.
+
+### Hardening verification
+
+- [ ] Every response datetime carries an explicit UTC offset; a freshly created
+      resource has `created_at == updated_at`, and a `PUT` advances
+      `updated_at`.
+- [ ] A failure at `COMMIT` (not at `flush()`) returns `409 {"detail": "conflict"}`
+      and leaves no row behind — `test_transactions.py`, following the
+      throwaway-route pattern in `test_exception_handlers.py`.
+- [ ] The route-class guard test fails if any `/api` route depending on `get_db`
+      is not a `TransactionRoute`.
+- [ ] The expired-token test builds the app with `Settings(session_ttl_days=0)`
+      instead of rewriting `sessions.expires_at` in the database; the old
+      reach-around is deleted.
+- [ ] `Settings(session_ttl_days=-1)` raises `ValidationError`; `0` is accepted.
+- [ ] `change-password`: wrong current password `403`; short new password `422`;
+      success `200` with a working new token, the caller's old token and a
+      second device's token both `401`.
+- [ ] `cd backend && uv run pytest` passes.
 
 ## Exit criteria
 
@@ -63,4 +106,9 @@ sessions, registration/login, and authentication gating.
 - [x] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
       a non-author reviewer checked this phase's diff and new tests against
       `spec.md` §7 and §§1, 3, 5.1, 6.
-- [x] Phase complete; update the status table in [`../plan.md`](../plan.md).
+- [ ] **Hardening diff review gate passed (R-6)** — a non-author reviewer
+      checked the hardening diff and its new tests against `spec.md` §7 and
+      §§1, 3.1, 3.2, 3.3, 3.4, 5.1, 6, walking the commit-time failure path
+      rather than trusting a green suite.
+- [ ] Phase complete; update the status table in [`../plan.md`](../plan.md)
+      back to `Complete`.

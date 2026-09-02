@@ -51,6 +51,14 @@ checked lines into inventory.
       unit:"kg"}` → `200` with `source="manual"`, `nettable=true`, and `submit`
       adds `0.5 kg`, not `500 kg`; `PATCH {item:...}` on a `nettable=false` line
       → `source="manual"`, `nettable=true`; `PATCH {checked:true}` leaves both.
+- [ ] **Rewrite `test_concurrency.py` to the §7 contract.** The version specified
+      before review pass 8 cannot fail: `BEGIN IMMEDIATE` on every transaction
+      (§3.2) makes the lost-update interleave unconstructable, so the test passes
+      vacuously. Assert instead the properties that make the race impossible —
+      serialization (a second `BEGIN` blocks and, with `busy_timeout` lowered,
+      raises `database is locked`), the `409` mapping of that error through HTTP,
+      and freshness after the first writer commits. Keep the threaded two-`cook`
+      HTTP test as a smoke check, not as the guard.
 
 ## Verification
 
@@ -61,6 +69,8 @@ checked lines into inventory.
 - [ ] Checking a line has no inventory side effect; submit applies it once.
 - [ ] Frozen and archived mutations return 409 as specified.
 - [ ] Concurrent submits apply each checked line at most once.
+- [ ] `test_concurrency.py` asserts serialization, the `409` lock mapping, and
+      post-commit freshness — not an interleave that cannot occur.
 - [ ] `cd backend && uv run pytest` passes.
 
 ## Exit criteria

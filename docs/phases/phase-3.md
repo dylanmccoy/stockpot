@@ -25,6 +25,15 @@ structured and pasted-string ingredient input.
       the single guard that keeps `raw_text` / `item` / `note` within their
       columns (R-4).
 - [ ] Add validation for finite positive quantities and bounded list/text fields.
+- [ ] Normalize the object branch's `unit` the same way the parser normalizes a
+      pasted line — lower-case, strip one trailing `.`, **do not singularize**
+      (§5.2). `{"unit": "Tbsp."}` and `2 Tbsp. butter` must persist the same
+      author's unit.
+- [ ] Put `ConfigDict(extra="forbid")` on `RecipeIngredientIn` and nowhere else
+      (§5.2): it is the only schema where a mistyped key yields a successful
+      wrong write rather than an error.
+- [ ] Keep a title-only recipe legal — `ingredients` and `steps` default to `[]`
+      and there is no minimum-content rule (§5.2).
 - [ ] Expand `test_recipes.py` and add `test_validation.py`.
 
 ## Verification
@@ -32,7 +41,11 @@ structured and pasted-string ingredient input.
 - [ ] Ingredient positions are server-assigned, contiguous, and stable on read.
 - [ ] PUT replaces old ingredient children without leaving orphan rows.
 - [ ] Ingredient IDs may churn on PUT; no API contract depends on their stability.
-- [ ] String and object ingredient forms round-trip as specified.
+- [ ] String and object ingredient forms round-trip as specified, and both
+      persist the same normalized author's unit.
+- [ ] `{"item": "flour", "qty": 500}` → `422` naming `qty`, never a `201`
+      storing a to-taste row.
+- [ ] A title-only `POST` → `201` with `ingredients: []`.
 - [ ] A pasted line over 200 chars is truncated to 200 before parsing; the
       recipe still creates and every stored string field fits its column (R-4).
 - [ ] `cd backend && uv run pytest` passes.
