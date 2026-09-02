@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useEffect,
   useId,
   useLayoutEffect,
   useRef,
@@ -53,38 +52,33 @@ export function Dialog({
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (e: globalThis.KeyboardEvent) => {
+  const onKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLDivElement>) => {
       if (e.key === "Escape") {
         e.stopPropagation();
         onClose();
+        return;
       }
-    };
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open, onClose]);
+      if (e.key !== "Tab") return;
 
-  const onKeyDownTrap = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Tab") return;
-    const panel = panelRef.current;
-    if (!panel) return;
-    const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
-    if (items.length === 0) {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const items = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+
+      // Fully manage Tab so focus can never leave the panel, wherever it sits.
+      const idx = items.indexOf(document.activeElement as HTMLElement);
+      const next = e.shiftKey
+        ? items[idx <= 0 ? items.length - 1 : idx - 1]
+        : items[idx === -1 || idx === items.length - 1 ? 0 : idx + 1];
       e.preventDefault();
-      return;
-    }
-    const first = items[0];
-    const last = items[items.length - 1];
-    const active = document.activeElement;
-    if (e.shiftKey && (active === first || active === panel)) {
-      e.preventDefault();
-      last.focus();
-    } else if (!e.shiftKey && active === last) {
-      e.preventDefault();
-      first.focus();
-    }
-  }, []);
+      next.focus();
+    },
+    [onClose],
+  );
 
   if (!open) return null;
 
@@ -102,7 +96,7 @@ export function Dialog({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        onKeyDown={onKeyDownTrap}
+        onKeyDown={onKeyDown}
       >
         <div className={styles.header}>
           <h2 id={titleId} className={styles.title}>

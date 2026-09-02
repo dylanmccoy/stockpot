@@ -38,17 +38,9 @@ function readStored(): ThemePreference {
 
 function prefersDark(): boolean {
   return (
-    typeof window !== "undefined" &&
     typeof window.matchMedia === "function" &&
     window.matchMedia("(prefers-color-scheme: dark)").matches
   );
-}
-
-/** Reflect the preference onto `<html data-theme>` so `tokens.css` can react. */
-function applyDocument(preference: ThemePreference): void {
-  const root = document.documentElement;
-  if (preference === "system") root.removeAttribute("data-theme");
-  else root.setAttribute("data-theme", preference);
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
@@ -56,14 +48,19 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     useState<ThemePreference>(readStored);
   const [systemDark, setSystemDark] = useState<boolean>(prefersDark);
 
+  const resolved: ResolvedTheme =
+    preference === "system" ? (systemDark ? "dark" : "light") : preference;
+
+  // The element always carries an explicit resolved theme (tokens.css has no
+  // root-level `prefers-color-scheme` block); persist the raw preference.
   useEffect(() => {
-    applyDocument(preference);
+    document.documentElement.setAttribute("data-theme", resolved);
     try {
       localStorage.setItem(THEME_KEY, preference);
     } catch {
       /* storage unavailable */
     }
-  }, [preference]);
+  }, [preference, resolved]);
 
   // Keep the resolved theme live while the preference is "system".
   useEffect(() => {
@@ -84,9 +81,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       return PREFERENCES[(idx + 1) % PREFERENCES.length];
     });
   }, []);
-
-  const resolved: ResolvedTheme =
-    preference === "system" ? (systemDark ? "dark" : "light") : preference;
 
   const value = useMemo<ThemeContextValue>(
     () => ({ preference, resolved, setPreference, cycle }),

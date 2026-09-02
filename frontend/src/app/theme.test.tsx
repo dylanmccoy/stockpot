@@ -35,10 +35,12 @@ afterEach(() => {
 });
 
 describe("ThemeProvider", () => {
-  it("defaults to system (no data-theme attribute) when nothing is stored", () => {
+  it("defaults to system, resolving to light when nothing is stored (jsdom has no matchMedia)", () => {
     renderProbe();
     expect(screen.getByTestId("pref")).toHaveTextContent("system");
-    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+    expect(screen.getByTestId("resolved")).toHaveTextContent("light");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(localStorage.getItem("recipe.theme")).toBe("system");
   });
 
   it("reads a stored override and reflects it on <html>", () => {
@@ -48,7 +50,7 @@ describe("ThemeProvider", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
   });
 
-  it("cycles system -> light -> dark -> system and persists each step", async () => {
+  it("cycles system -> light -> dark -> system and persists the raw preference", async () => {
     renderProbe();
     const cycle = screen.getByRole("button", { name: "cycle" });
 
@@ -58,11 +60,13 @@ describe("ThemeProvider", () => {
     expect(localStorage.getItem("recipe.theme")).toBe("light");
 
     await userEvent.click(cycle);
+    expect(screen.getByTestId("pref")).toHaveTextContent("dark");
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(localStorage.getItem("recipe.theme")).toBe("dark");
 
     await userEvent.click(cycle);
     expect(screen.getByTestId("pref")).toHaveTextContent("system");
-    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(localStorage.getItem("recipe.theme")).toBe("system");
   });
 

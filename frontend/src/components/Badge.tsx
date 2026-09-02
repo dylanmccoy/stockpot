@@ -1,4 +1,5 @@
 import type { HTMLAttributes, ReactNode } from "react";
+import { cx } from "../lib/cx";
 import styles from "./Badge.module.css";
 
 export type BadgeTone = "neutral" | "ok" | "warn" | "danger" | "accent";
@@ -18,12 +19,7 @@ export function Badge({
   ...rest
 }: BadgeProps) {
   return (
-    <span
-      className={[styles.badge, styles[tone], className]
-        .filter(Boolean)
-        .join(" ")}
-      {...rest}
-    >
+    <span className={cx(styles.badge, styles[tone], className)} {...rest}>
       {icon && <span aria-hidden="true">{icon}</span>}
       {children}
     </span>

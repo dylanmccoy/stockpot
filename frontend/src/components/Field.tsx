@@ -66,7 +66,7 @@ export function Field({
       )}
 
       {hasError && (
-        <p id={errorId} className={styles.error} role="alert">
+        <div id={errorId} className={styles.error} role="alert">
           {errors.length === 1 ? (
             errors[0]
           ) : (
@@ -76,7 +76,7 @@ export function Field({
               ))}
             </ul>
           )}
-        </p>
+        </div>
       )}
     </div>
   );

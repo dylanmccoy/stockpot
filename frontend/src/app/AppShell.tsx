@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { useAuth } from "../auth/useAuth";
-import { useTheme, type ThemePreference } from "./theme";
+import { UserMenu } from "./UserMenu";
 import styles from "./AppShell.module.css";
 
 const DESTINATIONS = [
@@ -11,18 +10,18 @@ const DESTINATIONS = [
   { to: "/history", label: "History", icon: "📖", end: false },
 ];
 
-const THEME_LABEL: Record<ThemePreference, string> = {
-  system: "System",
-  light: "Light",
-  dark: "Dark",
-};
-
 export function AppShell() {
   const location = useLocation();
   const mainRef = useRef<HTMLElement>(null);
+  const firstRender = useRef(true);
 
-  // Route change moves focus to the content region (docs/frontend/spec.md §9).
+  // Route change (not the cold load) moves focus to the content region
+  // (docs/frontend/spec.md §9).
   useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
     mainRef.current?.focus();
   }, [location.pathname]);
 
@@ -55,72 +54,6 @@ export function AppShell() {
       <main id="main" ref={mainRef} tabIndex={-1} className={styles.main}>
         <Outlet />
       </main>
-    </div>
-  );
-}
-
-function UserMenu() {
-  const { user, logout } = useAuth();
-  const { preference, resolved, cycle } = useTheme();
-  const [open, setOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (e: PointerEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
-
-  const themeSuffix = preference === "system" ? ` (${resolved})` : "";
-
-  return (
-    <div className={styles.userMenu} ref={menuRef}>
-      <button
-        type="button"
-        className={styles.userTrigger}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      >
-        {user ? user.username : "Account"}
-      </button>
-
-      {open && (
-        <div className={styles.menu} role="menu">
-          <button
-            type="button"
-            role="menuitem"
-            className={styles.menuItem}
-            onClick={cycle}
-          >
-            Theme: {THEME_LABEL[preference]}
-            {themeSuffix}
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className={styles.menuItem}
-            onClick={() => {
-              setOpen(false);
-              void logout();
-            }}
-          >
-            Log out
-          </button>
-        </div>
-      )}
     </div>
   );
 }

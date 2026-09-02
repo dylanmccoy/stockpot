@@ -1,14 +1,8 @@
 import { useEffect, useId, useState } from "react";
 import styles from "./Stepper.module.css";
 
-const FRACTION_GLYPH: Record<string, string> = {
-  "0.125": "⅛",
-  "0.250": "¼",
-  "0.333": "⅓",
-  "0.500": "½",
-  "0.667": "⅔",
-  "0.750": "¾",
-};
+// The default presets only need ½; extend when a caller passes another fraction.
+const FRACTION_GLYPH: Record<string, string> = { "0.500": "½" };
 
 function presetLabel(n: number): string {
   return FRACTION_GLYPH[n.toFixed(3)] ?? String(n);

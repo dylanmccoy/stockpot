@@ -63,37 +63,46 @@ describe("AppShell", () => {
     expect(main).toHaveAttribute("tabindex", "-1");
   });
 
-  it("shows the username and opens the user menu", async () => {
+  it("shows the username and opens the user menu, moving focus to the first item", async () => {
     renderShell();
     const trigger = screen.getByRole("button", { name: "dylan" });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     await userEvent.click(trigger);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("menu")).toBeInTheDocument();
+    const themeItem = screen.getByRole("button", { name: /^Theme:/ });
+    expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
+    expect(themeItem).toHaveFocus();
   });
 
   it("cycles the theme from the user menu", async () => {
     renderShell();
     await userEvent.click(screen.getByRole("button", { name: "dylan" }));
-    const themeItem = screen.getByRole("menuitem", { name: /^Theme:/ });
-    expect(document.documentElement.hasAttribute("data-theme")).toBe(false);
-    await userEvent.click(themeItem);
+    // system (resolves to light in jsdom) -> light -> dark
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Theme: System (light)" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Theme: Light" }));
+    expect(
+      screen.getByRole("button", { name: "Theme: Dark" }),
+    ).toBeInTheDocument();
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     document.documentElement.removeAttribute("data-theme");
   });
 
   it("logs out from the user menu", async () => {
     const auth = renderShell();
     await userEvent.click(screen.getByRole("button", { name: "dylan" }));
-    await userEvent.click(screen.getByRole("menuitem", { name: "Log out" }));
+    await userEvent.click(screen.getByRole("button", { name: "Log out" }));
     expect(auth.logout).toHaveBeenCalledOnce();
   });
 
-  it("closes the menu on Escape", async () => {
+  it("closes the menu on Escape and restores focus to the trigger", async () => {
     renderShell();
     const trigger = screen.getByRole("button", { name: "dylan" });
     await userEvent.click(trigger);
     await userEvent.keyboard("{Escape}");
     expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
   });
 });

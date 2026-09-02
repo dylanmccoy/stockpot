@@ -1,22 +1,17 @@
 /* Design tokens (docs/frontend/spec.md §8).
  *
- * Three theme states, resolved on `<html>`:
- *   - no override  + light OS  -> :root defaults (light)
- *   - no override  + dark OS   -> @media (prefers-color-scheme: dark) block
- *   - manual override          -> [data-theme] attribute, wins over the OS
- *
- * The `[data-theme="light" | "dark"]` blocks are not root-scoped, so a subtree
- * (e.g. the dev component demo) can force either palette by setting the
- * attribute on a wrapper. `app/theme.tsx` sets/removes it on `<html>` from a
- * `recipe.theme` localStorage value. Every text/role pair clears 4.5:1 contrast
- * in both themes (§9).
+ * The theme in effect is always an explicit `data-theme="light" | "dark"` on the
+ * element: `index.html`'s pre-paint script resolves it (stored `recipe.theme`,
+ * falling back to `prefers-color-scheme`), then `app/theme.tsx` keeps it live.
+ * Because the blocks below are not root-scoped, a subtree (e.g. the dev
+ * component demo) can force either palette by setting the attribute on a
+ * wrapper. Every text/role pair clears 4.5:1 contrast in both themes (§9).
  */
 
 :root,
 [data-theme="light"] {
   color-scheme: light;
 
-  /* color roles */
   --color-bg: #f6f6f8;
   --color-surface: #ffffff;
   --color-surface-alt: #eef0f4;
@@ -42,6 +37,36 @@
 
   --shadow-sm: 0 1px 2px rgb(20 20 28 / 8%);
   --shadow-md: 0 6px 24px rgb(20 20 28 / 18%);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: #15151a;
+  --color-surface: #1e1e25;
+  --color-surface-alt: #262630;
+  --color-text: #f1f1f4;
+  --color-muted: #aeaeb8;
+  --color-border: #34343e;
+
+  --color-accent: #6ea8fe;
+  --color-accent-hover: #8bbcff;
+  --color-accent-fg: #0b1220;
+
+  --color-ok: #4ac26b;
+  --color-ok-surface: #17301f;
+  --color-warn: #e0a83d;
+  --color-warn-surface: #33280f;
+  --color-danger: #ff7a7a;
+  --color-danger-hover: #ff9a9a;
+  --color-danger-surface: #3a1d1d;
+  --color-danger-fg: #0b1220;
+
+  --color-focus: #6ea8fe;
+  --color-overlay: rgb(0 0 0 / 65%);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-md: 0 8px 28px rgb(0 0 0 / 55%);
 }
 
 :root {
@@ -76,68 +101,4 @@
   /* layout */
   --shell-topbar-h: 56px;
   --shell-tabbar-h: 56px;
-}
-
-/* Dark palette — shared by the OS default (no override) and the manual "dark"
- * override. Kept in sync with the [data-theme="dark"] block below. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-
-    --color-bg: #15151a;
-    --color-surface: #1e1e25;
-    --color-surface-alt: #262630;
-    --color-text: #f1f1f4;
-    --color-muted: #aeaeb8;
-    --color-border: #34343e;
-
-    --color-accent: #6ea8fe;
-    --color-accent-hover: #8bbcff;
-    --color-accent-fg: #0b1220;
-
-    --color-ok: #4ac26b;
-    --color-ok-surface: #17301f;
-    --color-warn: #e0a83d;
-    --color-warn-surface: #33280f;
-    --color-danger: #ff7a7a;
-    --color-danger-hover: #ff9a9a;
-    --color-danger-surface: #3a1d1d;
-    --color-danger-fg: #0b1220;
-
-    --color-focus: #6ea8fe;
-    --color-overlay: rgb(0 0 0 / 65%);
-
-    --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
-    --shadow-md: 0 8px 28px rgb(0 0 0 / 55%);
-  }
-}
-
-[data-theme="dark"] {
-  color-scheme: dark;
-
-  --color-bg: #15151a;
-  --color-surface: #1e1e25;
-  --color-surface-alt: #262630;
-  --color-text: #f1f1f4;
-  --color-muted: #aeaeb8;
-  --color-border: #34343e;
-
-  --color-accent: #6ea8fe;
-  --color-accent-hover: #8bbcff;
-  --color-accent-fg: #0b1220;
-
-  --color-ok: #4ac26b;
-  --color-ok-surface: #17301f;
-  --color-warn: #e0a83d;
-  --color-warn-surface: #33280f;
-  --color-danger: #ff7a7a;
-  --color-danger-hover: #ff9a9a;
-  --color-danger-surface: #3a1d1d;
-  --color-danger-fg: #0b1220;
-
-  --color-focus: #6ea8fe;
-  --color-overlay: rgb(0 0 0 / 65%);
-
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
-  --shadow-md: 0 8px 28px rgb(0 0 0 / 55%);
 }

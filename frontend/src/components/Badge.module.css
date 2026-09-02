@@ -13,10 +13,6 @@
   white-space: nowrap;
 }
 
-.neutral {
-  /* base styles above */
-}
-
 .ok {
   background: var(--color-ok-surface);
   border-color: var(--color-ok);

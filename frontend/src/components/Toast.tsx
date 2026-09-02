@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { cx } from "../lib/cx";
 import styles from "./Toast.module.css";
 
 export type ToastVariant = "info" | "success" | "error";
@@ -92,7 +93,7 @@ function ToastRow({
 
   return (
     <div
-      className={[styles.toast, styles[item.variant]].join(" ")}
+      className={cx(styles.toast, styles[item.variant])}
       role="status"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}

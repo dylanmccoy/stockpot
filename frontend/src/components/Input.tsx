@@ -5,6 +5,7 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
+import { cx } from "../lib/cx";
 import { FieldContext } from "./fieldContext";
 import styles from "./Control.module.css";
 
@@ -24,7 +25,7 @@ function useWiring(props: Wired) {
     id: props.id ?? field?.controlId,
     describedBy: props["aria-describedby"] ?? field?.describedBy,
     ariaInvalid: props["aria-invalid"] ?? (field?.invalid ? true : undefined),
-    className: [styles.control, props.className].filter(Boolean).join(" "),
+    className: cx(styles.control, props.className),
   };
 }
 

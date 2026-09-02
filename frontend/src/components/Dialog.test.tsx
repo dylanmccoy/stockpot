@@ -62,13 +62,17 @@ describe("Dialog", () => {
     expect(opener).toHaveFocus();
   });
 
-  it("traps Tab within the dialog", async () => {
+  it("traps Tab within the dialog, wrapping at both ends and stepping through the middle", async () => {
     render(<Harness />);
     await userEvent.click(screen.getByRole("button", { name: "Open" }));
     const close = screen.getByRole("button", { name: "Close dialog" });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
     const del = screen.getByRole("button", { name: "Delete" });
 
-    del.focus();
+    cancel.focus();
+    await userEvent.tab();
+    expect(del).toHaveFocus();
+
     await userEvent.tab();
     expect(close).toHaveFocus();
 

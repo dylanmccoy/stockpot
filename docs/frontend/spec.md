@@ -77,6 +77,8 @@ src/
   app/
     router.tsx             # <Routes> route table (§3) — classic component routing
     AppShell.tsx           # nav chrome: top bar >=640px, bottom tab bar <640px
+    UserMenu.tsx           # shell account disclosure: theme cycle + logout
+    theme.tsx              # ThemeProvider/useTheme: system|light|dark, localStorage override (§8)
     RequireAuth.tsx        # redirects to /login?next=<path> when unauthenticated
   styles/
     tokens.css             # color / space / type / radius custom properties, both themes
@@ -90,11 +92,13 @@ src/
                                              # (context.ts holds the createContext object so
                                              #  useAuth.ts and AuthProvider.tsx don't cycle)
   lib/
+    cx.ts                  # join truthy class-name parts (pure leaf helper)
     parseIngredients.ts    # paste-block splitter (§7.1)
     format.ts              # quantity / number / fraction / datetime formatting (§7.2)
     apiError.ts            # parseApiError + useFormErrors (§7.3)
   components/              # the ~8 primitives (§8)
   pages/
+    dev/ComponentsDemo.tsx # dev-only primitive gallery (import.meta.env.DEV route)
     Login.tsx
     RecipeList.tsx RecipeDetail.tsx RecipeForm.tsx
     Inventory.tsx

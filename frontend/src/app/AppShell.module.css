@@ -67,6 +67,8 @@
   padding: var(--space-5) var(--space-4);
 }
 
+/* `<main>` is a scripted focus target on route change, not a Tab stop — a focus
+ * ring here would read as a stray artifact, so it is intentionally suppressed. */
 .main:focus {
   outline: none;
 }
@@ -151,6 +153,8 @@
 
   .navlink[aria-current="page"] {
     background: transparent;
+    font-weight: 700;
+    box-shadow: inset 0 2px 0 var(--color-accent);
   }
 
   .main {

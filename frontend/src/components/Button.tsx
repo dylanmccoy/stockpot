@@ -1,4 +1,5 @@
 import { forwardRef, type ButtonHTMLAttributes } from "react";
+import { cx } from "../lib/cx";
 import styles from "./Button.module.css";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -22,15 +23,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     },
     ref,
   ) {
-    const classes = [styles.button, styles[variant], className]
-      .filter(Boolean)
-      .join(" ");
-
     return (
       <button
         ref={ref}
         type={type ?? "button"}
-        className={classes}
+        className={cx(styles.button, styles[variant], className)}
         disabled={disabled || loading}
         aria-busy={loading || undefined}
         {...rest}
