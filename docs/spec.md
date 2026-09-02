@@ -87,6 +87,20 @@ in the app-factory lifespan. **No migrations** — a model change requires
 Import layering (one-way):
 `config → database → normalize / units → models → security / services → schemas / routers → main`.
 
+**Datetime columns.** Every `datetime` column is typed `UtcDateTime` (§3.2), not
+a bare `DateTime(timezone=True)`: SQLite has no timezone type and hands back a
+naive value, which would break the `…+00:00` guarantee in §Mechanical defaults on
+every read path — including raw-SQL paths that bypass the ORM. The decorator
+re-attaches UTC on read, in one place.
+
+**Timestamps are Python-side.** Creation defaults and update bumps are
+`default=_utcnow` / `onupdate=_utcnow`, where `_utcnow()` is
+`datetime.now(timezone.utc)`, defined in `models.py` beside the columns and
+imported by the routers that need it. SQLite's `CURRENT_TIMESTAMP` is never used: it
+produces a naive, second-precision string that would defeat `UtcDateTime` and
+lose sub-second ordering. Statements that bypass ORM defaults by construction
+(the §5.5 upsert) bind `_utcnow()` explicitly.
+
 ### users
 
 | Column | Type | Notes |
@@ -94,7 +108,7 @@ Import layering (one-way):
 | `id` | int PK | |
 | `username` | `str(50)` | regex `^[A-Za-z0-9_.-]{3,50}$`, enforced in the schema |
 | `password_hash` | `str(255)` | argon2 (`pwdlib`) |
-| `created_at` | datetime(tz) | server default `now()` |
+| `created_at` | datetime(tz) | `UtcDateTime`, `default=_utcnow` |
 
 Indexes: `UNIQUE` on `lower(username)` — `Index("uq_users_username_lower", func.lower(username), unique=True)`.
 Users are never deleted in v1.
@@ -126,7 +140,7 @@ Users are never deleted in v1.
 | `tags` | JSON `list[str]` | default `[]` |
 | `steps` | JSON `list[str]` | default `[]` — ordered |
 | `created_at` | datetime(tz) | |
-| `updated_at` | datetime(tz) | `onupdate=now()` |
+| `updated_at` | datetime(tz) | `default=_utcnow`, `onupdate=_utcnow` |
 | `created_by_id` | int FK → `users.id`? | nullable, **no** cascade; set on create, never reassigned |
 
 Relationship: `ingredients` → `RecipeIngredient`, `order_by="RecipeIngredient.position"`,
@@ -140,7 +154,7 @@ Relationship: `ingredients` → `RecipeIngredient`, `order_by="RecipeIngredient.
 | `recipe_id` | int FK → `recipes.id` | `ON DELETE CASCADE`, `passive_deletes=True` |
 | `position` | int | 0-based, contiguous, server-assigned from array order |
 | `quantity` | `float?` | `> 0` when set, finite; `NULL` = to taste |
-| `unit` | `str(30)?` | the author's word, stored as written (lower-cased, trailing `.` stripped by the parser for string input) |
+| `unit` | `str(30)?` | the **author's unit** — the word as written, lower-cased with one trailing `.` stripped, on **both** input paths (parsed string and structured object; §5.2). Never singularized. |
 | `item` | `str(200)` | display text |
 | `note` | `str(200)?` | |
 | `normalized_name` | `str(200)` | **server-computed** `normalize_name(item)`; indexed |
@@ -159,7 +173,7 @@ Index: `(recipe_id, position)`.
 | `unit_bucket` | `str(30)` | `"mass"` \| `"volume"` \| `"count"` \| `"opaque:<canonical-token>"` |
 | `quantity_base` | `float` | **source of truth**, in the bucket's canonical unit (g / ml / count / raw opaque amount). `CHECK(quantity_base >= 0)`, finite. Default `0` |
 | `display_unit` | `str(30)?` | **preferred display unit only** — never drives math. `NULL` / opaque ⇒ display in the canonical unit |
-| `updated_at` | datetime(tz) | `onupdate=now()` |
+| `updated_at` | datetime(tz) | `default=_utcnow`, `onupdate=_utcnow` |
 | `created_by_id` | int FK → `users.id`? | nullable, no cascade |
 
 Constraint: `UNIQUE (match_name, unit_bucket)`.
@@ -451,7 +465,7 @@ each result must satisfy the contract above.
 |---|---|---|
 | `database_url` | `str` | `sqlite:///./recipe.db` (existing) |
 | `cors_origins` | `list[str]` | `["http://localhost:5173"]` (existing) |
-| `session_ttl_days` | `int` | `30` |
+| `session_ttl_days` | `int` | `Field(30, ge=0)` — `0` is legal and meaningful (an instantly-expired token, which is how §7 exercises the expiry branch); a negative value raises `ValidationError` when `Settings` is constructed |
 | `allow_registration` | `bool` | `False` |
 | `registration_code` | `str \| None` | `None` |
 
@@ -464,12 +478,17 @@ def make_session_factory(engine: Engine) -> sessionmaker[Session]
 engine = make_engine(settings.database_url)          # the ONE module-level default; uvicorn only
 # NO module-level SessionLocal.
 
+class UtcDateTime(TypeDecorator):                    # impl = DateTime(timezone=True)
+    """Stores UTC; re-attaches tzinfo=utc on every read."""
+    def process_bind_param(self, value, dialect)     # naive -> assume UTC; aware -> convert to UTC
+    def process_result_value(self, value, dialect)   # naive -> replace(tzinfo=utc)
+
 def get_db(request: Request) -> Iterator[Session]:   # importable; routers bind Depends(get_db) statically
     factory = request.app.state.session_factory
     db = factory()
+    request.state.db = db                            # TransactionRoute reads it from here
     try:
-        yield db
-        db.commit()                                  # single unit of work per request
+        yield db                                     # NO commit here - see TransactionRoute
     except Exception:
         db.rollback()
         raise
@@ -477,7 +496,35 @@ def get_db(request: Request) -> Iterator[Session]:   # importable; routers bind 
         db.close()
 
 SessionDep = Annotated[Session, Depends(get_db)]
+
+class TransactionRoute(APIRoute):                    # owns the commit; see §6
+    def get_route_handler(self):
+        original = super().get_route_handler()
+        async def custom(request: Request) -> Response:
+            response = await original(request)       # endpoint ran and serialized
+            db = getattr(request.state, "db", None)
+            if db is not None:
+                db.commit()
+            return response
+        return custom
 ```
+
+`TransactionRoute` lives here, beside `get_db`, and **not** in `main.py`: a
+router must name it when it constructs its `APIRouter`, and a router cannot
+import `main` without an import cycle.
+
+Why the commit moved out of `get_db`: a dependency's post-`yield` code runs
+**after** the response has been generated. Starlette then finds a registered
+handler for a commit-time `IntegrityError` or `OperationalError` and refuses to
+use it because the response has already started — so the caller receives `200`
+with the write silently discarded, which §6 and §0 both promise cannot happen.
+`TransactionRoute` commits inside `wrap_app_handling_exceptions` and before the
+response is sent, so the failure converts to `409` exactly like an in-handler
+one. Response serialization completes before the commit, so no ORM attribute is
+touched post-commit and `expire_on_commit` needs no change.
+
+A route with no database dependency leaves `request.state.db` unset; the wrapper
+no-ops, so `/api/health` needs no special case.
 
 `make_engine`, for a SQLite URL:
 
@@ -515,7 +562,7 @@ def create_app(settings: Settings, engine: Engine) -> FastAPI:
     app.add_exception_handler(OperationalError, _to_409_if_locked_else_500)
 
     for r in (auth.router, recipes.router, cook_logs.router, inventory.router, grocery.router):
-        app.include_router(r)
+        app.include_router(r)          # each router was built with route_class=TransactionRoute
 
     @app.get("/api/health")
     def health(): return {"status": "ok"}
@@ -529,6 +576,17 @@ app = create_app(settings, engine)          # module-level, for `uvicorn app.mai
 `_to_409_if_locked_else_500` → 409 when `"database is locked"` / `"database is busy"`
 in `str(exc.orig)`, otherwise re-raise (→ 500).
 
+These handlers cover **commit-time** failures as well as in-handler ones, because
+`TransactionRoute` (§3.2) commits inside the exception-handling window. An
+`IntegrityError` raised by `COMMIT`, and a `SQLITE_BUSY` at `COMMIT`, both reach
+`_to_409` / `_to_409_if_locked_else_500` and return `409 {"detail": "conflict"}`.
+
+`route_class=TransactionRoute` is a property of the `APIRouter` a route is
+**declared** on; `include_router` cannot apply it retroactively. Every router
+that depends on `get_db` must therefore pass it at construction. §7's
+`test_transactions.py` guard test is what makes a forgotten `route_class=` fail
+instead of silently reverting that router to a commit-after-response.
+
 **No `StaticFiles` mount. No `/uploads`. No `dependency_overrides` anywhere.**
 
 ### 3.4 `backend/app/security.py`
@@ -538,7 +596,7 @@ def hash_password(pw: str) -> str                    # pwdlib argon2
 def verify_password(pw: str, hashed: str) -> bool
 _DUMMY_HASH = hash_password(secrets.token_hex(16))   # module load; for timing-equalised login
 
-def issue_token(db: Session, user: User) -> Session   # inserts a sessions row, returns it
+def issue_token(db: Session, user: User, settings: Settings) -> Session   # inserts a sessions row, returns it
 
 def get_current_user(
     request: Request,
@@ -558,14 +616,22 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 | malformed | `authorization.split(" ")` is not exactly two non-empty parts |
 | wrong scheme | `parts[0].lower() != "bearer"` |
 | unknown token | no `sessions` row with `token == parts[1]` |
-| expired | `row.expires_at <= now()` |
+| expired | `row.expires_at <= _utcnow()` — a plain aware comparison; `UtcDateTime` (§3.2) guarantees `expires_at` is tz-aware, so no ad-hoc naive normalization is needed or permitted here |
 
-On success: `row.last_used_at = now()` (no `expires_at` change — the write rides
-the request's single `BEGIN IMMEDIATE` transaction, committed by `get_db`), return `row.user`.
+On success: `row.last_used_at = _utcnow()` (no `expires_at` change — the write rides
+the request's single `BEGIN IMMEDIATE` transaction, committed by
+`TransactionRoute`), return `row.user`.
+
+`issue_token` takes `settings` as an argument and reads `session_ttl_days` from
+it — never from the module-level `Settings`. Both call sites are in
+`routers/auth.py`, which already has settings injected. This is what makes
+`create_app(test_settings, test_engine)` able to influence token lifetime, and
+leaves no module-global configuration read on a request path.
 
 Router wiring: every router is
-`APIRouter(prefix="/api/<x>", dependencies=[Depends(get_current_user)])`
-**except** `auth` (see §5.1) and the inline `/api/health`.
+`APIRouter(prefix="/api/<x>", route_class=TransactionRoute, dependencies=[Depends(get_current_user)])`
+**except** `auth` (see §5.1 — same `route_class`, no blanket dependency) and the
+inline `/api/health` (no database, no `route_class`).
 
 ---
 
@@ -824,7 +890,9 @@ incompatible-bucket stock exists. It must never silently deduct a `jar` for a
 
 ### 5.1 Auth — `routers/auth.py`, prefix `/api/auth`
 
-`register` and `login` are **public**; `logout` and `me` require a token.
+`register` and `login` are **public**; `logout`, `me`, and `change-password`
+require a token. The router is built with `route_class=TransactionRoute` (§3.2)
+like every other database-touching router.
 
 #### `POST /api/auth/register`
 
@@ -865,12 +933,42 @@ the token is valid or the request would have 401'd in the dependency.)
 
 **`200 UserRead`** for the current user.
 
+#### `POST /api/auth/change-password`  — auth required
+
+Body `ChangePasswordRequest`:
+
+| Field | Type | Rule |
+|---|---|---|
+| `current_password` | `str` | must match the stored hash |
+| `new_password` | `str` | `8 ≤ len ≤ 128` — the same rule `register` applies |
+
+Flow (order matters):
+
+1. Pydantic validation → `422` (this is where a too-short `new_password` fails).
+2. `verify_password(current_password, user.password_hash)` false
+   → **`403 {"detail": "incorrect password"}`**. Not `401`: the presented token
+   is valid and the *action* is refused, so telling the client to re-authenticate
+   would be wrong.
+3. `user.password_hash = hash_password(new_password)`.
+4. Delete **every** `sessions` row for that user — `DELETE WHERE user_id = :me`,
+   including the caller's own. Unconditional, no `AND id != current` special
+   case.
+5. `issue_token(db, user, settings)` and return **`200 TokenResponse`** — the
+   same shape `login` returns.
+
+Consequence, and the point of the endpoint: the device that changed the password
+stays signed in on a fresh token; every other device is signed out immediately.
+There is no self-service reset — a forgotten password is still an operator task
+(§Accepted security posture); this covers the "I know it and want to rotate it"
+case, which was previously a `sqlite3` shell job.
+
 #### Schemas
 
 ```
-UserMini      { id: int, username: str }
-UserRead      { id: int, username: str, created_at: datetime }
-TokenResponse { token: str, user: UserRead }
+UserMini              { id: int, username: str }
+UserRead              { id: int, username: str, created_at: datetime }
+TokenResponse         { token: str, user: UserRead }
+ChangePasswordRequest { current_password: str, new_password: str }   # new_password 8..128
 ```
 
 ---
@@ -881,6 +979,7 @@ TokenResponse { token: str, user: UserRead }
 
 ```
 RecipeIngredientIn {
+    model_config = ConfigDict(extra="forbid")   # unknown key -> 422 naming the key
     quantity: float | None    # > 0 when set, allow_inf_nan=False
     unit:     str | None      # <= 30
     item:     str | None      # 1..200; REQUIRED for an object element
@@ -930,7 +1029,12 @@ for element in payload.ingredients:
     else:
         if not (element.item and element.item.strip()):
             422  "ingredient object requires a non-empty item"
-        rows.append({"quantity": element.quantity, "unit": element.unit,
+        unit = element.unit
+        if unit is not None:
+            unit = unit.strip().lower()
+            if unit.endswith("."): unit = unit[:-1]     # one trailing period
+            unit = unit or None                          # "" / "." -> None
+        rows.append({"quantity": element.quantity, "unit": unit,
                      "item": element.item, "note": element.note, "raw_text": None})
 for i, r in enumerate(rows):
     RecipeIngredient(position=i, normalized_name=normalize_name(r["item"]), **r)
@@ -938,6 +1042,29 @@ for i, r in enumerate(rows):
 
 `quantity` from a parsed string is trusted (parser guarantees `> 0` or `None`).
 `quantity` from an object element is Pydantic-validated (`> 0` or `None`, finite).
+
+**`unit` normalization is symmetric across both input paths.** The parser
+already lower-cases and strips one trailing `.` for string elements; the object
+branch above does the same, so `{"unit": "Tbsp."}` and the pasted line
+`2 Tbsp. butter` persist the identical author's unit `tbsp`. Neither path
+**singularizes**: `cups` stays `cups`. Singularization would contradict the
+locked §2.3 oracle, and every consumer that does arithmetic
+(`bucket_of`, `add_quantities`, `to_base`) calls `normalize_unit_token` — which
+singularizes internally — so the stored value is display text only. `RecipeRead`
+is its sole raw consumer, and `2 cup flour` reads wrong.
+
+**`extra="forbid"` on `RecipeIngredientIn` only** (not on every request schema).
+It is the one schema where a mistyped key produces a *successful wrong write*
+rather than an error: `{"item": "flour", "qty": 500}` would otherwise return
+`201` and silently store a to-taste ingredient, because `quantity=None` is a
+legitimate value. Elsewhere a dropped key fails on a required field.
+
+**Zero-content recipes are legal, permanently.** Only `title` is required;
+`ingredients` and `steps` both default to `[]`, and a title-only `POST` returns
+`201`. This is a deliberate capture-now-fill-later flow, and every downstream
+path is already total on it: availability returns `lines: []` with
+`all_available: true`, grocery generation emits nothing, and `cook` writes
+`deductions: []`. There is no minimum-content rule to add.
 
 **Length bound (R-4).** A pasted `str` element is truncated to **200 chars**
 before parsing. This is the single guard that keeps every string sink fed by a
@@ -1020,7 +1147,8 @@ Body `CookRequest`:
   `quantity = None if ing.quantity is None else ing.quantity * multiplier`
   — to-taste rows stay `None`, never `None * multiplier`), call
   `deduct_calc`, then **within the request's single `BEGIN IMMEDIATE` transaction**
-  apply every `RowDeduction` (`UPDATE inventory_items SET quantity_base=?, updated_at=now() WHERE id=?`),
+  apply every `RowDeduction` (`UPDATE inventory_items SET quantity_base=?, updated_at=? WHERE id=?`,
+  binding `_utcnow()` — a Core `UPDATE` does not fire the ORM's `onupdate`),
   set `log.deductions = proposal.log_entries`, save.
 - `IntegrityError` / lock timeout → `409` (global handler), whole transaction rolled back.
 
@@ -1151,15 +1279,23 @@ Additive upsert via `add_to_inventory_calc` + the SQL below (SQLAlchemy
 delta = add_to_inventory_calc(body.match_name, body.item, body.quantity, body.unit)
 if not delta.match_name:                              422  "match_name normalizes to empty"
 
+now = _utcnow()                                   # bound explicitly - see below
+
 INSERT INTO inventory_items
       (item, normalized_name, match_name, unit_bucket, quantity_base, display_unit, created_by_id, updated_at)
-VALUES (:item, :normalized_name, :match_name, :unit_bucket, :add_base, :display_unit, :user_id, now())
+VALUES (:item, :normalized_name, :match_name, :unit_bucket, :add_base, :display_unit, :user_id, :now)
 ON CONFLICT (match_name, unit_bucket) DO UPDATE SET
       quantity_base = inventory_items.quantity_base + excluded.quantity_base,
       display_unit  = COALESCE(excluded.display_unit, inventory_items.display_unit),
-      updated_at    = now()
+      updated_at    = :now
 RETURNING *;
 ```
+
+`updated_at` binds a Python `_utcnow()` value on **both** branches. This
+statement is an `INSERT … ON CONFLICT`, so it bypasses the ORM's
+`onupdate=_utcnow` by construction; SQLite's `CURRENT_TIMESTAMP` is not an
+option because it is naive and second-precision (§1). One clock produces every
+timestamp in the system, whichever path wrote the row.
 
 `item` / `normalized_name` / `created_by_id` are **not** touched on conflict.
 `POST` can never 409 on the composite key (it upserts that key by definition).
@@ -1196,7 +1332,7 @@ if "quantity" in S:
 if "unit" in S:        row.display_unit = body.unit        # preference only
 if "match_name" in S:  row.match_name  = nm
 if "item" in S:        row.item = body.item; row.normalized_name = normalize_name(body.item)
-row.updated_at = now()
+row.updated_at = _utcnow()
 return read(row)                                           # display_quantity recomputed
 ```
 
@@ -1318,7 +1454,7 @@ Manual amounts are stored exactly as typed.
     (`500 g` line + `{"unit": "kg"}`) is rejected by the rule above, so the
     stored number always matches the unit the caller sent.
   - `item` given → set + recompute `normalized_name`.
-  - `checked` given → set; `checked_at = now()` when `true`, `null` when `false`.
+  - `checked` given → set; `checked_at = _utcnow()` when `true`, `null` when `false`.
 - **Any `item` / `quantity` / `unit` edit reclassifies the line** (N6):
   `source → "manual"`, `nettable → true`. The solver's shortfall claim is void
   once a human overrides the substance of a generated line, so it is treated as
@@ -1343,7 +1479,7 @@ for line in list.items:
     <perform the ON CONFLICT upsert from §5.5 with delta>
     line.applied_quantity, line.applied_unit = delta.canonical_added.amount, delta.canonical_added.unit
     line.added_to_inventory = True
-    line.submitted_at = now()
+    line.submitted_at = _utcnow()
 # status is NOT changed
 ```
 
@@ -1374,9 +1510,23 @@ item-`POST` on an archived list → `409`.
 - **Every** request-scoped SQLite transaction opens with `BEGIN IMMEDIATE`
   (§3.2). Reads, the auth `last_used_at` bump, and mutations all take the write
   lock before their first `SELECT`.
-- `get_db` owns the unit of work: `commit()` once on a clean handler return,
-  `rollback()` on any exception. **Routers never call `commit()`** — they
-  `flush()` when they need a generated id.
+- **`TransactionRoute` (§3.2) owns the commit.** It runs the endpoint, then
+  commits, then returns the response — so the commit happens *inside* the
+  exception-handling window and *before* the response is sent.
+- `get_db` owns session lifetime, not the commit: it stashes the session on
+  `request.state.db`, `rollback()`s on any exception, and always `close()`s. It
+  no longer commits after `yield`, because post-`yield` code runs after the
+  response is generated, where a raised exception can no longer be converted.
+- **Routers never call `commit()`.** They `flush()` for exactly one reason: to
+  obtain a generated id. `flush()` is no longer load-bearing for error handling
+  — it used to be the only reason a constraint violation happened to surface
+  correctly, and it never covered `SQLITE_BUSY` at `COMMIT` at all.
+- **A commit-time failure converts like any other.** An `IntegrityError` or an
+  `OperationalError: database is locked` raised by `COMMIT` reaches the global
+  handlers and returns `409`. It is never a `500`, and — the defect this
+  replaces — never a `200` with the write discarded.
+- Unchanged: a route raising `HTTPException(404)` still rolls back, so
+  `get_current_user`'s `last_used_at` bump is lost on an error response.
 - The auth bump and a route's mutation are therefore **one** transaction, so
   `last_used_at` persists even on plain authenticated `GET`s.
 - `services/` functions are pure and propose DTOs; the router applies the proposal
@@ -1500,13 +1650,15 @@ fields are `null`, `applied=false`, and `reason="to taste"`.
 | `test_units.py` | every locked §2.2 conversion and `add_quantities` row, including exact output order, plus every listed invariant using the specified tolerance; plurals/abbrevs; unknown → `None`; cross-dimension incompatible; `dozen`/`pair`; `bucket_of` / `canon_unit`. **R-3 — plural round-trip:** for every synonym-table token, `parse_unit(plural) is parse_unit(singular_key)`; for every deliberately-opaque token, `normalize_unit_token(plural) == normalize_unit_token(singular)`. `boxes → box`, `bunches → bunch`, `dashes → dash`, `splashes → splash`, `pinches → pinch` asserted explicitly (a bare trailing-`s` strip would leave `boxe` / `dashe` and split the opaque bucket). |
 | `test_ingredient_parse.py` | the 7-row acceptance table in §2.3 exactly; the deterministic adversarial corpus never raises and always returns a non-empty `item` plus `quantity=None` or a positive finite float; unicode `½`; mixed `1 1/2` → `1.5`; garbage → raw fallback. |
 | `test_inventory_math.py` | every locked §7 availability, grocery-generation, deduction, add-to-inventory, and invariant case. Also: `clove` need vs `bulb` stock → `have_uncertain`; canonical `requested`/`deducted`/`deducted_unit`; kg-from-g (stock `2000 g`, recipe `1 kg` → `deducted 1000`, `after 1000`, all `g`); every log entry has all 11 keys and each round-trips through `CookDeductionRead` (`_entry` requires every kwarg — a missing one is a `TypeError`) (N7). |
-| `test_auth.py` | anonymous `client`. register `201` / `409` dup / `409` **case-insensitive** dup (`Alice` vs `alice`) / `403` when `allow_registration=false` / `403` wrong `code` when configured / `422` short pw / `422` bad username. login `200` + token / `401` bad pw / `401` unknown user. logout invalidates. **Five `get_current_user` 401s:** missing header, malformed (`"garbage"`), wrong scheme (`"Basic xyz"`), unknown token, expired (`sessions.expires_at` in the past) — each on a gated route and on `/me`; `/me` `200` with a good token. |
+| `test_auth.py` | anonymous `client`. register `201` / `409` dup / `409` **case-insensitive** dup (`Alice` vs `alice`) / `403` when `allow_registration=false` / `403` wrong `code` when configured / `422` short pw / `422` bad username. login `200` + token / `401` bad pw / `401` unknown user. logout invalidates. **Five `get_current_user` 401s:** missing header, malformed (`"garbage"`), wrong scheme (`"Basic xyz"`), unknown token, expired — each on a gated route and on `/me`; `/me` `200` with a good token. **The expired case is produced by building the app with `Settings(session_ttl_days=0)` and issuing a token through the real login route**, not by reaching into the database and rewriting `expires_at`; that reach-around is deleted (it only existed because `issue_token` read the module-level settings). **`change-password`:** wrong `current_password` → `403 {"detail": "incorrect password"}`; `new_password` shorter than 8 → `422`; success → `200 TokenResponse` whose token authenticates, the caller's old token → `401`, and a second device's token issued before the change → `401`. **Datetimes:** `created_at` in every `UserRead` ends with an explicit UTC offset. |
 | `test_validation.py` | negative / `0` / `inf` / `nan` rejected `422` on: recipe ingredient `quantity`, inventory `POST`/`PATCH` `quantity`, `cook` `multiplier`, grocery `multipliers`, `availability?multiplier=`. `recipe_ids` empty or with a duplicate → `422`. A `multipliers` key not in `recipe_ids` → `422`. |
-| `test_recipes.py` | `auth_client`. nested create/read (positions 0..n-1, computed `normalized_name`); **string elements in `ingredients` are parsed and `raw_text` stored; object elements store `raw_text=null`; blank string elements skipped**; a pasted line > 200 chars is truncated to 200 before parsing — `raw_text`, `item`, and `note` all fit their columns and the recipe still creates (no 422) (R-4); PUT clears old ingredient rows; steps/tags round-trip; `DELETE` cascades ingredients and nulls `cook_logs.recipe_id`. the happy-path recipe includes a to-taste line (`"salt to taste"` → `quantity=None`); `/availability?multiplier=2` — per-line `need` + `group_*` canonical, `group_unit` present, no `have`/`short` on the line; the to-taste line survives `multiplier` scaling (no `TypeError`) and reports `status="to_taste"`; cook-to-zero food → `missing`. `/cook` writes a `CookLog` and mutates inventory (clamp; incompatible bucket); the to-taste line yields a `"to taste"` deduction entry and is never applied; every deduction entry validates against `CookDeductionRead` — all 11 keys present, `reason` in the allowed `Literal` set, `null` only where the §5.4 table permits; a stored entry with an extra/unknown key or an unlisted `reason` → `500` on read (N7); `"ok"`, `"clamped to 0"`, `"not in inventory"`, `"have uncertain (incompatible unit)"`, `"to taste"` each exercised at least once across the cook tests; `cook {deduct:false}` leaves inventory untouched but still writes a `CookLog`; `GET .../cook-logs` newest-first across both modes. |
+| `test_recipes.py` | `auth_client`. nested create/read (positions 0..n-1, computed `normalized_name`); **string elements in `ingredients` are parsed and `raw_text` stored; object elements store `raw_text=null`; blank string elements skipped**; a pasted line > 200 chars is truncated to 200 before parsing — `raw_text`, `item`, and `note` all fit their columns and the recipe still creates (no 422) (R-4); PUT clears old ingredient rows; steps/tags round-trip; `DELETE` cascades ingredients and nulls `cook_logs.recipe_id`. the happy-path recipe includes a to-taste line (`"salt to taste"` → `quantity=None`); `/availability?multiplier=2` — per-line `need` + `group_*` canonical, `group_unit` present, no `have`/`short` on the line; the to-taste line survives `multiplier` scaling (no `TypeError`) and reports `status="to_taste"`; cook-to-zero food → `missing`. `/cook` writes a `CookLog` and mutates inventory (clamp; incompatible bucket); the to-taste line yields a `"to taste"` deduction entry and is never applied; every deduction entry validates against `CookDeductionRead` — all 11 keys present, `reason` in the allowed `Literal` set, `null` only where the §5.4 table permits; a stored entry with an extra/unknown key or an unlisted `reason` → `500` on read (N7); `"ok"`, `"clamped to 0"`, `"not in inventory"`, `"have uncertain (incompatible unit)"`, `"to taste"` each exercised at least once across the cook tests; `cook {deduct:false}` leaves inventory untouched but still writes a `CookLog`; `GET .../cook-logs` newest-first across both modes. **Unit normalization (both paths):** an object element `{"unit": "Tbsp."}` and the pasted line `2 Tbsp. butter` both store `unit == "tbsp"`; `{"unit": "cups"}` stores `cups` (no singularization). **Unknown key:** `{"item": "flour", "qty": 500}` → `422` naming `qty` (never a `201` storing a to-taste row). **Zero content:** a title-only `POST` → `201` with `ingredients: []` and `steps: []`, and its `/availability` returns `lines: []` with `all_available: true`. **Datetimes:** a freshly created recipe has `created_at == updated_at`, both ending in an explicit UTC offset; a `PUT` advances `updated_at` past `created_at`. |
+| `test_transactions.py` | **Commit-time failure → `409`.** Prior art: `test_exception_handlers.py`, which builds a local app and attaches a throwaway route. Do the same with a route that leaves the session in a state that fails at `COMMIT` (not at `flush()`), and assert `409 {"detail": "conflict"}` — today's tests raise from inside a route *body*, the path where handlers already worked, so this is the uncovered half. Also assert the written row is absent afterwards. **Route-class guard:** iterate `built_app.routes` and assert every `APIRoute` under `/api` that depends on `get_db` is a `TransactionRoute`. This is the only mechanism that fails when a later phase adds a router and forgets `route_class=`; a behavioral test passes, because the bug is silent by construction. `/api/health` is exempt (no database dependency). |
+| `test_config.py` | Direct construction, no HTTP — prior art: `test_engine_listeners.py`. `Settings(session_ttl_days=-1)` raises `ValidationError`; `session_ttl_days=0` is accepted; the default is `30`. |
 | `test_cook_logs.py` | `auth_client`. `GET /api/cook-logs` paginates newest-first across recipes (`limit`/`offset`, `total`); `GET /api/cook-logs/{id}` returns one; both still resolve after the recipe is deleted (`recipe_id` null, `recipe_title` stands). |
 | `test_inventory.py` | `auth_client`. `POST` additive upsert (two `POST`s to the same `(match_name, unit_bucket)` sum in `quantity_base`; `POST` missing `item` or `quantity` → `422`). `PATCH {quantity:200, unit:"g"}` absolute set; `PATCH {unit:"kg"}` display-only change (`quantity_base` untouched, `display_quantity` changes); **`PATCH {quantity:200}` with no unit → `422`**; `PATCH {unit:"can"}` on a mass row → `422`; `PATCH {unit:null}` on a non-COUNT row → `422`, on a COUNT row → `200`; `PATCH {item:null}` / `{quantity:null}` / `{match_name:null}` → `422`; `PATCH {}` → `200` no-op; `PATCH {match_name:...}` onto an occupied `(match_name, unit_bucket)` → `409`; add → cook → `GET` shows `display_quantity` recomputed from the reduced `quantity_base`; composite uniqueness; cross-unit add merges via `quantity_base`; same food in two incompatible units → two rows; editing `match_name` re-points matching; negative / non-finite qty → `422`. **N5 — `match_name` is canonical:** `POST` / `PATCH` `match_name` `" Flour "` or `"FLOUR"` is stored as `flour` (matches a recipe ingredient whose canonical name is `flour`); `match_name` that normalizes to `""` (`"  "`, `"!!!"`) → `422`; `PATCH {match_name}` whose *normalized* value collides with a different `(match_name, unit_bucket)` row → `409`; two `POST`s with `match_name` `"Flour"` then `"flour"` (same unit) hit the same row (additive), not two rows. |
 | `test_grocery.py` | generate from 2 selected recipes (consolidation + netting; generated `quantity`/`unit` canonical; a to-taste ingredient (`quantity=None`) in a selected recipe survives `multipliers` scaling (no `TypeError`) and emits a `quantity=null, unit=null` line; food cooked to `quantity_base=0` still produces a full-need line); manual item add (amounts as typed); check off → inventory unchanged; edit a checked line then `submit` → inventory reflects the edited value; `POST /submit` → inventory up + line frozen (`added_to_inventory`, canonical `applied_quantity`); `PATCH` a frozen line → `409`; `DELETE` a frozen line → `409`; `DELETE` an unfrozen line → `204`; uncheck before submit → no-op; `submit` does **not** archive — check a further line and re-submit picks it up; `submit` with nothing checked → `200` no-op; `POST /archive` → `status=archived`, later `PATCH`/`submit`/item-`POST`/item-`DELETE` → `409`; sequential double-submit idempotency; delete list cascades items; non-nettable line present; #N3: `need 3 can / 1 can + 1 jar` → a `2 can` line `nettable=false`; `1 can` only → `nettable=true`. **N6 — atomic quantity/unit + reclassify:** on a generated `500 g` line, `PATCH {unit:"kg"}` alone → `422`, `PATCH {quantity:200}` alone → `422`; `PATCH {quantity:0.5, unit:"kg"}` → `200`, line now `source="manual"`, `nettable=true`, and `submit` adds the `0.5 kg` the caller sent (not `500 kg`); `PATCH {item:"almond flour"}` on a generated `nettable=false` line → `source="manual"`, `nettable=true`, `normalized_name` recomputed; `PATCH {checked:true}` alone leaves `source`/`nettable` unchanged. |
-| `test_concurrency.py` | **file-backed SQLite (`tmp_path`), two independent engines/connections, authenticated HTTP through `TestClient`.** Two `cook`s racing a shared ingredient → final `quantity_base` is the correct total, both `CookLog`s honest (no lost update). Two `submit`s racing → each checked line applied exactly once. A read racing a write never observes a torn value. |
+| `test_concurrency.py` | **file-backed SQLite (`tmp_path`), two independent engines/connections.** Assert the properties that make the lost update *impossible*, not the lost update itself: with `BEGIN IMMEDIATE` on every transaction (§3.2) the interleave is unconstructable, so a test that tries to build it can only pass vacuously. Required: (1) **serialization** — A begins and writes uncommitted; B's `BEGIN` blocks and, with `busy_timeout` lowered for the test, raises `OperationalError: database is locked`; (2) **the `409` mapping** — that error, raised through an HTTP request, returns `409` and not `500` (this exercises `_to_409_if_locked_else_500`, which nothing else covers); (3) **freshness** — after A commits, B's retry reads A's committed value. Keep one threaded two-`cook` HTTP smoke test through `TestClient` (final `quantity_base` correct, both `CookLog`s honest) as a coarse check, but it is not the guard. |
 
 ### End-to-end verification (via `/docs`)
 
@@ -1536,4 +1688,6 @@ RECIPE_ALLOW_REGISTRATION=true RECIPE_REGISTRATION_CODE=devcode uv run uvicorn a
 7. `POST /api/recipes/{id}/cook {multiplier:1, deduct:false}` → inventory unchanged, entry in `GET /api/recipes/{id}/cook-logs`.
 8. `GET /api/cook-logs` newest-first across recipes; `GET /api/cook-logs/{id}` returns one; delete that recipe → the log still resolves.
 9. Any data route with no / malformed (`garbage`) / wrong-scheme (`Basic x`) / unknown / expired token → `401`.
+   `POST /api/auth/change-password` with a wrong `current_password` → `403`; with a correct one → `200` and a new token; re-Authorize with it, and the previous token → `401`.
+   Every `created_at` / `updated_at` in the responses above ends with `+00:00`.
 10. Recipe ingredient `quantity: -1` or `0`, grocery `multiplier: 0` / `inf` → `422`.

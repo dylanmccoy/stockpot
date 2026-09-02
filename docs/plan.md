@@ -164,7 +164,7 @@ Phase 8 in the current v1 plan.
 |---|---|---|---|
 | [0 — reset and dependencies](phases/phase-0.md) | Clean database and Argon2 dependency | — | Complete |
 | [1 — pure core](phases/phase-1.md) | Normalization, units, and ingredient parser | Phase 0 | Complete |
-| [2 — auth and app factory](phases/phase-2.md) | App-local DB wiring, transactions, sessions, and route gating | Phase 1 | Complete |
+| [2 — auth and app factory](phases/phase-2.md) | App-local DB wiring, transactions, sessions, and route gating | Phase 1 | In progress — hardening (review pass 8) |
 | [3 — structured recipes](phases/phase-3.md) | Nested recipe ingredients and validation | Phase 2 | Not started |
 | [4 — inventory and availability](phases/phase-4.md) | Inventory CRUD and availability math | Phase 3 (gate N5 ✅) | Not started |
 | [5 — cooking and history](phases/phase-5.md) | Stock deduction and durable cook logs | Phase 4 (gate N7 ✅) | Not started |
@@ -211,7 +211,8 @@ the first post-v1 schema change triggers the Alembic work described in
 - Requirements, codebase exploration, and the original design pass are complete.
 - The pre-trim plan is preserved at `git show 5144c25:docs/plan.md`.
 - v1 was narrowed on 2026-08-31 to the core cooking loop.
-- Review passes 2–7 are resolved or tracked in
+- Review passes 2–8 are resolved or tracked in
   [`decisions.md`](decisions.md) and [`issues.md`](issues.md).
 - The implementation specification is complete and is authoritative for v1.
-- Phase 0 is complete; Phase 1 is next.
+- Phases 0 and 1 are complete. Phase 2's first pass shipped (PR #20) and review
+  pass 8 (2026-09-01) reopened it for hardening; Phase 3 follows.
