@@ -1,6 +1,10 @@
+import math
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.engine import Engine
@@ -19,6 +23,34 @@ def get_settings(request: Request) -> Settings:
 def _to_409(request: Request, exc: IntegrityError) -> JSONResponse:
     """Handle IntegrityError (unique/FK/check violations) as 409 Conflict."""
     return JSONResponse(status_code=409, content={"detail": "conflict"})
+
+
+def _scrub_non_finite(value: Any) -> Any:
+    """Replace non-finite floats with their repr, recursively.
+
+    A request-validation error echoes the offending `input` back to the caller.
+    When that input is `Infinity` or `NaN` — JSON literals `json.loads` accepts,
+    so a client really can send them — `json.dumps` refuses to encode the error
+    body and the 422 turns into an unhandled `ValueError`. Scrubbing here keeps
+    the failure a 422, which is what §7 requires of every non-finite quantity.
+    """
+    if isinstance(value, float) and not math.isfinite(value):
+        return repr(value)
+    if isinstance(value, dict):
+        return {k: _scrub_non_finite(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_scrub_non_finite(v) for v in value]
+    return value
+
+
+async def _validation_error_to_422(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """FastAPI's default 422 body, made encodable (spec.md §Mechanical defaults)."""
+    return JSONResponse(
+        status_code=422,
+        content={"detail": _scrub_non_finite(jsonable_encoder(exc.errors()))},
+    )
 
 
 def _to_409_if_locked_else_500(request: Request, exc: OperationalError) -> JSONResponse:
@@ -49,6 +81,7 @@ def create_app(settings: Settings, engine: Engine) -> FastAPI:
         allow_credentials=False,
     )
 
+    app.add_exception_handler(RequestValidationError, _validation_error_to_422)
     app.add_exception_handler(IntegrityError, _to_409)
     app.add_exception_handler(OperationalError, _to_409_if_locked_else_500)
 

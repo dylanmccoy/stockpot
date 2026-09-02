@@ -13,56 +13,56 @@ structured and pasted-string ingredient input.
 
 ## Work
 
-- [ ] Delete `backend/recipe.db` before running the expanded schema.
-- [ ] Expand `Recipe` and add `RecipeIngredient` with ordered child rows.
+- [x] Delete `backend/recipe.db` before running the expanded schema.
+- [x] Expand `Recipe` and add `RecipeIngredient` with ordered child rows.
       `Recipe` gains the `updated_at` column §1 specifies — `UtcDateTime`,
       `default=_utcnow`, `onupdate=_utcnow`, matching the pattern Phase 2's
       hardening pass established on the existing datetime columns.
-- [ ] Keep `photo_path` reserved and nullable; make `raw_text` active for pasted
+- [x] Keep `photo_path` reserved and nullable; make `raw_text` active for pasted
       ingredient input.
-- [ ] Add `schemas/recipe.py` to the schema package created in Phase 2 and
+- [x] Add `schemas/recipe.py` to the schema package created in Phase 2 and
       re-export its public schemas.
-- [ ] Implement nested create/read/replace/delete behavior.
-- [ ] Parse string ingredient elements and preserve their verbatim `raw_text`.
+- [x] Implement nested create/read/replace/delete behavior.
+- [x] Parse string ingredient elements and preserve their verbatim `raw_text`.
       Truncate a pasted `str` element to 200 chars before `parse_ingredient` —
       the single guard that keeps `raw_text` / `item` / `note` within their
       columns (R-4).
-- [ ] Add validation for finite positive quantities and bounded list/text fields.
-- [ ] Normalize the object branch's `unit` the same way the parser normalizes a
+- [x] Add validation for finite positive quantities and bounded list/text fields.
+- [x] Normalize the object branch's `unit` the same way the parser normalizes a
       pasted line — lower-case, strip one trailing `.`, **do not singularize**
       (§5.2). `{"unit": "Tbsp."}` and `2 Tbsp. butter` must persist the same
       author's unit.
-- [ ] Put `ConfigDict(extra="forbid")` on `RecipeIngredientIn` and nowhere else
+- [x] Put `ConfigDict(extra="forbid")` on `RecipeIngredientIn` and nowhere else
       (§5.2): it is the only schema where a mistyped key yields a successful
       wrong write rather than an error.
-- [ ] Keep a title-only recipe legal — `ingredients` and `steps` default to `[]`
+- [x] Keep a title-only recipe legal — `ingredients` and `steps` default to `[]`
       and there is no minimum-content rule (§5.2).
-- [ ] Expand `test_recipes.py` and add `test_validation.py`.
+- [x] Expand `test_recipes.py` and add `test_validation.py`.
 
 ## Verification
 
-- [ ] Ingredient positions are server-assigned, contiguous, and stable on read.
-- [ ] PUT replaces old ingredient children without leaving orphan rows.
-- [ ] Ingredient IDs may churn on PUT; no API contract depends on their stability.
-- [ ] String and object ingredient forms round-trip as specified, and both
+- [x] Ingredient positions are server-assigned, contiguous, and stable on read.
+- [x] PUT replaces old ingredient children without leaving orphan rows.
+- [x] Ingredient IDs may churn on PUT; no API contract depends on their stability.
+- [x] String and object ingredient forms round-trip as specified, and both
       persist the same normalized author's unit.
-- [ ] `{"item": "flour", "qty": 500}` → `422` naming `qty`, never a `201`
+- [x] `{"item": "flour", "qty": 500}` → `422` naming `qty`, never a `201`
       storing a to-taste row.
-- [ ] A title-only `POST` → `201` with `ingredients: []`.
-- [ ] A freshly created recipe has `created_at == updated_at`, both ending in
+- [x] A title-only `POST` → `201` with `ingredients: []`.
+- [x] A freshly created recipe has `created_at == updated_at`, both ending in
       an explicit UTC offset, and a `PUT` advances `updated_at` past
       `created_at` (§7). Deferred here from Phase 2's hardening pass, which
       had no `updated_at` column to assert against.
-- [ ] A pasted line over 200 chars is truncated to 200 before parsing; the
+- [x] A pasted line over 200 chars is truncated to 200 before parsing; the
       recipe still creates and every stored string field fits its column (R-4).
-- [ ] `cd backend && uv run pytest` passes.
+- [x] `cd backend && uv run pytest` passes.
 
 ## Exit criteria
 
-- [ ] Scope fence passed (R-10, [`../plan.md` §Phase scope fence](../plan.md#phase-scope-fence-and-handoff-contract)):
+- [x] Scope fence passed (R-10, [`../plan.md` §Phase scope fence](../plan.md#phase-scope-fence-and-handoff-contract)):
       every changed behavior traces to this phase and its linked spec; no
       deferred/context document authorized work.
-- [ ] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
+- [x] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
       a non-author reviewer checked this phase's diff and new tests against
       `spec.md` §7 and §5.2.
-- [ ] Phase complete; update the status table in [`../plan.md`](../plan.md).
+- [x] Phase complete; update the status table in [`../plan.md`](../plan.md).
