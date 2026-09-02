@@ -2,7 +2,7 @@
 
 **What to build:** Viewing a recipe and scaling it. After this ticket a user can open `/recipes/:id`, read the ingredients with human-formatted quantities and the steps/notes/meta, scale the recipe with a multiplier control that resets each visit, follow the source link, and delete the recipe with a confirmation.
 
-**Blocked by:** 05, 03.
+**Blocked by:** 05a, 03.
 
 **Status:** ready-for-agent
 

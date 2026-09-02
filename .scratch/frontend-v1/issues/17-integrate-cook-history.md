@@ -2,7 +2,7 @@
 
 **What to build:** Wire the cook action and both history views to the real backend, run the cook adapter diff-review, and confirm the deduction accordion against real deduction data.
 
-**Blocked by:** 10, 11. External gate: backend Phase 5 (cooking + history) merged.
+**Blocked by:** 10, 11a, 11b. External gate: backend Phase 5 (cooking + history) merged.
 
 **Status:** ready-for-agent
 

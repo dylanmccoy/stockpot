@@ -1,17 +1,12 @@
-# 08: Inventory (vs MSW)
+# 08: Inventory (vs MSW) — SPLIT
 
-**What to build:** Managing what the household has in stock. After this ticket a user can see the inventory table, add stock (which adds to an existing row rather than duplicating), edit a quantity inline under the backend's PATCH rules, edit the prominent match name, and delete an item — each rejection shown inline.
+**Status:** split — do not implement this ticket directly.
 
-**Blocked by:** 04, 03.
+Split into vertical slices:
 
-**Status:** ready-for-agent
+- **08a — Table + add + delete.** `/inventory` table ordered by match name, `["inventory"]`; add form with additive-upsert copy; delete behind a confirmation. Blocked by 04, 03.
+- **08b — Inline edit, PATCH rules, match_name editor.** Inline quantity edit (confirm unit); client-side enforcement of the three PATCH rules before the request; prominent `match_name` editor with an inline `409` on in-bucket collision. Blocked by 08a.
 
-- [ ] `/inventory` renders a table: item, match name, unit bucket, quantity in a sensible unit, last-updated; ordered by match name. Query key `["inventory"]`.
-- [ ] Add form: item name, quantity, unit, optional match name; copy explains that adding stock matching an existing item + unit increases that row (additive upsert).
-- [ ] Inline quantity edit requires confirming the unit on save.
-- [ ] Client-side rule enforcement before PATCH: a quantity change forces a unit; a unit cannot change to one in a different bucket; a null unit is rejected for a non-COUNT item.
-- [ ] `match_name` editor is prominent, saves in normalized form, has a short hint explaining it links inventory to recipe ingredients, and shows an inline error on an in-bucket collision (`409`).
-- [ ] Delete → confirmation.
-- [ ] Flow test (vs MSW): the four PATCH-rejection rules each return the expected inline error; a valid `{ quantity, unit }` PATCH updates the row; a `match_name` collision shows inline.
+**Downstream edges retargeted:** 10 → 08a · 13a → (12a only) · 13c → 08a · 16 → 08a, 08b.
 
 **Refs:** `docs/frontend/spec.md` §10.9; plan Phase 4.

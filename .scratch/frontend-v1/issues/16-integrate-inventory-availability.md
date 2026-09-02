@@ -2,7 +2,7 @@
 
 **What to build:** Wire the inventory screen and the availability table to the real backend, and run the availability adapter diff-review against the merged DTO.
 
-**Blocked by:** 08, 09. External gate: backend Phase 4 (inventory + availability) merged.
+**Blocked by:** 08a, 08b, 09. External gate: backend Phase 4 (inventory + availability) merged.
 
 **Status:** ready-for-agent
 

@@ -1,19 +1,13 @@
-# 13: Grocery — shopping a list (vs MSW)
+# 13: Grocery — shopping a list (vs MSW) — SPLIT
 
-**What to build:** Working a single grocery list in a store and submitting it back into inventory. After this ticket a user can check lines off with instant feedback, add and edit lines, see "amount uncertain" lines honestly, submit checked lines into stock in a deliberate step that can be repeated, and archive the finished list.
+**Status:** split — do not implement this ticket directly.
 
-**Blocked by:** 12, 08.
+Split into vertical slices:
 
-**Status:** ready-for-agent
+- **13a — Render + optimistic check.** `/groceries/:id` lines with human-formatted quantities, grouped generated/manual, "amount uncertain" lines (`nettable: false`), optimistic check/uncheck with rollback on rejection. Blocked by 12a.
+- **13b — Add + edit lines.** Add a manual line; edit a generated line's item/quantity/unit (quantity + unit sent together) with a reclassify-to-manual note. Blocked by 13a.
+- **13c — Submit into inventory + archive.** Submit checked lines via a `Dialog` (additive, no undo, repeatable), inventory invalidated, submitted lines frozen with `applied_*`, archive a finished list, `409` when archived elsewhere. Blocked by 13a, 08a.
 
-- [ ] `/groceries/:id` shows each line with its item and a human-formatted quantity, grouped into generated and manually-added lines.
-- [ ] Tapping a line checks it off optimistically (instant), and reverts if the server rejects the change.
-- [ ] A line whose true shortfall is uncertain (`nettable: false`) is marked "amount uncertain" with a note to buy based on what is found — never a computed number.
-- [ ] Add a manual line with an item and optional quantity/unit.
-- [ ] Edit a generated line's item, quantity, or unit, sending quantity and unit together; a quiet note explains when this reclassifies the line to manual (no longer netted against stock).
-- [ ] Submit checked lines into inventory via a `Dialog` that explains this adds stock and cannot be undone. Shopping can continue and submit again later for newly-checked lines.
-- [ ] Already-submitted lines are read-only, show the amount that was added (`applied_*`), and are un-editable / un-deletable without a confusing error.
-- [ ] Archive a finished list. Acting on a list archived by someone else shows a clear message to refetch and move on (`409`).
-- [ ] Flow test (vs MSW): check two lines → submit → lines frozen and inventory invalidated; PATCH a frozen line → conflict copy; edit a generated line → reclassified to manual.
+**Downstream edges retargeted:** 18 → 12a, 12b, 13a, 13b, 13c.
 
 **Refs:** `docs/frontend/spec.md` §10.7, §7.4; plan Phase 6.

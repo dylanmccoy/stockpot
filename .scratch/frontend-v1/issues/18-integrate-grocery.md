@@ -2,7 +2,7 @@
 
 **What to build:** Wire the full grocery flow to the real backend and run the grocery adapter diff-review against the merged DTO.
 
-**Blocked by:** 12, 13. External gate: backend Phase 6 (grocery lists) merged.
+**Blocked by:** 12a, 12b, 13a, 13b, 13c. External gate: backend Phase 6 (grocery lists) merged.
 
 **Status:** ready-for-agent
 
