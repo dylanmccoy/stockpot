@@ -326,13 +326,38 @@ def test_auth_unknown_token(client: TestClient) -> None:
     assert resp.json() == {"detail": "not authenticated"}
 
 
-def test_auth_expired_token(test_engine) -> None:
+def _issue_token_via(c: TestClient, route: str, username: str, password: str) -> str:
+    """Get a token from whichever `issue_token` call site `route` names.
+
+    Both call sites live in `routers/auth.py` and both had to start passing
+    `settings` through. Parametrizing over them is what keeps a regression in
+    *either* one visible.
+    """
+    reg = c.post(
+        "/api/auth/register",
+        json={"username": username, "password": password, "code": REGISTRATION_CODE},
+    )
+    assert reg.status_code == 201, reg.text
+    if route == "register":
+        return reg.json()["token"]
+
+    login = c.post(
+        "/api/auth/login", json={"username": username, "password": password}
+    )
+    assert login.status_code == 200, login.text
+    return login.json()["token"]
+
+
+@pytest.mark.parametrize("route", ["register", "login"])
+def test_auth_expired_token(test_engine, route: str) -> None:
     """A token issued under `session_ttl_days=0` is already expired -> 401.
 
     The app is built with `Settings(session_ttl_days=0)` and the token comes out
-    of the real login route (spec.md §7). Nothing reaches into the database to
-    rewrite `expires_at`: that reach-around only existed because `issue_token`
-    used to read the module-level settings, and it is deleted.
+    of a real auth route (spec.md §7) — both of them, since `issue_token` has two
+    call sites and a regression that dropped the injected `Settings` in only one
+    would otherwise slip through. Nothing reaches into the database to rewrite
+    `expires_at`: that reach-around only existed because `issue_token` used to
+    read the module-level settings, and it is deleted.
     """
     expiring_settings = Settings(
         database_url="sqlite://",
@@ -342,16 +367,7 @@ def test_auth_expired_token(test_engine) -> None:
     )
     app = create_app(expiring_settings, test_engine)
     with TestClient(app) as c:
-        reg = c.post(
-            "/api/auth/register",
-            json={
-                "username": "expiretest",
-                "password": "password123",
-                "code": REGISTRATION_CODE,
-            },
-        )
-        assert reg.status_code == 201, reg.text
-        token = reg.json()["token"]
+        token = _issue_token_via(c, route, "expiretest", "password123")
 
         c.headers["Authorization"] = f"Bearer {token}"
         resp = c.get("/api/auth/me")
@@ -359,12 +375,15 @@ def test_auth_expired_token(test_engine) -> None:
         assert resp.json() == {"detail": "not authenticated"}
 
 
-def test_session_ttl_days_zero_is_the_only_expiring_knob(test_engine) -> None:
+@pytest.mark.parametrize("route", ["register", "login"])
+def test_session_ttl_days_zero_is_the_only_expiring_knob(
+    test_engine, route: str
+) -> None:
     """The same flow under the default TTL yields a *working* token.
 
     Paired with the test above so that an implementation which ignores
     `session_ttl_days` entirely (always-expired or never-expired) fails one of
-    the two.
+    the two — at each call site.
     """
     normal_settings = Settings(
         database_url="sqlite://",
@@ -373,16 +392,8 @@ def test_session_ttl_days_zero_is_the_only_expiring_knob(test_engine) -> None:
     )
     app = create_app(normal_settings, test_engine)
     with TestClient(app) as c:
-        reg = c.post(
-            "/api/auth/register",
-            json={
-                "username": "expiretest",
-                "password": "password123",
-                "code": REGISTRATION_CODE,
-            },
-        )
-        assert reg.status_code == 201, reg.text
-        c.headers["Authorization"] = f"Bearer {reg.json()['token']}"
+        token = _issue_token_via(c, route, "expiretest", "password123")
+        c.headers["Authorization"] = f"Bearer {token}"
         assert c.get("/api/auth/me").status_code == 200
 
 

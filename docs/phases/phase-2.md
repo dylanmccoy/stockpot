@@ -95,7 +95,9 @@ four modules and land as one reviewable diff.
       the guard would pass vacuously.
 - [x] The expired-token test builds the app with `Settings(session_ttl_days=0)`
       instead of rewriting `sessions.expires_at` in the database; the old
-      reach-around is deleted.
+      reach-around is deleted. Parametrized over **both** `issue_token` call
+      sites (`register` and `login`) — a regression that dropped the injected
+      `Settings` in only one would otherwise pass.
 - [x] `Settings(session_ttl_days=-1)` raises `ValidationError`; `0` is accepted.
 - [x] `change-password`: wrong current password `403`; short new password `422`;
       success `200` with a working new token, the caller's old token and a
