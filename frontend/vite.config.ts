@@ -2,13 +2,16 @@ import { defineConfig } from "vite";
 import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
-// Dev server proxies /api to the FastAPI backend so the frontend can use same-origin fetches.
+// Dev server proxies /api to the FastAPI backend so the frontend can use
+// same-origin fetches. `VITE_API_PROXY_TARGET` overrides the target so the
+// `integration` Playwright config can point a throwaway dev server at its own
+// isolated backend instead of the default :8000.
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://localhost:8000",
+      "/api": process.env.VITE_API_PROXY_TARGET || "http://localhost:8000",
     },
   },
   test: {
