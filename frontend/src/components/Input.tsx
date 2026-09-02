@@ -15,16 +15,18 @@ interface Wired {
   id?: string;
   "aria-describedby"?: string;
   "aria-invalid"?: AriaInvalid;
+  required?: boolean;
   className?: string;
 }
 
-/** Merge `<Field>` context (id / describedby / invalid) with explicit props. */
+/** Merge `<Field>` context (id / describedby / invalid / required) with props. */
 function useWiring(props: Wired) {
   const field = useContext(FieldContext);
   return {
     id: props.id ?? field?.controlId,
     describedBy: props["aria-describedby"] ?? field?.describedBy,
     ariaInvalid: props["aria-invalid"] ?? (field?.invalid ? true : undefined),
+    required: props.required ?? field?.required,
     className: cx(styles.control, props.className),
   };
 }
@@ -41,6 +43,7 @@ export const Input = forwardRef<
       id={w.id}
       aria-describedby={w.describedBy}
       aria-invalid={w.ariaInvalid}
+      required={w.required}
       className={w.className}
     />
   );
@@ -58,6 +61,7 @@ export const Textarea = forwardRef<
       id={w.id}
       aria-describedby={w.describedBy}
       aria-invalid={w.ariaInvalid}
+      required={w.required}
       className={w.className}
     />
   );
@@ -75,6 +79,7 @@ export const Select = forwardRef<
       id={w.id}
       aria-describedby={w.describedBy}
       aria-invalid={w.ariaInvalid}
+      required={w.required}
       className={w.className}
     />
   );

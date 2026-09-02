@@ -18,6 +18,9 @@ export interface DialogProps {
   title: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
+  /** Portal host. Defaults to `document.body`; override to keep the dialog
+   * inside a themed subtree (the dev component demo relies on this). */
+  container?: HTMLElement | null;
 }
 
 /**
@@ -31,6 +34,7 @@ export function Dialog({
   title,
   children,
   footer,
+  container,
 }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<Element | null>(null);
@@ -117,6 +121,6 @@ export function Dialog({
         {footer && <div className={styles.footer}>{footer}</div>}
       </div>
     </div>,
-    document.body,
+    container ?? document.body,
   );
 }

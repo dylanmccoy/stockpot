@@ -11,8 +11,9 @@ const THEME_LABEL: Record<ThemePreference, string> = {
 
 /**
  * Account disclosure in the app-shell top bar: theme cycle + logout. A plain
- * button popup (not the ARIA menu widget) — Tab reaches the items, `Esc` closes
- * and restores focus to the trigger, an outside click dismisses.
+ * button popup driven by `aria-expanded` alone (not the ARIA menu widget, so no
+ * `aria-haspopup`) — Tab reaches the items, `Esc` closes and restores focus to
+ * the trigger, an outside click dismisses.
  */
 export function UserMenu() {
   const { user, logout } = useAuth();
@@ -53,7 +54,6 @@ export function UserMenu() {
         ref={triggerRef}
         type="button"
         className={styles.userTrigger}
-        aria-haspopup="true"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >

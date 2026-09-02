@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode, type RefObject } from "react";
 import {
   Badge,
   Button,
@@ -10,6 +10,7 @@ import {
   Select,
   Stepper,
   Textarea,
+  ToastProvider,
   useToast,
 } from "../../components";
 import styles from "./ComponentsDemo.module.css";
@@ -21,26 +22,35 @@ import styles from "./ComponentsDemo.module.css";
  */
 export default function ComponentsDemo() {
   return (
-    <div className={styles.page}>
+    <main className={styles.page}>
       <h1>Component demo</h1>
       <p>Every primitive, both themes. Not shipped in production.</p>
       <div className={styles.themes}>
-        <section
-          data-theme="light"
-          className={styles.pane}
-          aria-label="Light theme"
-        >
-          <Gallery scope="light" />
-        </section>
-        <section
-          data-theme="dark"
-          className={styles.pane}
-          aria-label="Dark theme"
-        >
-          <Gallery scope="dark" />
-        </section>
+        <Pane scope="light" />
+        <Pane scope="dark" />
       </div>
-    </div>
+    </main>
+  );
+}
+
+/**
+ * One forced-theme pane. Its own `ToastProvider` and an in-pane portal host keep
+ * the toast region and the `Dialog` inside `data-theme`, so the overlay
+ * primitives are actually previewed in the selected palette too.
+ */
+function Pane({ scope }: { scope: "light" | "dark" }) {
+  const overlayHost = useRef<HTMLDivElement>(null);
+  return (
+    <section
+      data-theme={scope}
+      className={styles.pane}
+      aria-label={scope === "light" ? "Light theme" : "Dark theme"}
+    >
+      <ToastProvider>
+        <Gallery scope={scope} overlayHost={overlayHost} />
+        <div ref={overlayHost} />
+      </ToastProvider>
+    </section>
   );
 }
 
@@ -55,7 +65,13 @@ const ROWS: Row[] = [
   { id: 2, item: "Eggs", qty: "6" },
 ];
 
-function Gallery({ scope }: { scope: "light" | "dark" }) {
+function Gallery({
+  scope,
+  overlayHost,
+}: {
+  scope: "light" | "dark";
+  overlayHost: RefObject<HTMLDivElement>;
+}) {
   const toast = useToast();
   const [multiplier, setMultiplier] = useState(1);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -73,7 +89,7 @@ function Gallery({ scope }: { scope: "light" | "dark" }) {
       </Block>
 
       <Block title="Fields">
-        <Field label="Recipe name" hint="Shown in the list.">
+        <Field label="Recipe name" hint="Shown in the list." required>
           <Input placeholder="e.g. Focaccia" defaultValue="" />
         </Field>
         <Field label="Notes">
@@ -164,6 +180,7 @@ function Gallery({ scope }: { scope: "light" | "dark" }) {
         <Dialog
           open={dialogOpen}
           onClose={() => setDialogOpen(false)}
+          container={overlayHost.current}
           title="Delete recipe?"
           footer={
             <>

@@ -55,13 +55,16 @@ describe("Stepper", () => {
     expect(input).toHaveValue(3);
   });
 
-  it("accepts a valid free-input value", async () => {
+  it("accepts a valid free-input value with no native step mismatch", async () => {
     const onChange = vi.fn();
     render(<Stepper aria-label="M" value={1} onChange={onChange} />);
-    const input = screen.getByLabelText("Exact value");
+    const input = screen.getByLabelText("Exact value") as HTMLInputElement;
     await userEvent.clear(input);
     await userEvent.type(input, "2.5");
     await userEvent.tab();
     expect(onChange).toHaveBeenLastCalledWith(2.5);
+    // A decimal must not trip native validation, or it blocks form submit.
+    expect(input.validity.stepMismatch).toBe(false);
+    expect(input).toHaveAttribute("step", "any");
   });
 });

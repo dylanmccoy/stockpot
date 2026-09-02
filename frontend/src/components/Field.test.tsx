@@ -82,6 +82,15 @@ describe("Field", () => {
     );
   });
 
+  it("propagates required to the nested control", () => {
+    render(
+      <Field label="Recipe name" required>
+        <Input />
+      </Field>,
+    );
+    expect(screen.getByLabelText(/Recipe name/)).toBeRequired();
+  });
+
   it("lets an explicit id win over the generated one", () => {
     render(
       <Field label="Email" id="email-x">

@@ -91,7 +91,9 @@ export function Stepper({
           type="number"
           inputMode="decimal"
           min={min}
-          step={step}
+          // Any positive finite value is valid free input (§10.2); `step` only
+          // drives the +/- buttons, so keep the native constraint unrestricted.
+          step="any"
           aria-label="Exact value"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
