@@ -1,41 +1,14 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useAuth } from "../auth/useAuth";
-import { ApiError, fieldName, isFieldError } from "../lib/apiError";
-import { Button, Field, Input } from "../components";
-import styles from "./Login.module.css";
-
-const GENERIC_ERROR = "Something went wrong. Please try again.";
-
-interface RegisterErrors {
-  fieldErrors: Record<string, string>;
-  formError: string | null;
-}
-
-/**
- * Route a register failure to its surface (spec §6):
- *  - `422 ValidationIssue[]` → per-field, keyed by the last `loc` segment
- *  - `409 "username taken"`  → the username field (the one string-detail row §6
- *    puts on a field instead of the form banner — so not `useFormErrors`)
- *  - `403 "registration disabled"` / `"invalid registration code"` → banner
- */
-function toRegisterErrors(err: unknown): RegisterErrors {
-  if (!(err instanceof ApiError)) {
-    return { fieldErrors: {}, formError: GENERIC_ERROR };
-  }
-  if (isFieldError(err)) {
-    const fieldErrors: Record<string, string> = {};
-    for (const issue of err.detail) {
-      const key = fieldName(issue);
-      if (!(key in fieldErrors)) fieldErrors[key] = issue.msg;
-    }
-    return { fieldErrors, formError: null };
-  }
-  const detail = typeof err.detail === "string" ? err.detail : GENERIC_ERROR;
-  if (err.status === 409) {
-    return { fieldErrors: { username: detail }, formError: null };
-  }
-  return { fieldErrors: {}, formError: detail };
-}
+import {
+  ApiError,
+  GENERIC_ERROR_MESSAGE,
+  hasInlineFormError,
+  useFormErrors,
+  type FormErrors,
+} from "../lib/apiError";
+import { Button, Field, Input, useToast } from "../components";
+import styles from "./auth.module.css";
 
 /**
  * First-user bootstrap form, rendered by `Login` only when
@@ -44,23 +17,41 @@ function toRegisterErrors(err: unknown): RegisterErrors {
  */
 export default function RegisterForm() {
   const { register } = useAuth();
+  const toast = useToast();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [errors, setErrors] = useState<RegisterErrors>({
-    fieldErrors: {},
-    formError: null,
-  });
+  const [submitError, setSubmitError] = useState<unknown>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // 422 → per-field, 403 (disabled / bad code) → form banner: both from the
+  // shared hook. The one row §6 sends to a field instead of the banner is
+  // 409 "username taken", so that case is redirected onto the username field.
+  const split = useFormErrors(submitError);
+  const { fieldErrors, formError } = useMemo<FormErrors>(() => {
+    if (
+      submitError instanceof ApiError &&
+      submitError.status === 409 &&
+      typeof submitError.detail === "string"
+    ) {
+      return { fieldErrors: { username: submitError.detail }, formError: null };
+    }
+    return split;
+  }, [submitError, split]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setErrors({ fieldErrors: {}, formError: null });
+    setSubmitError(null);
     setSubmitting(true);
     try {
-      await register(username, password, code.trim() || undefined);
+      // Send the code exactly as typed (the server compares it verbatim);
+      // an empty field means "no code" and is omitted by `AuthProvider`.
+      await register(username, password, code);
     } catch (err) {
-      setErrors(toRegisterErrors(err));
+      setSubmitError(err);
+      if (!hasInlineFormError(err)) {
+        toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -70,12 +61,12 @@ export default function RegisterForm() {
     <section className={styles.card} aria-labelledby="register-heading">
       <h2 id="register-heading">Create an account</h2>
       <form className={styles.form} onSubmit={onSubmit} noValidate>
-        {errors.formError !== null && (
+        {formError !== null && (
           <p className={styles.formError} role="alert">
-            {errors.formError}
+            {formError}
           </p>
         )}
-        <Field label="Username" error={errors.fieldErrors.username}>
+        <Field label="Username" error={fieldErrors.username}>
           <Input
             name="username"
             autoComplete="username"
@@ -87,7 +78,7 @@ export default function RegisterForm() {
         <Field
           label="Password"
           hint="8–128 characters"
-          error={errors.fieldErrors.password}
+          error={fieldErrors.password}
         >
           <Input
             type="password"
@@ -101,7 +92,7 @@ export default function RegisterForm() {
         <Field
           label="Registration code"
           hint="Only if your server requires one"
-          error={errors.fieldErrors.code}
+          error={fieldErrors.code}
         >
           <Input
             name="code"

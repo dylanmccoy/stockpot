@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, useLocation } from "react-router-dom";
-import { http, HttpResponse } from "msw";
 import { server } from "../test/server";
+import { errorHandlers } from "../test/errorHandlers";
+import { makeQueryClient } from "../test/helpers";
 import { getToken, setToken } from "../api/client";
+import { ToastProvider } from "../components";
 import { AuthProvider } from "../auth/AuthProvider";
 import { ThemeProvider } from "./theme";
 import { AppRouter } from "./router";
@@ -16,17 +18,17 @@ function LocationProbe() {
 }
 
 function renderApp(path: string) {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const queryClient = makeQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[path]}>
         <ThemeProvider>
-          <AuthProvider>
-            <LocationProbe />
-            <AppRouter />
-          </AuthProvider>
+          <ToastProvider>
+            <AuthProvider>
+              <LocationProbe />
+              <AppRouter />
+            </AuthProvider>
+          </ToastProvider>
         </ThemeProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -35,8 +37,6 @@ function renderApp(path: string) {
 }
 
 const loc = () => screen.getByTestId("loc").textContent;
-const unauthorized = () =>
-  HttpResponse.json({ detail: "not authenticated" }, { status: 401 });
 
 describe("auth flow", () => {
   it("sends an anonymous visitor from a guarded route to /login?next=", async () => {
@@ -48,14 +48,14 @@ describe("auth flow", () => {
   });
 
   // The backend maps missing / malformed / wrong-scheme / unknown / expired
-  // tokens all to `401 {"detail":"not authenticated"}` (docs/spec.md §
+  // tokens all to `401 {"detail":"not authenticated"}` (docs/spec.md
   // get_current_user), so to the client the five are one response. Each must
   // land the user back on /login with their target preserved.
   it.each(["missing", "malformed", "wrong scheme", "unknown token", "expired"])(
     "redirects to login when /me 401s (%s token)",
     async (_shape) => {
       setToken("some-token");
-      server.use(http.get("/api/auth/me", unauthorized));
+      server.use(errorHandlers.notAuthenticated("get", "/api/auth/me"));
 
       renderApp("/inventory");
 
@@ -69,7 +69,7 @@ describe("auth flow", () => {
 
   it("an expired token present on load ends in the logged-out state", async () => {
     setToken("expired-token");
-    server.use(http.get("/api/auth/me", unauthorized));
+    server.use(errorHandlers.notAuthenticated("get", "/api/auth/me"));
 
     renderApp("/");
 

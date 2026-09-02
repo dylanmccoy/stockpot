@@ -72,6 +72,19 @@ export interface FormErrors {
   formError: string | null;
 }
 
+/** Copy for a failure with no inline surface — spec §6 routes transport / `5xx`
+ *  / unexpected errors to a generic toast. */
+export const GENERIC_ERROR_MESSAGE = "Something went wrong. Try again.";
+
+/** Whether a thrown value has a place on a form's own inline surface — a field
+ *  error or the form-level banner. When `false` the failure belongs on a toast:
+ *  a transport failure, a `5xx`, a `404`, or a non-`ApiError` (spec §6). */
+export function hasInlineFormError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  if (isFieldError(error)) return true;
+  return typeof error.detail === "string" && isFormLevelStatus(error.status);
+}
+
 function splitFormErrors(error: unknown): FormErrors {
   if (!(error instanceof ApiError)) return { fieldErrors: {}, formError: null };
   if (isFieldError(error)) {

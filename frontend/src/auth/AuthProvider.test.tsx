@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { http, HttpResponse } from "msw";
+import { QueryClientProvider } from "@tanstack/react-query";
 import { server } from "../test/server";
+import { errorHandlers } from "../test/errorHandlers";
+import { makeQueryClient } from "../test/helpers";
 import { getToken, setToken } from "../api/client";
 import { AuthProvider } from "./AuthProvider";
 import { useAuth } from "./useAuth";
@@ -28,9 +29,7 @@ function Probe() {
 }
 
 function renderAuth() {
-  const queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
+  const queryClient = makeQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
@@ -80,11 +79,7 @@ describe("AuthProvider", () => {
 
   it("treats a 401 from logout as success (an expired token cannot call it)", async () => {
     setToken("stale-token");
-    server.use(
-      http.post("/api/auth/logout", () =>
-        HttpResponse.json({ detail: "not authenticated" }, { status: 401 }),
-      ),
-    );
+    server.use(errorHandlers.notAuthenticated("post", "/api/auth/logout"));
     renderAuth();
     await waitFor(() => expect(status()).toBe("authenticated"));
 
@@ -103,11 +98,7 @@ describe("AuthProvider", () => {
 
   it("clears an expired stored token on load and lands anonymous", async () => {
     setToken("expired-token");
-    server.use(
-      http.get("/api/auth/me", () =>
-        HttpResponse.json({ detail: "not authenticated" }, { status: 401 }),
-      ),
-    );
+    server.use(errorHandlers.notAuthenticated("get", "/api/auth/me"));
     renderAuth();
     await waitFor(() => expect(status()).toBe("anonymous"));
     expect(getToken()).toBeNull();
