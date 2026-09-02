@@ -338,12 +338,12 @@ Depends on backend Phase 7.
 
 | Phase | Status |
 |---|---|
-| 0 — Tooling & skeleton rewrite | Not started |
-| 1 — Design system & app shell | Not started |
-| 2 — Auth | Not started |
-| 3 — Recipes | Not started |
-| 4 — Inventory & availability | Not started |
-| 5 — Cook & history | Not started |
-| 6 — Grocery | Not started |
+| 0 — Tooling & skeleton rewrite | Complete |
+| 1 — Design system & app shell | Complete |
+| 2 — Auth | Complete — built vs MSW (ticket 04) and integrated against real BE Phase 2 (ticket 14) |
+| 3 — Recipes | In progress — 2 of 8 tickets: 03 (oracle suites), 05a (list/search/facets/sort) done; 05b, 06a–c, 07, 15 remain |
+| 4 — Inventory & availability | Not started — buildable vs MSW; wiring blocked on BE Phase 4 |
+| 5 — Cook & history | Not started — buildable vs MSW; wiring blocked on BE Phase 5 |
+| 6 — Grocery | Not started — buildable vs MSW; wiring blocked on BE Phase 6 |
 | 7 — Hardening | Not started |
-| 8 — Deployment docs | Not started |
+| 8 — Deployment docs | Not started — blocked on BE Phase 7 |
