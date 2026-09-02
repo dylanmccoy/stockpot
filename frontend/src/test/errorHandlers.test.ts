@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { HttpHandler } from "msw";
 import { server } from "./server";
 import { errorHandlers } from "./errorHandlers";
-import { request, ApiError } from "../api/client";
-import { lastLoc, rejection } from "./helpers";
+import { request } from "../api/client";
+import { ApiError, fieldName } from "../lib/apiError";
+import { rejection } from "./helpers";
 import type { ValidationIssue } from "../types";
 
 // Proves every docs/frontend/spec.md §6 catalog row has a working handler and
@@ -142,7 +143,7 @@ describe("§6 error catalog handlers", () => {
     if (row.detail === "ARRAY") {
       const detail = err.detail as ValidationIssue[];
       expect(Array.isArray(detail)).toBe(true);
-      expect(lastLoc(detail[0])).toBe("title");
+      expect(fieldName(detail[0])).toBe("title");
     } else {
       expect(err.detail).toBe(row.detail);
     }

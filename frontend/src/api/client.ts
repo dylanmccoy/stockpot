@@ -6,13 +6,10 @@
 //  - sends/receives JSON; sets `Content-Type` only when there is a body
 //  - returns `undefined` for `204`
 //  - normalizes both FastAPI error shapes into an `ApiError` and throws it
+//    (via `lib/apiError.ts` — the locked `parseApiError` oracle, spec §7.3)
 //  - a `401` on a gated route fires the registered unauthorized handler
-//
-// Phase 1 adds `lib/apiError.ts` with the locked `parseApiError` oracle suite.
-// `lib/` is a pure leaf layer that `api/client.ts` may import (docs/frontend/
-// spec.md §1 import direction), so the normalization below moves there then.
 
-import type { ValidationIssue } from "../types";
+import { ApiError, parseApiError } from "../lib/apiError";
 
 const TOKEN_KEY = "recipe.token";
 
@@ -21,38 +18,6 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/auth/register",
   "GET /api/health",
 ]);
-
-// Standard reason phrases we surface when the body carries no usable `detail`.
-// Deliberately sparse: anything not listed falls back to "Request failed"
-// (see docs/frontend/spec.md §7.3 oracle rows E4–E6).
-const REASON_PHRASE: Record<number, string> = {
-  404: "Not Found",
-  500: "Internal Server Error",
-};
-
-export class ApiError extends Error {
-  readonly status: number;
-  readonly detail: string | ValidationIssue[];
-
-  constructor(status: number, detail: string | ValidationIssue[]) {
-    super(typeof detail === "string" ? detail : `${status} validation error`);
-    this.name = "ApiError";
-    this.status = status;
-    this.detail = detail;
-  }
-}
-
-/** Normalize a non-2xx response body into an `ApiError`. */
-function toApiError(status: number, body: unknown): ApiError {
-  if (body !== null && typeof body === "object" && "detail" in body) {
-    const detail = (body as { detail: unknown }).detail;
-    if (typeof detail === "string") return new ApiError(status, detail);
-    if (Array.isArray(detail)) {
-      return new ApiError(status, detail as ValidationIssue[]);
-    }
-  }
-  return new ApiError(status, REASON_PHRASE[status] ?? "Request failed");
-}
 
 // ── token storage ──────────────────────────────────────────────────────────
 
@@ -139,7 +104,7 @@ export async function request<T>(
   }
 
   if (!res.ok) {
-    const error = toApiError(res.status, parsed);
+    const error = parseApiError(res.status, parsed);
     if (res.status === 401 && !isPublic) {
       unauthorizedHandler?.();
     }
