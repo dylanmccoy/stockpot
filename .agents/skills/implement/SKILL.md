@@ -36,6 +36,28 @@ If a worktree or branch with that name already exists, stop and ask.
 
 ## Build it
 
+### Read the spec by section, never whole
+
+The ticket's **Spec:** field names the exact anchors to read (e.g. `docs/spec.md`
+§5.5, §2.2). `docs/spec.md` is ~1700 lines and `docs/frontend/spec.md` ~930 — a
+whole-file `Read` of either burns ~15–20k tokens before you have written
+anything.
+
+For each spec file a ticket cites:
+
+1. `grep -nE '^#{1,6} ' <spec-file>` to get its heading→line-number table of
+   contents.
+2. From that, find the start line of each cited section and the start of the
+   next heading at the same-or-higher level (its end).
+3. `Read` with `offset`/`limit` bounded to that range. Only widen if a section
+   forward-references another you genuinely need.
+
+Do not read `docs/features.md`, `docs/decisions.md`, `docs/plan.md`, the
+`docs/phases/` files, or the other app's spec unless the ticket's **Spec:** /
+**Files:** / **Tests:** header points at them.
+
+### Slices
+
 Use /tdd where possible, at pre-agreed seams.
 
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.

@@ -11,6 +11,9 @@ the navigation map that keeps each `/implement` inside the smart zone.
 to 2–3 sections and one test file — read those, nothing else. The ticket's
 **Spec:** field names the exact anchors.
 
+To read one section: `grep -nE '^#{1,6} ' docs/spec.md` for the line-numbered
+heading list, then `Read` with `offset`/`limit` bounded to the cited section.
+
 | Area | `docs/spec.md` §§ | Test file |
 | --- | --- | --- |
 | `normalize.py` (food-name canonicalization) | 2.1 | `tests/test_normalize.py` |

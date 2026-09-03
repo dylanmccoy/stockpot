@@ -15,6 +15,10 @@ field names, nothing else. §5 there is a **non-normative mirror** of `docs/spec
 §5 — use it; only open the backend spec when a ticket says to (the integrate-*
 tickets do, for a re-diff).
 
+To read one section: `grep -nE '^#{1,6} ' docs/frontend/spec.md` for the
+line-numbered heading list, then `Read` with `offset`/`limit` bounded to the
+cited section.
+
 | Area | `docs/frontend/spec.md` §§ | File(s) | Test |
 | --- | --- | --- | --- |
 | App shell / routing | 3 | `app/router.tsx`, `app/AppShell.tsx`, `app/RequireAuth.tsx` | `app/router.test.tsx`, `app/AppShell.test.tsx` |
