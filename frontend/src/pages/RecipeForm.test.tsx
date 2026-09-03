@@ -3,15 +3,18 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
+import { Link, MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { server } from "../test/server";
 import { makeQueryClient } from "../test/helpers";
 import { sampleRecipe } from "../test/handlers";
 import { ToastProvider } from "../components";
+import { parseIngredientLine } from "../lib/parseIngredientLine";
+import type { RecipeIngredientRead, RecipeRead, RecipeUpdate } from "../types";
 import RecipeForm, {
   asOpenableUrl,
   buildRecipeCreate,
   ingredientRowsToSubmit,
+  recipeToState,
   type IngredientDraft,
   type RecipeFormState,
 } from "./RecipeForm";
@@ -193,6 +196,93 @@ describe("buildRecipeCreate — mixed pasted / edited ingredients", () => {
       { item: "garlic", quantity: 1 },
       { item: "kosher salt" },
     ]);
+  });
+});
+
+// ── pure seeding: RecipeRead → edit draft (spec §10.3) ────────────────────────
+
+describe("recipeToState", () => {
+  it("maps scalars and nulls and clones tags / steps into uid'd drafts", () => {
+    const s = recipeToState({
+      ...sampleRecipe,
+      cuisine: null,
+      servings: null,
+      source_url: null,
+    });
+    expect(s).toMatchObject({
+      title: "Buttermilk Pancakes",
+      cuisine: "",
+      servings: "",
+      prepTime: "5",
+      cookTime: "10",
+      sourceUrl: "",
+      notes: "",
+      tags: ["breakfast"],
+    });
+    expect(s.steps.map((st) => st.text)).toEqual([
+      "Whisk the dry ingredients",
+      "Fold in the wet",
+      "Griddle",
+    ]);
+    expect(new Set(s.steps.map((st) => st.uid)).size).toBe(3);
+  });
+
+  it("a raw_text row seeds a pristine paste draft that re-serializes as its string", () => {
+    const s = recipeToState({
+      ...sampleRecipe,
+      ingredients: [
+        {
+          id: 9,
+          position: 0,
+          quantity: 2,
+          unit: "tbsp",
+          item: "olive oil",
+          note: null,
+          normalized_name: "olive oil",
+          raw_text: "2 tbsp olive oil",
+        },
+      ],
+    });
+    expect(s.ingredients[0]).toMatchObject({
+      origin: "paste",
+      pristine: true,
+      raw: "2 tbsp olive oil",
+      quantity: "2",
+      unit: "tbsp",
+      item: "olive oil",
+    });
+    expect(buildRecipeCreate(s).ingredients).toEqual(["2 tbsp olive oil"]);
+  });
+
+  it("a structured row seeds a manual draft (object element on save)", () => {
+    const s = recipeToState({
+      ...sampleRecipe,
+      ingredients: [
+        {
+          id: 9,
+          position: 0,
+          quantity: null,
+          unit: null,
+          item: "salt",
+          note: "to taste",
+          normalized_name: "salt",
+          raw_text: null,
+        },
+      ],
+    });
+    expect(s.ingredients[0]).toMatchObject({
+      origin: "manual",
+      pristine: false,
+    });
+    expect(buildRecipeCreate(s).ingredients).toEqual([
+      { item: "salt", note: "to taste" },
+    ]);
+  });
+
+  it("an ingredient-less recipe seeds one blank row", () => {
+    const s = recipeToState({ ...sampleRecipe, ingredients: [] });
+    expect(s.ingredients).toHaveLength(1);
+    expect(buildRecipeCreate(s).ingredients).toEqual([]);
   });
 });
 
@@ -457,5 +547,209 @@ describe("RecipeForm paste ingredients", () => {
       "2 tbsp olive oil",
       { item: "onion, diced and garlic", quantity: 1 },
     ]);
+  });
+});
+
+// ── flow: edit / PUT full-replace vs MSW (ticket 06c) ─────────────────────────
+
+describe("RecipeForm edit flow", () => {
+  const pastedRow: RecipeIngredientRead = {
+    id: 20,
+    position: 0,
+    quantity: 2,
+    unit: "tbsp",
+    item: "olive oil",
+    note: null,
+    normalized_name: "olive oil",
+    raw_text: "2 tbsp olive oil",
+  };
+  const structuredRow: RecipeIngredientRead = {
+    id: 21,
+    position: 1,
+    quantity: 1,
+    unit: null,
+    item: "onion",
+    note: "diced",
+    normalized_name: "onion",
+    raw_text: null,
+  };
+  const editable: RecipeRead = {
+    ...sampleRecipe,
+    id: 3,
+    title: "Pan Sauce",
+    steps: ["Sweat aromatics", "Deglaze"],
+    ingredients: [pastedRow, structuredRow],
+  };
+
+  /** Emulate the server PUT full-replace: rebuild the read rows from the sent
+   *  elements, re-parsing a bare string the way the backend would. */
+  function applyReplace(prev: RecipeRead, body: RecipeUpdate): RecipeRead {
+    return {
+      ...prev,
+      ...body,
+      updated_at: "2026-09-02T12:00:00+00:00",
+      ingredients: body.ingredients.map((el, i) => {
+        if (typeof el === "string") {
+          const p = parseIngredientLine(el);
+          return {
+            id: 100 + i,
+            position: i,
+            quantity: p.quantity,
+            unit: p.unit ?? null,
+            item: p.item,
+            note: p.note ?? null,
+            normalized_name: p.item,
+            raw_text: el,
+          };
+        }
+        return {
+          id: 100 + i,
+          position: i,
+          quantity: el.quantity ?? null,
+          unit: el.unit ?? null,
+          item: el.item ?? "",
+          note: el.note ?? null,
+          normalized_name: el.item ?? "",
+          raw_text: null,
+        };
+      }),
+    };
+  }
+
+  function RecipeLandingWithEdit() {
+    const { id } = useParams();
+    return (
+      <>
+        <p data-testid="recipe-landing">recipe {id}</p>
+        <Link to={`/recipes/${id}/edit`}>Re-edit</Link>
+      </>
+    );
+  }
+
+  function renderEdit() {
+    const queryClient = makeQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/recipes/3/edit"]}>
+          <ToastProvider>
+            <Routes>
+              <Route
+                path="/recipes/:id/edit"
+                element={<RecipeForm mode="edit" />}
+              />
+              <Route path="/recipes/:id" element={<RecipeLandingWithEdit />} />
+            </Routes>
+          </ToastProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return queryClient;
+  }
+
+  it("fetches the recipe and pre-fills every field, step, and ingredient row", async () => {
+    server.use(http.get("/api/recipes/:id", () => HttpResponse.json(editable)));
+    renderEdit();
+
+    expect(await screen.findByLabelText(/^Title/)).toHaveValue("Pan Sauce");
+    expect(screen.getByLabelText("Prep time (min)")).toHaveValue(5);
+    expect(screen.getByLabelText("Step 1")).toHaveValue("Sweat aromatics");
+    expect(screen.getByLabelText("Step 2")).toHaveValue("Deglaze");
+    expect(screen.getByLabelText("Item for ingredient 1")).toHaveValue(
+      "olive oil",
+    );
+    expect(screen.getByLabelText("Quantity for ingredient 1")).toHaveValue("2");
+    expect(screen.getByLabelText("Unit for ingredient 1")).toHaveValue("tbsp");
+    expect(screen.getByLabelText("Item for ingredient 2")).toHaveValue("onion");
+    expect(screen.getByLabelText("Note for ingredient 2")).toHaveValue("diced");
+  });
+
+  it("PUT full-replace drops removed rows / steps; refetch shows them gone with no stale-key crash", async () => {
+    const user = userEvent.setup();
+    let current = editable;
+    const puts: RecipeUpdate[] = [];
+    server.use(
+      http.get("/api/recipes/:id", () => HttpResponse.json(current)),
+      http.put("/api/recipes/:id", async ({ request }) => {
+        const body = (await request.json()) as RecipeUpdate;
+        puts.push(body);
+        current = applyReplace(current, body);
+        return HttpResponse.json(current);
+      }),
+    );
+    renderEdit();
+
+    await screen.findByLabelText(/^Title/);
+    await user.click(
+      screen.getByRole("button", { name: "Remove ingredient 2" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Remove step 2" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    expect(await screen.findByTestId("recipe-landing")).toHaveTextContent(
+      "recipe 3",
+    );
+    expect(puts).toHaveLength(1);
+    expect(puts[0]).toMatchObject({
+      title: "Pan Sauce",
+      steps: ["Sweat aromatics"],
+      // untouched pasted row stays a string; the structured onion row is gone
+      ingredients: ["2 tbsp olive oil"],
+    });
+
+    // re-open the same recipe: the refetch reflects the replace, keys are fresh
+    await user.click(screen.getByRole("link", { name: "Re-edit" }));
+    expect(await screen.findByLabelText(/^Title/)).toHaveValue("Pan Sauce");
+    expect(screen.getByLabelText("Step 1")).toHaveValue("Sweat aromatics");
+    expect(screen.queryByLabelText("Step 2")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Item for ingredient 1")).toHaveValue(
+      "olive oil",
+    );
+    expect(
+      screen.queryByLabelText("Item for ingredient 2"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("on edit an untouched pasted row stays a string; an edited one becomes an object", async () => {
+    const user = userEvent.setup();
+    let put: RecipeUpdate | undefined;
+    server.use(
+      http.get("/api/recipes/:id", () => HttpResponse.json(editable)),
+      http.put("/api/recipes/:id", async ({ request }) => {
+        put = (await request.json()) as RecipeUpdate;
+        return HttpResponse.json(editable);
+      }),
+    );
+    renderEdit();
+
+    await screen.findByLabelText(/^Title/);
+    // edit the pasted row → it must serialize as an object, not the raw string
+    await user.type(
+      screen.getByLabelText("Item for ingredient 1"),
+      " (extra virgin)",
+    );
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await screen.findByTestId("recipe-landing");
+    expect(put?.ingredients).toEqual([
+      { item: "olive oil (extra virgin)", quantity: 2, unit: "tbsp" },
+      { item: "onion", quantity: 1, note: "diced" },
+    ]);
+  });
+
+  it("shows a not-found panel when the recipe 404s", async () => {
+    server.use(
+      http.get("/api/recipes/:id", () =>
+        HttpResponse.json({ detail: "Recipe not found" }, { status: 404 }),
+      ),
+    );
+    renderEdit();
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /doesn.t exist/i,
+    );
+    expect(screen.getByRole("link", { name: /recipes/i })).toHaveAttribute(
+      "href",
+      "/",
+    );
   });
 });

@@ -5,14 +5,21 @@ import {
   type FormEvent,
   type KeyboardEvent,
 } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { recipesApi } from "../api/recipes";
 import type {
   RecipeCreate,
   RecipeIngredientElement,
   RecipeIngredientIn,
+  RecipeIngredientRead,
   RecipeRead,
+  RecipeUpdate,
 } from "../types";
 import {
   Button,
@@ -23,6 +30,7 @@ import {
   useToast,
 } from "../components";
 import {
+  ApiError,
   GENERIC_ERROR_MESSAGE,
   hasInlineFormError,
   useFormErrors,
@@ -134,6 +142,47 @@ function emptyState(): RecipeFormState {
   };
 }
 
+/** A stored ingredient row → an editable draft. A row the server kept from a
+ *  pasted line (`raw_text` set) comes back `pristine` under `origin: "paste"`,
+ *  so leaving it untouched re-sends that same string on the next PUT; any edit
+ *  clears `pristine` and it serializes as an object like a hand-entered row.
+ *  A structured row (`raw_text: null`) is a `manual` draft. */
+function ingredientReadToDraft(row: RecipeIngredientRead): IngredientDraft {
+  const pasted = row.raw_text !== null;
+  return {
+    uid: uid(),
+    // same formatter the paste preview uses, so a re-seeded cell can't disagree
+    quantity: quantityToInput(row.quantity),
+    unit: row.unit ?? "",
+    item: row.item,
+    note: row.note ?? "",
+    origin: pasted ? "paste" : "manual",
+    pristine: pasted,
+    raw: row.raw_text ?? "",
+  };
+}
+
+/** `RecipeRead` → an edit-mode draft (spec §10.3). Every row/step gets a fresh
+ *  local uid — never the server `id` (R-16) — so the id churn a PUT full-replace
+ *  causes can't break the table's React keys. Dropping a row/step from the draft
+ *  just omits it from the next full-replace body. */
+export function recipeToState(recipe: RecipeRead): RecipeFormState {
+  return {
+    title: recipe.title,
+    cuisine: recipe.cuisine ?? "",
+    servings: numToField(recipe.servings),
+    prepTime: numToField(recipe.prep_time),
+    cookTime: numToField(recipe.cook_time),
+    sourceUrl: recipe.source_url ?? "",
+    notes: recipe.notes,
+    tags: [...recipe.tags],
+    steps: recipe.steps.map((text) => ({ uid: uid(), text })),
+    ingredients: recipe.ingredients.length
+      ? recipe.ingredients.map(ingredientReadToDraft)
+      : [blankIngredient()],
+  };
+}
+
 // ── Pure serialization ─────────────────────────────────────────────────────
 
 function numOrNull(raw: string): number | null {
@@ -141,6 +190,12 @@ function numOrNull(raw: string): number | null {
   if (!t) return null;
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Inverse of `numOrNull` for seeding edit mode: a nullable server number →
+ *  the string a scalar `<Input>` holds (`null` ⇒ blank). */
+function numToField(value: number | null): string {
+  return value === null ? "" : String(value);
 }
 
 /** A parsed preview quantity → the string that seeds the editable cell.
@@ -230,15 +285,10 @@ function move<T>(list: T[], index: number, delta: number): T[] {
   return copy;
 }
 
-// ── Edit placeholder ──────────────────────────────────────────────────────
-// Pre-fill + PUT full-replace is ticket 06c; the route stays live so links
-// don't 404.
-
-function EditPlaceholder() {
-  return <h1>Edit recipe</h1>;
-}
-
-// ── Create form ──────────────────────────────────────────────────────────
+// ── Shared editor ────────────────────────────────────────────────────────
+// One form body for create and edit. The wrapper owns the mutation and the
+// success/error routing (spec §10.3); the editor owns the draft, the client
+// guards, and the server-error → row/field mapping.
 
 interface ClientErrors {
   title?: string;
@@ -246,33 +296,37 @@ interface ClientErrors {
   rows: Record<string, string>;
 }
 
-function CreateForm() {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const toast = useToast();
+interface RecipeEditorProps {
+  heading: string;
+  submitLabel: string;
+  /** where "Cancel" goes back to (list for create, the recipe for edit) */
+  cancelHref: string;
+  /** seed draft — captured once on mount (`key` the editor to reseed) */
+  initialState: RecipeFormState;
+  pending: boolean;
+  /** the last save's rejection, for `useFormErrors` */
+  saveError: unknown;
+  onSave: (body: RecipeCreate) => void;
+}
 
-  const [state, setState] = useState<RecipeFormState>(emptyState);
+function RecipeEditor({
+  heading,
+  submitLabel,
+  cancelHref,
+  initialState,
+  pending,
+  saveError,
+  onSave,
+}: RecipeEditorProps) {
+  const [state, setState] = useState<RecipeFormState>(() => initialState);
   const [tagDraft, setTagDraft] = useState("");
   const [clientErrors, setClientErrors] = useState<ClientErrors>({ rows: {} });
 
-  // submitted row order at the moment of the last POST — maps a server
+  // submitted row order at the moment of the last save — maps a server
   // `ingredients[N]` error back to the row that produced it.
   const submittedUidsRef = useRef<string[]>([]);
 
-  const mutation = useMutation({
-    mutationFn: (body: RecipeCreate) => recipesApi.create(body),
-    onSuccess: (recipe: RecipeRead) => {
-      queryClient.invalidateQueries({ queryKey: ["recipes"] });
-      navigate(`/recipes/${recipe.id}`);
-    },
-    onError: (error) => {
-      if (!hasInlineFormError(error)) {
-        toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
-      }
-    },
-  });
-
-  const { fieldErrors, formError } = useFormErrors(mutation.error);
+  const { fieldErrors, formError } = useFormErrors(saveError);
 
   const patch = (next: Partial<RecipeFormState>) =>
     setState((s) => ({ ...s, ...next }));
@@ -396,7 +450,7 @@ function CreateForm() {
 
     const rows = ingredientRowsToSubmit(working);
     submittedUidsRef.current = rows.map((r) => r.uid);
-    mutation.mutate(buildRecipeCreate(working));
+    onSave(buildRecipeCreate(working));
   }
 
   const openUrl = useMemo(
@@ -407,8 +461,8 @@ function CreateForm() {
   return (
     <section className={styles.page}>
       <header className={styles.head}>
-        <h1>New recipe</h1>
-        <Link to="/" className={styles.cancel}>
+        <h1>{heading}</h1>
+        <Link to={cancelHref} className={styles.cancel}>
           Cancel
         </Link>
       </header>
@@ -746,8 +800,8 @@ function CreateForm() {
         </Field>
 
         <div className={styles.actions}>
-          <Button type="submit" loading={mutation.isPending}>
-            Save recipe
+          <Button type="submit" loading={pending}>
+            {submitLabel}
           </Button>
         </div>
       </form>
@@ -755,6 +809,122 @@ function CreateForm() {
   );
 }
 
+// ── Save wiring shared by both modes ─────────────────────────────────────
+
+/** The `useMutation` success/error half both forms share: invalidate the list
+ *  (plus `extraKey` — the single-recipe cache on edit), go to the saved
+ *  recipe, and toast anything that isn't an inline form error (§6). */
+function useRecipeRedirect(extraKey?: QueryKey) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return {
+    onSuccess: (recipe: RecipeRead) => {
+      queryClient.invalidateQueries({ queryKey: ["recipes"] });
+      if (extraKey) queryClient.invalidateQueries({ queryKey: extraKey });
+      navigate(`/recipes/${recipe.id}`);
+    },
+    onError: (error: unknown) => {
+      if (!hasInlineFormError(error)) {
+        toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
+      }
+    },
+  };
+}
+
+// ── Create ───────────────────────────────────────────────────────────────
+
+function CreateForm() {
+  const mutation = useMutation({
+    mutationFn: (body: RecipeCreate) => recipesApi.create(body),
+    ...useRecipeRedirect(),
+  });
+
+  return (
+    <RecipeEditor
+      heading="New recipe"
+      submitLabel="Save recipe"
+      cancelHref="/"
+      initialState={emptyState()}
+      pending={mutation.isPending}
+      saveError={mutation.error}
+      onSave={(body) => mutation.mutate(body)}
+    />
+  );
+}
+
+// ── Edit / PUT full-replace (spec §10.3) ─────────────────────────────────
+
+function EditForm() {
+  const { id: idParam } = useParams();
+  const id = Number(idParam);
+
+  const query = useQuery({
+    queryKey: ["recipe", id],
+    queryFn: () => recipesApi.get(id),
+  });
+
+  const mutation = useMutation({
+    mutationFn: (body: RecipeUpdate) => recipesApi.update(id, body),
+    ...useRecipeRedirect(["recipe", id]),
+  });
+
+  // `recipeToState` mints uids, so keep it out of the render path once seeded.
+  const initialState = useMemo(
+    () => (query.data ? recipeToState(query.data) : null),
+    [query.data],
+  );
+
+  if (query.status === "pending") {
+    return (
+      <section className={styles.page}>
+        <p role="status">Loading recipe…</p>
+      </section>
+    );
+  }
+
+  if (query.status === "error") {
+    const notFound =
+      query.error instanceof ApiError && query.error.status === 404;
+    return (
+      <section className={styles.page}>
+        <div className={styles.banner} role="alert">
+          {notFound ? (
+            <p>
+              That recipe doesn’t exist. <Link to="/">Back to recipes</Link>
+            </p>
+          ) : (
+            <p>
+              {query.error instanceof Error
+                ? query.error.message
+                : "Could not load this recipe."}{" "}
+              <Button variant="secondary" onClick={() => query.refetch()}>
+                Retry
+              </Button>
+            </p>
+          )}
+        </div>
+      </section>
+    );
+  }
+
+  // `success` with no `data` is unreachable — this only narrows the type.
+  if (!initialState) return null;
+
+  return (
+    <RecipeEditor
+      key={id}
+      heading="Edit recipe"
+      submitLabel="Save changes"
+      cancelHref={`/recipes/${id}`}
+      initialState={initialState}
+      pending={mutation.isPending}
+      saveError={mutation.error}
+      onSave={(body) => mutation.mutate(body)}
+    />
+  );
+}
+
 export default function RecipeForm({ mode }: { mode: "create" | "edit" }) {
-  return mode === "edit" ? <EditPlaceholder /> : <CreateForm />;
+  return mode === "edit" ? <EditForm /> : <CreateForm />;
 }
