@@ -238,20 +238,23 @@ BE Phase 3.
 
 Spec: `spec.md` §10.9, §10.4 (availability table), §7.4; `../spec.md` §5.3, §5.5.
 
-- [ ] `api/inventory.ts` (adapter — R-2).
-- [ ] `pages/Inventory.tsx` — `["inventory"]` table; additive-upsert add form
+- [x] `api/inventory.ts` (adapter — R-2). (ticket 08a)
+- [x] `pages/Inventory.tsx` — `["inventory"]` table; additive-upsert add form
       with explanatory copy; inline `PATCH` with the §5 client-side rule
       enforcement (quantity forces unit; unit stays in bucket; COUNT vs non-COUNT
       null; normalized `match_name`; `409` collision inline); prominent
-      `match_name` editor; delete confirm.
-- [ ] `api/recipes.ts` availability adapter; RecipeDetail availability table:
+      `match_name` editor; delete confirm. (tickets 08a, 08b)
+- [x] `api/recipes.ts` availability adapter; RecipeDetail availability table:
       per-line scaled `need`, status `Badge`s (§7.4 copy), `group_key` dedupe or
-      per-line, `all_available` header banner.
-- [ ] Flow test: the four PATCH-rejection rules return the expected inline errors;
-      a valid `{quantity, unit}` PATCH updates the row.
+      per-line, `all_available` header banner. (ticket 09)
+- [x] Flow test: the four PATCH-rejection rules return the expected inline errors;
+      a valid `{quantity, unit}` PATCH updates the row. (ticket 08b)
 
 **Exit:** availability adapter diff-reviewed against the merged BE Phase 4 DTOs;
-PATCH-rule flow test green.
+PATCH-rule flow test green. — **cleared** (ticket 16): `AvailabilityLine` gained
+`ingredient_id` and `need_unit` tightened to non-null in `types.ts` + §5;
+inventory + availability shapes and all four PATCH rejections verified against
+the merged BE Phase 4 backend.
 
 ---
 
@@ -342,7 +345,7 @@ Depends on backend Phase 7.
 | 1 — Design system & app shell | Complete |
 | 2 — Auth | Complete — built vs MSW (ticket 04) and integrated against real BE Phase 2 (ticket 14) |
 | 3 — Recipes | In progress — 2 of 8 tickets: 03 (oracle suites), 05a (list/search/facets/sort) done; 05b, 06a–c, 07, 15 remain |
-| 4 — Inventory & availability | Not started — buildable vs MSW; wiring blocked on BE Phase 4 |
+| 4 — Inventory & availability | Complete — built vs MSW (08a, 08b, 09) and integrated against real BE Phase 4 (ticket 16) |
 | 5 — Cook & history | Not started — buildable vs MSW; wiring blocked on BE Phase 5 |
 | 6 — Grocery | Not started — buildable vs MSW; wiring blocked on BE Phase 6 |
 | 7 — Hardening | Not started |
