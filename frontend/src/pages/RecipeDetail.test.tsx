@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -7,7 +7,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { server } from "../test/server";
 import { errorHandlers } from "../test/errorHandlers";
 import { makeQueryClient } from "../test/helpers";
-import { sampleRecipe } from "../test/handlers";
+import { sampleCookLog, sampleRecipe } from "../test/handlers";
 import { ToastProvider } from "../components";
 import type { AvailabilityReport, RecipeRead } from "../types";
 import RecipeDetail, {
@@ -595,5 +595,135 @@ describe("RecipeDetail availability", () => {
     expect(
       within(region).getByRole("button", { name: "Retry" }),
     ).toBeInTheDocument();
+  });
+});
+
+// ── cook action ──────────────────────────────────────────────────────────────
+
+const cookRegion = () => screen.getByRole("region", { name: "Cook" });
+
+const cookButton = () =>
+  within(cookRegion()).getByRole("button", { name: /mark as cooked/i });
+
+const deductToggle = () =>
+  within(cookRegion()).getByRole("checkbox", {
+    name: /deduct from inventory/i,
+  });
+
+/** Capture the JSON body of the next cook POST. */
+function captureCook(): { body: () => unknown } {
+  let body: unknown;
+  server.use(
+    http.post("/api/recipes/:id/cook", async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json(sampleCookLog, { status: 201 });
+    }),
+  );
+  return { body: () => body };
+}
+
+/** Count availability GETs so a post-cook refetch is observable. */
+function countAvailability(): { calls: () => number } {
+  let calls = 0;
+  server.use(
+    http.get("/api/recipes/:id/availability", () => {
+      calls += 1;
+      return HttpResponse.json(availabilityReport);
+    }),
+  );
+  return { calls: () => calls };
+}
+
+describe("RecipeDetail cook", () => {
+  it("shows a mark-as-cooked button and a deduct toggle on by default", async () => {
+    useRecipe(detailRecipe);
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    expect(cookButton()).toBeInTheDocument();
+    expect(deductToggle()).toBeChecked();
+  });
+
+  it("posts at the current multiplier with deduct on by default", async () => {
+    const user = userEvent.setup();
+    useRecipe(detailRecipe);
+    const cook = captureCook();
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    await user.click(screen.getByRole("button", { name: "2" }));
+    await user.click(cookButton());
+
+    await waitFor(() =>
+      expect(cook.body()).toEqual({ multiplier: 2, deduct: true }),
+    );
+  });
+
+  it("a cleared toggle posts deduct:false and softens the button copy", async () => {
+    const user = userEvent.setup();
+    useRecipe(detailRecipe);
+    const cook = captureCook();
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    await user.click(deductToggle());
+    await user.click(
+      within(cookRegion()).getByRole("button", { name: "Mark as cooked" }),
+    );
+
+    await waitFor(() =>
+      expect(cook.body()).toEqual({ multiplier: 1, deduct: false }),
+    );
+  });
+
+  it("on success, refetches availability and invalidates the stock + history views", async () => {
+    const user = userEvent.setup();
+    useRecipe(detailRecipe);
+    const avail = countAvailability();
+    const queryClient = renderDetail();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+    await waitFor(() => expect(avail.calls()).toBe(1));
+
+    await user.click(cookButton());
+
+    await waitFor(() => expect(avail.calls()).toBe(2));
+    const keys = invalidate.mock.calls.map(
+      (c) => (c[0] as { queryKey?: unknown[] } | undefined)?.queryKey,
+    );
+    expect(keys).toContainEqual(["availability", 1]);
+    expect(keys).toContainEqual(["inventory"]);
+    expect(keys).toContainEqual(["cook-logs"]);
+    expect(keys).toContainEqual(["recipe-cook-logs", 1]);
+  });
+
+  it("on a 409 stock collision, toasts a retry message and refetches", async () => {
+    const user = userEvent.setup();
+    useRecipe(detailRecipe);
+    const avail = countAvailability();
+    server.use(errorHandlers.conflict("post", "/api/recipes/:id/cook"));
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+    await waitFor(() => expect(avail.calls()).toBe(1));
+
+    await user.click(cookButton());
+
+    expect(
+      await screen.findByText(
+        "Someone else was updating stock. We've refreshed — try again.",
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(avail.calls()).toBe(2));
+  });
+
+  it("offers no undo affordance", async () => {
+    useRecipe(detailRecipe);
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    expect(
+      screen.queryByRole("button", { name: /undo/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/undo/i)).not.toBeInTheDocument();
   });
 });

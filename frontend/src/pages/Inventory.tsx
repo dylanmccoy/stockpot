@@ -18,7 +18,9 @@ import type { Column } from "../components";
 import {
   ApiError,
   GENERIC_ERROR_MESSAGE,
+  STOCK_CONFLICT_MESSAGE,
   hasInlineFormError,
+  isStockConflict,
   useFormErrors,
 } from "../lib/apiError";
 import { formatDateTime, formatQuantity } from "../lib/format";
@@ -26,15 +28,9 @@ import styles from "./Inventory.module.css";
 
 const INVENTORY_KEY = ["inventory"] as const;
 
-// Generic write conflict on the additive-upsert POST (spec §6 catalog: a `409`
-// with `detail: "conflict"` from inventory `POST`). Surfaced as a toast + a
-// refetch, not the verbatim "conflict" banner the string-`detail` rule would
-// otherwise produce.
-const STOCK_CONFLICT_MESSAGE =
-  "Someone else was updating stock. We've refreshed — try again.";
-
-const isStockConflict = (err: unknown): boolean =>
-  err instanceof ApiError && err.status === 409;
+// The generic write conflict (spec §6 catalog: a `409` with `detail: "conflict"`
+// from inventory `POST`/`PATCH`) is `isStockConflict` + `STOCK_CONFLICT_MESSAGE`
+// from `lib/apiError` — a toast + refetch, not the verbatim "conflict" banner.
 
 // The one `409` that is NOT the generic write conflict: a PATCH `match_name`
 // whose normalized value collides with another `(match_name, unit_bucket)` row.

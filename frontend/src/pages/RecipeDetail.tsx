@@ -14,7 +14,12 @@ import type {
   RecipeIngredientRead,
   RecipeRead,
 } from "../types";
-import { ApiError, GENERIC_ERROR_MESSAGE } from "../lib/apiError";
+import {
+  ApiError,
+  GENERIC_ERROR_MESSAGE,
+  STOCK_CONFLICT_MESSAGE,
+  isStockConflict,
+} from "../lib/apiError";
 import { formatQuantity } from "../lib/format";
 import { cx } from "../lib/cx";
 import {
@@ -28,11 +33,11 @@ import {
 import type { BadgeTone, Column } from "../components";
 import styles from "./RecipeDetail.module.css";
 
-// RecipeDetail — body + multiplier (spec §10.4, body Phase 3) and the
-// availability table (Phase 4). The cook action (Phase 5) hangs off the same
-// multiplier and lands in a later ticket, as does the made-history panel
-// (placeholder below, ticket 11). Availability is built against the spec DTO
-// through the recipes adapter (R-2) and wired to real calls in ticket 16.
+// RecipeDetail — body + multiplier (spec §10.4, body Phase 3), the availability
+// table (Phase 4), and the cook action (Phase 5). The made-history panel is
+// still a placeholder (ticket 11). Availability and cook are built against the
+// spec DTO through the recipes adapter (R-2) and wired to real calls in tickets
+// 16 / 17.
 
 /** `source_url` is stored verbatim and never validated (R-14); this only decides
  *  whether to offer an "open link" affordance. Mirrors `asOpenableUrl` in
@@ -264,6 +269,63 @@ function AvailabilityPanel({
   );
 }
 
+/** Cook action (spec §10.4, Phase 5). A single "mark as cooked" button plus a
+ *  "deduct from inventory" toggle (on by default); the POST carries the screen's
+ *  current multiplier, so a double batch deducts twice the stock. Forward-only —
+ *  there is no undo affordance (R-12). Built against the spec DTO through the
+ *  recipes adapter; wired to real calls in ticket 17. */
+function CookPanel({ id, multiplier }: { id: number; multiplier: number }) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const [deduct, setDeduct] = useState(true);
+
+  // The availability table and Inventory screen both read from stock; a cook
+  // (or a failed cook that may have half-applied) makes them stale.
+  const invalidateStockViews = () => {
+    queryClient.invalidateQueries({ queryKey: ["availability", id] });
+    queryClient.invalidateQueries({ queryKey: ["inventory"] });
+  };
+
+  const cook = useMutation({
+    mutationFn: () => recipesApi.cook(id, { multiplier, deduct }),
+    onSuccess: () => {
+      // Every stock- and history-derived view is now stale (spec §10.4).
+      invalidateStockViews();
+      queryClient.invalidateQueries({ queryKey: ["cook-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["recipe-cook-logs", id] });
+      toast.show("Cooked — logged to your history.", { variant: "success" });
+    },
+    onError: (err: unknown) => {
+      if (isStockConflict(err)) {
+        // R-11: refetch what the deduction would have touched, ask for a retry.
+        invalidateStockViews();
+        toast.show(STOCK_CONFLICT_MESSAGE, { variant: "error" });
+      } else {
+        toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
+      }
+    },
+  });
+
+  return (
+    <section className={styles.section} aria-labelledby="cook-heading">
+      <h2 id="cook-heading">Cook</h2>
+      <div className={styles.cookBar}>
+        <Button loading={cook.isPending} onClick={() => cook.mutate()}>
+          {deduct ? "Mark as cooked & update inventory" : "Mark as cooked"}
+        </Button>
+        <label className={styles.deductToggle}>
+          <input
+            type="checkbox"
+            checked={deduct}
+            onChange={(e) => setDeduct(e.target.checked)}
+          />
+          Deduct from inventory
+        </label>
+      </div>
+    </section>
+  );
+}
+
 function NotFoundPanel() {
   return (
     <section className={styles.panel} role="alert">
@@ -417,6 +479,8 @@ function RecipeDetailView({ id }: { id: number }) {
       </section>
 
       <AvailabilityPanel id={id} multiplier={multiplier} />
+
+      <CookPanel id={id} multiplier={multiplier} />
 
       {recipe.steps.length > 0 && (
         <section className={styles.section} aria-labelledby="steps-heading">
