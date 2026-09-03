@@ -7,7 +7,7 @@ production code.
 
 **Blocked by:** `phase-4e` (Phase 4 complete).
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `backend/tests/test_inventory_math.py` and/or create `backend/tests/test_cook_contract.py`; `docs/phases/phase-5.md`. Authored black-box from the spec in a fresh context — no production code.
 
