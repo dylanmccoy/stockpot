@@ -13,9 +13,11 @@ and keep logs readable after recipe deletion.
       `JSON list[dict]`, validated on read. `_entry()` takes all 11 kwargs as
       required. See [`../decisions.md`](../decisions.md#n7). Normative in
       `spec.md` §1 / §4.5 / §5.4 / §7.
-- [ ] **R-7 contract tests accepted before implementation** — a fresh-context
-      reviewer writes and reviews the §7 cook, audit-log, and cook-race contract
-      cases before route/model implementation. Accepted cases are locked under
+- [x] **R-7 contract tests accepted before implementation** (phase-5a,
+      2026-09-03) — a fresh-context reviewer writes and reviews the §7 cook,
+      audit-log, and cook-race contract cases before route/model implementation,
+      as `backend/tests/test_cook_contract.py` (fails on collection until
+      `phase-5b` — that is the lock). Accepted cases are locked under
       [`plan.md` §Independent contract-test gate](../plan.md#independent-contract-test-gate).
 
 ## Specification
