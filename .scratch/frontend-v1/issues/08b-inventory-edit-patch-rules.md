@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/pages/Inventory.tsx`, `frontend/src/pages/Inventory.test.tsx`, `frontend/src/api/inventory.ts` (PATCH adapter).
+
+**Spec:** `docs/frontend/spec.md` §10.9 (inline edit + `match_name` editor), §5 "Inventory" (PATCH rules, mirror of `docs/spec.md` §5.5), §6 (the `409` surface). Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/Inventory.test.tsx`.
+
 - [ ] Inline quantity edit requires confirming the unit on save.
 - [ ] Client-side rule enforcement before PATCH: a quantity change forces a unit; a unit cannot change to one in a different bucket; a null unit is rejected for a non-COUNT item.
 - [ ] `match_name` editor is prominent, saves in normalized form, has a short hint explaining it links inventory to recipe ingredients, and shows an inline error on an in-bucket collision (`409`).

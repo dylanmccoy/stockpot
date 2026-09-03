@@ -8,6 +8,12 @@ freezes it — forward-only, with no status change.
 
 **Status:** ready-for-agent
 
+**Files:** edit `backend/app/routers/grocery.py` (add `/submit`), `backend/app/schemas/grocery.py`, `backend/tests/test_grocery.py`.
+
+**Spec:** `docs/spec.md` §5.6 (submit — forward-only, freeze, no status change), §5.5 (`add_to_inventory_calc` + `ON CONFLICT` upsert, reused), §7 submit contract rows, §6 (`409` on lock). Read only these sections.
+
+**Tests:** `cd backend && uv run pytest tests/test_grocery.py`, then full `uv run pytest`.
+
 - [ ] `POST /api/grocery/{id}/submit` -> `200 GroceryListRead`: `404` if the list
       is absent; `409` if `list.status != "active"`; inside the request's single
       `BEGIN IMMEDIATE` transaction, for each line skip unless

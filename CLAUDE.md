@@ -53,6 +53,12 @@ Local dev needs two terminals: backend and frontend.
 
 Two independent apps in one repo; the only contract between them is the JSON HTTP API under `/api`.
 
+**Per-area maps.** `backend/CLAUDE.md` and `frontend/CLAUDE.md` are the navigation
+maps for each app: file map, the feature-area → spec-section → test-file table, and
+the invariants agents keep re-deriving. Read the one for the app you're working in
+before opening spec files, and let each ticket's **Files:** / **Spec:** / **Tests:**
+header point you at the exact sections.
+
 **Doc partition.** Backend v1 planning lives in `docs/` (`spec.md`, `plan.md`, `phases/`, `issues.md`, `decisions.md`, `features.md`). Frontend planning lives in `docs/frontend/` and is **not backend implementation authority** — a backend phase must not read it as a requirement source or edit it (`docs/plan.md` §"Phase scope fence"). Frontend work reads `docs/spec.md` as the contract.
 
 ### Backend (`backend/app/`)

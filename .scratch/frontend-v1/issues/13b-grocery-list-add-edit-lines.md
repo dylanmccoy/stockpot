@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/pages/GroceryListDetail.tsx`, `frontend/src/pages/GroceryListDetail.test.tsx`, `frontend/src/api/grocery.ts`.
+
+**Spec:** `docs/frontend/spec.md` §10.7 (add manual line, edit generated line — `quantity`+`unit` sent together, reclassify-to-manual note), §5 "Grocery" (`POST`/`PATCH` `/api/grocery/{id}/items`). Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/GroceryListDetail.test.tsx`.
+
 - [ ] Add a manual line with an item and optional quantity/unit.
 - [ ] Edit a generated line's item, quantity, or unit, sending quantity and unit together.
 - [ ] A quiet note explains when editing a generated line reclassifies it to manual (no longer netted against stock).

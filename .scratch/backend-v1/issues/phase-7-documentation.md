@@ -12,6 +12,12 @@ describe one as shipped v1 surface.
 
 **Status:** ready-for-agent
 
+**Files:** edit `README.md`, `CLAUDE.md`, `backend/.env.example`, `docs/phases/phase-7.md`, `docs/plan.md`. Read `docs/features.md` only to link deferrals.
+
+**Spec:** `docs/spec.md` "End-to-end verification (via `/docs`)", §3.1 (`config.py` env vars), §5.1 (registration window). Read only these sections.
+
+**Tests:** `cd backend && uv run pytest`, plus the `/docs` end-to-end verification in `docs/spec.md`.
+
 - [ ] `README.md` updated with setup, authentication, v1 workflows, API surface,
       LAN serving, and the current frontend limitation.
 - [ ] A single **"Operating the server"** section in `README.md` holding three

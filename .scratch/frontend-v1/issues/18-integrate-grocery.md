@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/api/grocery.ts`, `frontend/src/types.ts`, `docs/frontend/spec.md` §5. External gate: backend Phase 6 merged.
+
+**Spec:** `docs/spec.md` §5.6 (grocery as merged — re-diff: line classification, `nettable`, `applied_*`, list status); `docs/frontend/spec.md` §5, §10.5–§10.7. Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/GroceryLists.test.tsx src/pages/GroceryListDetail.test.tsx src/pages/RecipeList.test.tsx`, then full `npm run test:run`.
+
 - [ ] Grocery create, list index, list detail, line add/edit, submit, and archive run against the real backend.
 - [ ] Grocery adapter diff-reviewed against the merged Phase 6 DTO (line classification, `nettable`, `applied_*` fields, list status).
 - [ ] The check→submit flow test passes against the real backend: check two lines → submit → lines frozen and inventory invalidated; PATCH a frozen line → `409` copy; edit a generated line → reclassified to manual.

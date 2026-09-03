@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/pages/GroceryListDetail.tsx`, `frontend/src/api/grocery.ts`; create `frontend/src/pages/GroceryListDetail.module.css`, `frontend/src/pages/GroceryListDetail.test.tsx`. Use `frontend/src/lib/format.ts` as-is. Built against the spec DTO — **not** wired to real calls (ticket 18).
+
+**Spec:** `docs/frontend/spec.md` §10.7 (render, optimistic check, `nettable:false` "amount uncertain"), §7.2 (`formatQuantity`), §7.4 ("uncertain" language), §5 "Grocery" (`GroceryListItemRead`). Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/GroceryListDetail.test.tsx`.
+
 - [ ] `/groceries/:id` shows each line with its item and a human-formatted quantity (`formatQuantity`), grouped into generated and manually-added lines.
 - [ ] Tapping a line checks it off optimistically (instant), and reverts if the server rejects the change.
 - [ ] A line whose true shortfall is uncertain (`nettable: false`) is marked "amount uncertain" with a note to buy based on what is found — never a computed number.

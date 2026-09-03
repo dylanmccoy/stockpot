@@ -9,6 +9,12 @@ correct group aggregation and the three-way uncertain / short / missing split.
 
 **Status:** ready-for-agent
 
+**Files:** edit `backend/app/services/inventory_math.py` (add `aggregate`, `check_availability`), `backend/app/routers/recipes.py` (add `GET /{id}/availability`), `backend/app/schemas/recipe.py` (availability DTOs), `backend/tests/test_recipes.py`, `backend/tests/test_validation.py`.
+
+**Spec:** `docs/spec.md` §4 (frozen DTOs `ReqLine`/`StockRow`/`AvailabilityLineDTO`), §4.1 (`aggregate`), §4.2 (`check_availability`), §5.3 (availability endpoint), §7 availability + aggregation oracle rows. Read only these sections.
+
+**Tests:** `cd backend && uv run pytest tests/test_recipes.py tests/test_inventory_math.py tests/test_validation.py`, then full `uv run pytest`.
+
 - [ ] `aggregate(reqs, M)` and `check_availability(reqs, stock)` implemented in
       `backend/app/services/inventory_math.py` per §4.1 / §4.2, with the frozen
       DTOs (`ReqLine`, `StockRow`, `AvailabilityLineDTO`) from §4.

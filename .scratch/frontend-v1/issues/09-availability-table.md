@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/pages/RecipeDetail.tsx`, `frontend/src/pages/RecipeDetail.test.tsx`, `frontend/src/api/recipes.ts` (availability adapter). Built against the spec DTO — **not** wired to real calls (ticket 16).
+
+**Spec:** `docs/frontend/spec.md` §10.4 (availability table), §7.4 ("uncertain" language), §5 "Availability" (`AvailabilityLineDTO`). Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/RecipeDetail.test.tsx`.
+
 - [ ] The availability table renders inside `/recipes/:id` against current inventory, scaled by the multiplier control.
 - [ ] Each ingredient is marked: have it, short by X, check what you have, missing, or to taste.
 - [ ] A "check what you have" line renders amber with an explanation that stock is held in an incomparable unit, and shows **no** shortfall number.

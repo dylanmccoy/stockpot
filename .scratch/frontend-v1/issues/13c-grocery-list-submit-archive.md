@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/pages/GroceryListDetail.tsx`, `frontend/src/pages/GroceryListDetail.test.tsx`, `frontend/src/api/grocery.ts`. Use `frontend/src/components/Dialog.tsx`.
+
+**Spec:** `docs/frontend/spec.md` §10.7 (submit dialog, frozen `applied_*` lines, archive, `409`), §10.9 (inventory invalidation), §5 "Grocery" (`/submit`, `/archive`). Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/GroceryListDetail.test.tsx`.
+
 - [ ] Submit checked lines into inventory via a `Dialog` that explains this adds stock and cannot be undone. Shopping can continue and submit again later for newly-checked lines.
 - [ ] On submit success the inventory query is invalidated and refetches.
 - [ ] Already-submitted lines are read-only, show the amount that was added (`applied_*`), and are un-editable / un-deletable without a confusing error.

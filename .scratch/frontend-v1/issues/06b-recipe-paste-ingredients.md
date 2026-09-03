@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/pages/RecipeForm.tsx`, `frontend/src/pages/RecipeForm.module.css`, `frontend/src/pages/RecipeForm.test.tsx`. Use `frontend/src/lib/parseIngredients.ts` as-is (do not edit it or its oracle).
+
+**Spec:** `docs/frontend/spec.md` §7.1 (`parseIngredients` behaviour), §10.3 (RecipeForm). Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/RecipeForm.test.tsx`.
+
 - [ ] A "Paste ingredients" action opens an input for a multi-line block and runs `parseIngredients` on it.
 - [ ] A parsed-row preview shows quantity / unit / item / note per line; confirm appends those rows to the ingredient table, cancel discards them.
 - [ ] After appending, the user can edit any appended row in the normal table before saving.

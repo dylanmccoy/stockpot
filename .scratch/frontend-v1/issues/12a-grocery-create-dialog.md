@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/pages/RecipeList.tsx` (wire the 05b multi-select stub), `frontend/src/pages/RecipeList.test.tsx`, `frontend/src/api/grocery.ts`; create a create-dialog component (`frontend/src/pages/GroceryCreateDialog.tsx` + `.module.css`) using `frontend/src/components/Dialog.tsx` + `Stepper.tsx`. Built against the spec DTO — **not** wired to real calls (ticket 18).
+
+**Spec:** `docs/frontend/spec.md` §10.5 (grocery create dialog), §5 "Grocery" (`POST /api/grocery` body — `recipe_ids`, `multipliers`, `422`). Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/RecipeList.test.tsx`.
+
 - [ ] A grocery-create `Dialog` launches from the recipe-list multi-select action bar, wiring the stub from ticket 05b.
 - [ ] The dialog collects a multiplier `Stepper` per selected recipe (default 1×) — the only place multipliers are set, since `POST /api/grocery` accepts them only at create — and an optional list name with a sensible default.
 - [ ] If a selected recipe was deleted meanwhile, the dialog gives a recovery path: drop it from the selection and continue (re-validate against the `422`).

@@ -9,6 +9,12 @@ production code.
 
 **Status:** ready-for-agent
 
+**Files:** edit `backend/tests/test_inventory_math.py` and/or create `backend/tests/test_cook_contract.py`; `docs/phases/phase-5.md`. Authored black-box from the spec in a fresh context — no production code.
+
+**Spec:** `docs/spec.md` §4.5 (deduction), §5.4 (cook + made-history, `CookDeductionRead` shape, N7), §6 (cook race), §7 cook + audit-log contract rows. Read only these sections.
+
+**Tests:** n/a — this suite is locked and is **not** expected to pass until `phase-5b`.
+
 - [ ] §7 cook + audit-log contract cases authored black-box from `spec.md` into
       the appropriate module(s) (`test_inventory_math.py` additions and/or a cook
       contract test): the deduction outcomes for `deduct=true`, the

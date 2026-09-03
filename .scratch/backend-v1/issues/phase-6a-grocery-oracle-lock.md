@@ -9,6 +9,12 @@ before Phase 6 production code.
 
 **Status:** ready-for-agent
 
+**Files:** edit `backend/tests/test_inventory_math.py` and/or create a grocery contract test; `docs/phases/phase-6.md`. Authored black-box from the spec in a fresh context — no production code.
+
+**Spec:** `docs/spec.md` §4.3 (`generate_lines` + netting table), §5.6 (grocery API — line mutation N6, submit, archive), §6 (submit race), §7 Grocery generation / mutation / submit contract rows. Read only these sections.
+
+**Tests:** n/a — locked; the `generate_lines` rows are not expected to pass until `phase-6b`.
+
 - [ ] Every §7 **Grocery generation** oracle row asserted exactly in
       `test_inventory_math.py`: missing opaque, compatible partial, mixed-bucket
       partial, only incompatible, fully covered (no line), cross-recipe known

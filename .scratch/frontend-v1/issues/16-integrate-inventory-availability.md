@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/api/inventory.ts`, `frontend/src/api/recipes.ts` (availability), `frontend/src/types.ts`, `docs/frontend/spec.md` §5. External gate: backend Phase 4 merged.
+
+**Spec:** `docs/spec.md` §5.3 (availability) + §5.5 (inventory) as merged — re-diff; `docs/frontend/spec.md` §5, §10.9, §10.4, §7.4. Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/Inventory.test.tsx src/pages/RecipeDetail.test.tsx`, then full `npm run test:run`.
+
 - [ ] Inventory CRUD and `GET /api/recipes/{id}/availability` run against the real backend.
 - [ ] Availability adapter diff-reviewed against the merged Phase 4 DTO shape (`group_*` fields, status enum values, `nettable`); any change absorbed in the one adapter.
 - [ ] The four PATCH-rule rejections and the valid `{ quantity, unit }` update behave the same against the real backend as against MSW; the `match_name` `409` collision surfaces inline.

@@ -8,6 +8,12 @@ with `409`.
 
 **Status:** ready-for-agent
 
+**Files:** edit `backend/app/routers/grocery.py` (add `/archive`; archived-state `409` guard on every mutating grocery route), `backend/tests/test_grocery.py`.
+
+**Spec:** `docs/spec.md` §5.6 (archive — the only path to `archived`; `409` on every mutating route for an archived list). Read only this section.
+
+**Tests:** `cd backend && uv run pytest tests/test_grocery.py`, then full `uv run pytest`.
+
 - [ ] `POST /api/grocery/{id}/archive` -> `200 GroceryListRead`: `404` if the
       list is absent; `UPDATE grocery_lists SET status='archived' WHERE id=:id
       AND status='active'`; if `rowcount == 0` (already archived) -> `409
