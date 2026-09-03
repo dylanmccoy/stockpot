@@ -53,6 +53,14 @@ export function asOpenableUrl(raw: string | null): string | null {
 /** Count units carry no unit word — the label is just the number (spec §7.2). */
 const COUNT_UNITS: ReadonlySet<string | null> = new Set([null, "unit", "each"]);
 
+/** Append the unit word to an already-formatted amount, except for count units
+ *  which carry none (spec §7.2). Empty in → empty out. */
+function withUnitWord(formatted: string, unit: string | null): string {
+  if (!formatted) return "";
+  if (COUNT_UNITS.has(unit)) return formatted;
+  return [formatted, unit].filter(Boolean).join(" ");
+}
+
 /** A recipe row's quantity, scaled by the multiplier and run through
  *  `formatQuantity` (spec §7.2), with its unit appended — never a raw float.
  *  `null` quantity (to-taste) → `""`; the caller renders "to taste" itself. */
@@ -62,44 +70,48 @@ export function scaledQuantityLabel(
 ): string {
   const { quantity, unit } = ingredient;
   if (quantity === null) return "";
-  const formatted = formatQuantity(quantity * multiplier, unit);
-  if (COUNT_UNITS.has(unit)) return formatted;
-  return [formatted, unit].filter(Boolean).join(" ");
+  return withUnitWord(formatQuantity(quantity * multiplier, unit), unit);
 }
 
-/** A bare amount + unit for availability copy: `formatQuantity` (spec §7.2)
- *  then the unit word appended, except count units which carry none. Mirrors
- *  `scaledQuantityLabel`'s unit handling; `null`/non-finite → `""`. */
+/** A bare amount + unit for availability copy (spec §7.2); `null`/non-finite
+ *  → `""`. */
 export function amountLabel(value: number | null, unit: string | null): string {
-  const formatted = formatQuantity(value, unit);
-  if (!formatted) return "";
-  if (COUNT_UNITS.has(unit)) return formatted;
-  return [formatted, unit].filter(Boolean).join(" ");
+  return withUnitWord(formatQuantity(value, unit), unit);
 }
 
-const STATUS_TONE: Record<AvailabilityStatus, BadgeTone> = {
-  ok: "ok",
-  short: "warn",
-  have_uncertain: "warn",
-  missing: "danger",
-  to_taste: "neutral",
-};
+interface StatusMeta {
+  tone: BadgeTone;
+  /** Non-color status glyph — status is never color-only (spec §9). */
+  icon: string;
+  /** Badge text; `short` gets the shortfall amount appended by the caller. */
+  label: string;
+  /** Counted toward the "Missing N items" banner tally. `have_uncertain` is
+   *  not — the household may in fact have it, just in an incomparable unit
+   *  (spec §7.4). */
+  countsAsMissing: boolean;
+}
 
-/** Non-color status glyph — status is never color-only (spec §9). */
-const STATUS_ICON: Record<AvailabilityStatus, string> = {
-  ok: "✓",
-  short: "△",
-  have_uncertain: "?",
-  missing: "✕",
-  to_taste: "•",
-};
-
-const STATUS_LABEL: Record<AvailabilityStatus, string> = {
-  ok: "Have it",
-  short: "Short", // caller appends the shortfall amount
-  have_uncertain: "Check what you have",
-  missing: "Missing",
-  to_taste: "To taste",
+const STATUS_META: Record<AvailabilityStatus, StatusMeta> = {
+  ok: { tone: "ok", icon: "✓", label: "Have it", countsAsMissing: false },
+  short: { tone: "warn", icon: "△", label: "Short", countsAsMissing: true },
+  have_uncertain: {
+    tone: "warn",
+    icon: "?",
+    label: "Check what you have",
+    countsAsMissing: false,
+  },
+  missing: {
+    tone: "danger",
+    icon: "✕",
+    label: "Missing",
+    countsAsMissing: true,
+  },
+  to_taste: {
+    tone: "neutral",
+    icon: "•",
+    label: "To taste",
+    countsAsMissing: false,
+  },
 };
 
 interface AvailabilityRow {
@@ -140,7 +152,7 @@ export function groupAvailabilityLines(
     const statusLabel =
       first.status === "short"
         ? `Short ${amountLabel(first.group_short, first.group_unit)}`.trimEnd()
-        : STATUS_LABEL[first.status];
+        : STATUS_META[first.status].label;
     return {
       groupKey: key,
       item,
@@ -159,7 +171,10 @@ const availabilityColumns: Column<AvailabilityRow>[] = [
     header: "Status",
     render: (r) => (
       <span className={styles.statusCell}>
-        <Badge tone={STATUS_TONE[r.status]} icon={STATUS_ICON[r.status]}>
+        <Badge
+          tone={STATUS_META[r.status].tone}
+          icon={STATUS_META[r.status].icon}
+        >
           {r.statusLabel}
         </Badge>
         {r.status === "have_uncertain" && (
@@ -172,17 +187,19 @@ const availabilityColumns: Column<AvailabilityRow>[] = [
   },
 ];
 
+/** Header banner (spec §10.4). `all_available` is the server's word for "every
+ *  non-to-taste line is ok". When it isn't, tally the distinct groups that are
+ *  genuinely short/missing; a report whose only gaps are `have_uncertain` rows
+ *  gets the §7.4 "check what you have" prompt instead of a "missing" count. */
 function availabilityBanner(report: AvailabilityReport): string {
   if (report.all_available) return "You have everything";
-  const unavailable = report.lines.filter(
-    (l) =>
-      l.status === "short" ||
-      l.status === "have_uncertain" ||
-      l.status === "missing",
-  );
-  const groups = new Set(unavailable.map((l) => l.group_key));
-  const n = groups.size;
-  return `Missing ${n} ${n === 1 ? "item" : "items"}`;
+  const missing = new Set(
+    report.lines
+      .filter((l) => STATUS_META[l.status].countsAsMissing)
+      .map((l) => l.group_key),
+  ).size;
+  if (missing === 0) return "Check what you have";
+  return `Missing ${missing} ${missing === 1 ? "item" : "items"}`;
 }
 
 /** Availability table (spec §10.4). Driven by the same multiplier as the
@@ -223,6 +240,7 @@ function AvailabilityPanel({
       {query.data && (
         <>
           <p
+            aria-live="polite"
             className={cx(
               styles.banner,
               query.data.all_available ? styles.bannerOk : styles.bannerWarn,

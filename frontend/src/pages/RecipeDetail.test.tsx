@@ -511,14 +511,32 @@ describe("RecipeDetail availability", () => {
     ).toBeInTheDocument();
   });
 
-  it("banner counts the missing item groups", async () => {
+  it("banner counts short + missing groups, not the incomparable-unit ones", async () => {
     useRecipe(detailRecipe);
-    useAvailability(availabilityReport);
+    useAvailability(availabilityReport); // 1 short + 1 missing + 1 have_uncertain
     renderDetail();
     await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
 
     expect(
-      await within(availabilityRegion()).findByText("Missing 3 items"),
+      await within(availabilityRegion()).findByText("Missing 2 items"),
+    ).toBeInTheDocument();
+  });
+
+  it("banner prompts a check when the only gaps are incomparable-unit rows", async () => {
+    useRecipe(detailRecipe);
+    useAvailability({
+      ...availabilityReport,
+      all_available: false,
+      lines: [availabilityReport.lines[4]], // milk, have_uncertain
+    });
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    // banner (a <p>), distinct from the milk row's status badge of the same text
+    expect(
+      await within(availabilityRegion()).findByText("Check what you have", {
+        selector: "p",
+      }),
     ).toBeInTheDocument();
   });
 
