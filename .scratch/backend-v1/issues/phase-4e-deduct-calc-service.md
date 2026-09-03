@@ -7,7 +7,7 @@ surface yet; cook consumes it in `phase-5b`.
 **Blocked by:** `phase-4d` (reuses `aggregate`), `phase-4a` (locked deduction
 oracle), `phase-4c` (Phase 4 endpoint work complete).
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `backend/app/services/inventory_math.py` (add `deduct_calc`, `_entry`), `backend/tests/test_inventory_math.py`, `docs/phases/phase-4.md`, `docs/plan.md`.
 
