@@ -1,6 +1,17 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Float, ForeignKey, Index, Integer, String, Text, func
+from sqlalchemy import (
+    JSON,
+    CheckConstraint,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base, UtcDateTime
@@ -103,3 +114,47 @@ class RecipeIngredient(Base):
     recipe: Mapped[Recipe] = relationship(back_populates="ingredients")
 
     __table_args__ = (Index("ix_recipe_ingredients_recipe_position", "recipe_id", "position"),)
+
+
+class InventoryItem(Base):
+    __tablename__ = "inventory_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Display text. Set on first insert into a `(match_name, unit_bucket)` row and
+    # only changed by `PATCH` — the additive `POST` upsert leaves it untouched
+    # on conflict (spec.md §1, §5.5).
+    item: Mapped[str] = mapped_column(String(200), nullable=False)
+    # `normalize_name(item)`; tracks `item`.
+    normalized_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    # The recipe<->inventory match key. User-editable but canonical: every value
+    # (default or supplied) is `normalize_name`d before store; `""` after
+    # normalize -> 422 (N5).
+    match_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    # "mass" | "volume" | "count" | "opaque:<canonical-token>". Widened to 30 to
+    # fit `opaque:` + a long unknown token.
+    unit_bucket: Mapped[str] = mapped_column(String(30), nullable=False)
+    # Source of truth, in the bucket's canonical unit (g / ml / count / raw
+    # opaque amount). Must stay `>= 0` and finite (spec.md §1): a finite request
+    # can still overflow to `+inf` through unit conversion or the additive
+    # upsert, and `x < 9e999` (SQLite parses the literal as `+Inf`) rejects that
+    # and NaN at the database boundary.
+    quantity_base: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    # Preferred display unit only — never drives math. NULL / opaque => display
+    # in the canonical unit.
+    display_unit: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        UtcDateTime, default=_utcnow, onupdate=_utcnow
+    )
+    # Attribution only, never reassigned. No cascade: deleting a user (which v1
+    # never does) must not take their inventory with them.
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("match_name", "unit_bucket", name="uq_inventory_match_bucket"),
+        CheckConstraint(
+            "quantity_base >= 0 AND quantity_base < 9e999",
+            name="ck_inventory_quantity_base_nonneg_finite",
+        ),
+    )

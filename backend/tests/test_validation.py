@@ -139,3 +139,22 @@ def test_ingredient_object_string_bounds_are_enforced(
         json={"title": "Bounded", "ingredients": [{"item": "flour", field: over}]},
     )
     assert response.status_code == 422, response.text
+
+
+# Inventory `quantity` is `>= 0` (zero is legitimate), so `"0"` is dropped from
+# the rejected set here — `test_inventory.py` asserts zero is a 201.
+REJECTED_INVENTORY_QUANTITIES = ["-1", "-0.5", "Infinity", "-Infinity", "NaN"]
+
+
+@pytest.mark.parametrize("quantity", REJECTED_INVENTORY_QUANTITIES)
+def test_inventory_post_quantity_rejects_negative_and_non_finite(
+    auth_client: TestClient, quantity: str
+) -> None:
+    response = _send_raw(
+        auth_client,
+        "POST",
+        "/api/inventory",
+        '{"item": "Flour", "quantity": %s, "unit": "kg"}' % quantity,
+    )
+    assert response.status_code == 422, response.text
+    assert auth_client.get("/api/inventory").json() == []

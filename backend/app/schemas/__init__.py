@@ -9,6 +9,11 @@ from app.schemas.auth import (
     UserRead,
 )
 from app.schemas.common import ORMModel
+from app.schemas.inventory import (
+    InventoryItemCreate,
+    InventoryItemRead,
+    InventoryItemUpdate,
+)
 from app.schemas.recipe import (
     RecipeBase,
     RecipeCreate,
@@ -35,4 +40,8 @@ __all__ = [
     "RecipeRead",
     "RecipeIngredientIn",
     "RecipeIngredientRead",
+    # Inventory
+    "InventoryItemCreate",
+    "InventoryItemUpdate",
+    "InventoryItemRead",
 ]
