@@ -1,8 +1,10 @@
 """Pure inventory math services (spec.md §4).
 
 Pure: imports only ``units``, ``normalize``, and stdlib. **No ORM, no
-``Session``.** Every function takes / returns the frozen dataclasses below. A
-function **proposes**; the router **applies** inside the request transaction.
+``Session``.** Every function takes / returns the frozen dataclasses below —
+except ``deduct_calc`` / ``_entry``, whose log entries are plain ``dict``s by
+the §4.5 / N7 contract (``DeductProposal.log_entries: list[dict]``). A function
+**proposes**; the router **applies** inside the request transaction.
 
 Phase status (``docs/plan.md`` §Independent contract-test gate):
 
@@ -12,7 +14,7 @@ Phase status (``docs/plan.md`` §Independent contract-test gate):
 
 The §7 oracle cases in ``tests/test_inventory_math.py`` were authored and locked
 at ``phase-4a``: add-to-inventory passes from ``phase-4b`` on, availability from
-``phase-4d`` on, and deduction stays red until ``phase-4e`` lands.
+``phase-4d`` on, and deduction from ``phase-4e`` on.
 """
 
 from __future__ import annotations
@@ -282,18 +284,118 @@ def check_availability(
 
 
 # --------------------------------------------------------------------------- #
-# 4.5 — not owned by phase-4d.
-#
-# Forward declarations so ``tests/test_inventory_math.py`` (the phase-4a locked
-# oracle, which imports the whole §4 surface) collects. The bodies land in
-# phase-4e; the deduction oracle cases stay red until then.
+# 4.5 deduct_calc
 # --------------------------------------------------------------------------- #
-
-_PHASE_4E = "deduct_calc / _entry land in phase-4e (spec.md §4.5)"
 
 
 def deduct_calc(reqs: list[ReqLine], stock: list[StockRow]) -> DeductProposal:
-    raise NotImplementedError(_PHASE_4E)
+    """Propose the inventory draw-down for ``POST /api/recipes/{id}/cook`` (spec.md §4.5).
+
+    Pure: builds a working copy ``live`` of every stock row's ``quantity_base``
+    and never mutates ``stock``. Per ``(normalized_name, bucket)`` group it draws
+    the compatible bucket down in **ascending row-id order** (decision SD2),
+    clamping each row at zero and logging ``"clamped to 0"`` for any unmet
+    remainder — even when incompatible-bucket stock exists (cook does **not**
+    take the #N3 uncertainty split). To-taste members emit one vacuous entry and
+    no row update.
+
+    ``requested`` is carried only on the first log entry of a group; ``None`` on
+    the rest. Every entry is a plain ``dict`` with all eleven keys (``_entry``).
+    """
+    items = {r.ingredient_id: r.item for r in reqs}
+    live = {r.id: r.quantity_base for r in stock}
+    row_updates: list[RowDeduction] = []
+    log: list[dict] = []
+
+    for g in aggregate(reqs).values():
+        canon = canon_unit(g.bucket)
+
+        for ing_id in g.to_taste_members:
+            log.append(
+                _entry(
+                    item=items[ing_id],
+                    normalized_name=None,
+                    requested=None,
+                    requested_unit=None,
+                    deducted=None,
+                    deducted_unit=None,
+                    inventory_unit=None,
+                    before=None,
+                    after=None,
+                    applied=False,
+                    reason="to taste",
+                )
+            )
+
+        if not g.members:  # group had only to-taste rows
+            continue
+
+        pos = [r for r in stock if r.match_name == g.norm and live[r.id] > 0]
+        compat = sorted(
+            (r for r in pos if r.unit_bucket == g.bucket), key=lambda r: r.id
+        )
+
+        if not pos:
+            log.append(
+                _entry(
+                    item=g.display_item,
+                    normalized_name=g.norm,
+                    requested=g.need_base,
+                    requested_unit=canon,
+                    deducted=0.0,
+                    deducted_unit=canon,
+                    inventory_unit=canon,
+                    before=None,
+                    after=None,
+                    applied=False,
+                    reason="not in inventory",
+                )
+            )
+            continue
+        if not compat:
+            log.append(
+                _entry(
+                    item=g.display_item,
+                    normalized_name=g.norm,
+                    requested=g.need_base,
+                    requested_unit=canon,
+                    deducted=0.0,
+                    deducted_unit=canon,
+                    inventory_unit=canon,
+                    before=None,
+                    after=None,
+                    applied=False,
+                    reason="have uncertain (incompatible unit)",
+                )
+            )
+            continue
+
+        remaining = g.need_base
+        for i, r in enumerate(compat):
+            before = live[r.id]
+            take = min(remaining, before)
+            live[r.id] = before - take
+            remaining -= take
+            row_updates.append(RowDeduction(r.id, live[r.id]))
+            log.append(
+                _entry(
+                    item=g.display_item,
+                    normalized_name=g.norm,
+                    requested=(g.need_base if i == 0 else None),
+                    requested_unit=canon,
+                    deducted=take,
+                    deducted_unit=canon,
+                    inventory_unit=canon,
+                    before=before,
+                    after=live[r.id],
+                    applied=True,
+                    reason=("ok" if remaining <= 0 else "clamped to 0"),
+                )
+            )
+            if remaining <= 0:
+                break
+
+    return DeductProposal(row_updates=row_updates, log_entries=log)
 
 
 def _entry(
@@ -310,6 +412,24 @@ def _entry(
     applied: bool,
     reason: str,
 ) -> dict:
-    # Signature is the locked §4.5 / N7 contract (all eleven keys required, no
-    # defaults); the body lands in phase-4e.
-    raise NotImplementedError(_PHASE_4E)
+    """One ``CookLog.deductions`` entry as a plain ``dict`` (spec.md §4.5 / N7).
+
+    Signature names all eleven keys as required keyword args (no defaults) — a
+    missing one is a ``TypeError`` at cook time, not a silently absent key. The
+    returned dict always carries all eleven keys, ``None`` where the branch does
+    not populate one; the read path validates each through ``CookDeductionRead``
+    (§5.4).
+    """
+    return {
+        "item": item,
+        "normalized_name": normalized_name,
+        "requested": requested,
+        "requested_unit": requested_unit,
+        "deducted": deducted,
+        "deducted_unit": deducted_unit,
+        "inventory_unit": inventory_unit,
+        "before": before,
+        "after": after,
+        "applied": applied,
+        "reason": reason,
+    }
