@@ -11,10 +11,10 @@ and per-recipe availability checks.
       (`normalize_name`d on POST/PATCH, `""` → `422`, collision on normalized
       value). See [`../decisions.md`](../decisions.md#n5). Normative in `spec.md`
       §1 / §4.4 / §5.5 / §7.
-- [ ] **R-7 contract tests accepted before implementation** — a fresh-context
-      reviewer writes and reviews the §7 availability, aggregation,
-      `add_to_inventory_calc`, and deduction oracle cases in
-      `test_inventory_math.py`. Accepted cases are locked under
+- [x] **R-7 contract tests accepted before implementation** (phase-4a,
+      2026-09-03) — a fresh-context reviewer writes and reviews the §7
+      availability, aggregation, `add_to_inventory_calc`, and deduction oracle
+      cases in `test_inventory_math.py`. Accepted cases are locked under
       [`plan.md` §Independent contract-test gate](../plan.md#independent-contract-test-gate).
 
 ## Specification
