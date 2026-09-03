@@ -4,7 +4,7 @@
 
 **Blocked by:** 04, 03.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/pages/Inventory.tsx`, `frontend/src/api/inventory.ts`; create `frontend/src/pages/Inventory.module.css`, `frontend/src/pages/Inventory.test.tsx`.
 
