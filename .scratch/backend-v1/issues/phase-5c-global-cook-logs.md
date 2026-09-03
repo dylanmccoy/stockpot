@@ -8,6 +8,12 @@ newest-first global feed and a by-id detail read, both surviving recipe deletion
 
 **Status:** ready-for-agent
 
+**Files:** create `backend/app/routers/cook_logs.py`, `backend/tests/test_cook_logs.py`; edit `backend/app/schemas/cook_logs.py` (add `CookLogList`), `backend/app/main.py`, `docs/phases/phase-5.md`, `docs/plan.md`.
+
+**Spec:** `docs/spec.md` §5.4 (global `/api/cook-logs` list + by-id, pagination, survives recipe deletion). Read only this section.
+
+**Tests:** `cd backend && uv run pytest tests/test_cook_logs.py`, then full `uv run pytest`.
+
 - [ ] `backend/app/routers/cook_logs.py` (`prefix="/api/cook-logs"`,
       `route_class=TransactionRoute`, auth required):
   - `GET /api/cook-logs` -> `200 CookLogList {items, total, limit, offset}`;

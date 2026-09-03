@@ -9,6 +9,12 @@ land in later Phase 6 tickets.
 
 **Status:** ready-for-agent
 
+**Files:** create `backend/app/schemas/grocery.py`, `backend/app/routers/grocery.py`, `backend/tests/test_grocery.py`; edit `backend/app/models.py` (add `GroceryList`, `GroceryListItem`), `backend/app/services/inventory_math.py` (add `generate_lines`), `backend/app/schemas/__init__.py`, `backend/app/main.py`, `backend/tests/test_validation.py`.
+
+**Spec:** `docs/spec.md` §1 "grocery_lists"/"grocery_list_items" (models), §4.3 (`generate_lines`, netting table, output order), §5.6 (`POST`/`GET`/`DELETE` grocery), §7 Grocery generation oracle rows. Read only these sections.
+
+**Tests:** `cd backend && uv run pytest tests/test_grocery.py tests/test_inventory_math.py tests/test_validation.py`, then full `uv run pytest`.
+
 - [ ] `backend/recipe.db` deleted (schema expansion).
 - [ ] `GroceryList` + `GroceryListItem` models per §1: all columns incl.
       `source_recipe_ids` JSON (no FK), `nettable` (default `true`),

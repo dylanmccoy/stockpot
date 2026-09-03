@@ -9,6 +9,12 @@ oracle), `phase-4c` (Phase 4 endpoint work complete).
 
 **Status:** ready-for-agent
 
+**Files:** edit `backend/app/services/inventory_math.py` (add `deduct_calc`, `_entry`), `backend/tests/test_inventory_math.py`, `docs/phases/phase-4.md`, `docs/plan.md`.
+
+**Spec:** `docs/spec.md` §4.5 (`deduct_calc`, `_entry`, the 11 keys, branch coverage), §4 (DTOs), §7 "Deduction" oracle rows. Read only these sections.
+
+**Tests:** `cd backend && uv run pytest tests/test_inventory_math.py`, then full `uv run pytest`.
+
 - [ ] `deduct_calc(reqs, stock) -> DeductProposal` in
       `backend/app/services/inventory_math.py` per §4.5: `aggregate`, a
       working-copy `live` dict, positive-only stock, the compatible bucket sorted

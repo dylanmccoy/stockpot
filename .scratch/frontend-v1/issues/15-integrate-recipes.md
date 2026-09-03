@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/test/handlers.ts`, `frontend/src/types.ts`, `docs/frontend/spec.md` §5. Run the RecipeList / RecipeForm / RecipeDetail suites against the real backend. External gate: backend Phase 3 merged.
+
+**Spec:** `docs/spec.md` §5.2 (recipes API as merged — re-diff `types.ts` and `docs/frontend/spec.md` §5 against it); `docs/frontend/spec.md` §5 "Recipes", §10.2–§10.4. Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/RecipeList.test.tsx src/pages/RecipeForm.test.tsx src/pages/RecipeDetail.test.tsx`, then full `npm run test:run`.
+
 - [ ] RecipeList, RecipeForm, and RecipeDetail body run against the real recipes endpoints.
 - [ ] The recipes request/response shapes match `docs/spec.md` §5.2 as merged; types module and `docs/frontend/spec.md` §5 re-diffed against the backend section and any drift reconciled.
 - [ ] Both RecipeForm flow tests pass against the real backend: create with mixed pasted-string + structured rows; edit full-replace clears removed rows; `loc`-mapped `422`s land on the right fields.

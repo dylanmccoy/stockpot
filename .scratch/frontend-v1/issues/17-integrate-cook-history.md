@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/api/cookLogs.ts`, `frontend/src/api/recipes.ts` (cook), `frontend/src/types.ts`, `docs/frontend/spec.md` §5. External gate: backend Phase 5 merged.
+
+**Spec:** `docs/spec.md` §5.4 (cook + history as merged — re-diff; null rules); `docs/frontend/spec.md` §5, §10.4, §10.8. Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/RecipeDetail.test.tsx src/pages/History.test.tsx`, then full `npm run test:run`.
+
 - [ ] The cook action, the per-recipe history panel, and `/history` run against the real backend.
 - [ ] Cook adapter diff-reviewed against the merged Phase 5 deduction DTO.
 - [ ] Posting a cook invalidates and refetches availability, inventory, and cook-logs against the real backend; a real `409` stock-collision shows the retry copy and refetches.

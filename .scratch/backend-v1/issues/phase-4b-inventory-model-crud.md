@@ -9,6 +9,12 @@ lands in `phase-4c`.
 
 **Status:** ready-for-agent
 
+**Files:** create `backend/app/schemas/inventory.py`, `backend/app/routers/inventory.py`, `backend/tests/test_inventory.py`; edit `backend/app/models.py` (add `InventoryItem`), `backend/app/services/inventory_math.py` (add `add_to_inventory_calc`), `backend/app/schemas/__init__.py`, `backend/app/main.py`, `backend/tests/test_validation.py`.
+
+**Spec:** `docs/spec.md` §1 "inventory_items" (model), §5.5 (inventory `GET`/`POST`/`DELETE`, additive upsert), §4.4 (`add_to_inventory_calc`), §2.2 (`bucket_of`, `normalize_unit_token`). Read only these sections.
+
+**Tests:** `cd backend && uv run pytest tests/test_inventory.py tests/test_inventory_math.py tests/test_validation.py`, then full `uv run pytest`.
+
 - [ ] `backend/recipe.db` deleted before the first run (schema expansion).
 - [ ] `InventoryItem` model per `spec.md` §1: `item`, `normalized_name`,
       `match_name` (indexed), `unit_bucket` `str(30)`, `quantity_base` `Float`

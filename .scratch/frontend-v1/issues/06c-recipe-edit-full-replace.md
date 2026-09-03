@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/pages/RecipeForm.tsx`, `frontend/src/pages/RecipeForm.test.tsx`, `frontend/src/api/recipes.ts` (PUT full-replace adapter).
+
+**Spec:** `docs/frontend/spec.md` §10.3 (RecipeForm edit / PUT full-replace), §5 "Recipes" (PUT shape). Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/RecipeForm.test.tsx`.
+
 - [ ] `/recipes/:id/edit` fetches the recipe and pre-fills every field, step, and ingredient row.
 - [ ] Save uses `PUT` full-replace; removed steps and ingredient rows are absent from the body and gone after refetch.
 - [ ] The ingredient-row `id` churn on `PUT` does not break the table (row identity is not keyed on the server `id` across an edit).

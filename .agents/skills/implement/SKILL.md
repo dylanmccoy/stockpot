@@ -40,23 +40,34 @@ Use /tdd where possible, at pre-agreed seams.
 
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.
 
-Once done, review the work in two passes:
-
-1. `/code-review` — the repo's two-axis (Standards + Spec) review of the diff.
-2. `/codex:review --wait` — an independent review from a different model. It is
-   review-only and will not change the code, so once it returns, work through
-   its findings yourself: action the ones that hold up, and note any you are
-   deliberately skipping and why.
+Once done, review the work with `/code-review` — the repo's two-axis
+(Standards + Spec) review of the diff. Action the findings that hold up, and note
+any you are deliberately skipping and why.
 
 Re-run typechecking and the full test suite after actioning any review findings.
+
+The second, independent `/codex:review` pass is **not** run here. It is done by
+hand in a fresh window after `/implement` ends (see "Close out"), so its findings
+are actioned against a clean context budget instead of eating into this session's
+— by review time the build context has already cashed out into the diff, the
+tests, and the ticket.
 
 ## Close out
 
 Commit your work to this ticket's branch. Do not merge it or open a PR unless
 the user asks.
 
-Leave the worktree in place and tell the user where it is. Once the branch is
-merged it can be cleaned up with:
+Leave the worktree in place and tell the user where it is, and remind them to run
+the independent review by hand before merging:
+
+1. Open a fresh session (`/clear`, or a new terminal) and `cd` into
+   `.claude/worktrees/<feature-slug>-<ticket-id>`.
+2. Run `/codex:review` against this branch.
+3. Action the findings that hold up (note any deliberate skips and why), re-run
+   typechecking and the full test suite, and `git commit --amend` or add a fixup
+   commit on this branch.
+
+Once the branch is merged the worktree can be cleaned up with:
 ```
 git worktree remove .claude/worktrees/<feature-slug>-<ticket-id>
 ```

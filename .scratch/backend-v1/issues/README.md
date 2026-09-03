@@ -35,3 +35,20 @@ phase-4a  inventory-math oracle lock (R-7)
 
 Only real fan-out: within Phase 4, `phase-4c` and `phase-4d` both depend on
 `phase-4b` and are independent of each other; `phase-4e` waits on both.
+
+## Ticket header contract
+
+Every ticket carries these three fields directly under **Status:**, before the
+checklist:
+
+- **Files:** the exact paths to create / edit. The agent should not need to
+  search the tree for them.
+- **Spec:** the exact `docs/spec.md` section anchors (`§X.Y`) with a one-word
+  gloss each, ending "Read only these sections." Never cite a whole spec file;
+  never send the agent to `docs/frontend/`.
+- **Tests:** the exact scoped test command for this ticket (the R-7 oracle-lock
+  tickets say "n/a — not expected to pass until `<impl ticket>`").
+
+Rationale: keeps each `/implement` inside the smart zone by removing tree-search
+and whole-spec reads. `backend/CLAUDE.md` holds the area → spec-section → test
+map the **Spec:** lines are drawn from.

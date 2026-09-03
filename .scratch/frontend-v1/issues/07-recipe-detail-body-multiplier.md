@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/pages/RecipeDetail.tsx`, `frontend/src/api/recipes.ts`; create `frontend/src/pages/RecipeDetail.module.css`, `frontend/src/pages/RecipeDetail.test.tsx`. Use `frontend/src/lib/format.ts` and `frontend/src/components/Stepper.tsx` as-is.
+
+**Spec:** `docs/frontend/spec.md` §10.4 (RecipeDetail body), §7.2 (`format` — `formatQuantity`). Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/RecipeDetail.test.tsx`.
+
 - [ ] `/recipes/:id` shows ingredients in order with `formatQuantity` output (e.g. "1½ cups"); a raw converted float is never shown unformatted.
 - [ ] Shows steps, notes, cuisine, servings, prep/cook time. `source_url` as an "open link" when a valid URL.
 - [ ] Delete action → confirmation dialog → on success navigate to `/`.

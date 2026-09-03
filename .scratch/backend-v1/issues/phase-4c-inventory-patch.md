@@ -9,6 +9,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `backend/app/routers/inventory.py`, `backend/app/schemas/inventory.py`, `backend/tests/test_inventory.py`, `backend/tests/test_validation.py`.
+
+**Spec:** `docs/spec.md` §5.5 (inventory `PATCH` — the `model_fields_set` guard rails, N5), §1 "inventory_items", §2.2 (`normalize_unit_token`, `bucket_of`, `to_base`/`from_base`). Read only these sections.
+
+**Tests:** `cd backend && uv run pytest tests/test_inventory.py tests/test_validation.py`, then full `uv run pytest`.
+
 - [ ] `PATCH /api/inventory/{id}` -> `200 InventoryItemRead`; `404` if the row is
       absent; driven by `body.model_fields_set` (`S`) per §5.5:
   - `S` empty -> `200` no-op (return the row unchanged).

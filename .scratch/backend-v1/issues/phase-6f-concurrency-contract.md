@@ -9,6 +9,12 @@ the backend is feature-complete.
 
 **Status:** ready-for-agent
 
+**Files:** rewrite `backend/tests/test_concurrency.py`; edit `backend/app/main.py` / `backend/app/database.py` only if the `409` mapping needs it; `docs/phases/phase-6.md`, `docs/plan.md`.
+
+**Spec:** `docs/spec.md` §6 (concurrency & transactions, `_to_409_if_locked_else_500`), §7 concurrency / submit-race contract + `test_concurrency.py` intent, §5.6 (submit). Read only these sections.
+
+**Tests:** `cd backend && uv run pytest tests/test_concurrency.py`, then full `uv run pytest`.
+
 - [ ] `backend/tests/test_concurrency.py` rewritten per `spec.md` §7:
       file-backed SQLite (`tmp_path`), two independent engines / connections,
       asserting

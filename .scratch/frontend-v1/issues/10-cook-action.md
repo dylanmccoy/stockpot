@@ -6,6 +6,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** edit `frontend/src/pages/RecipeDetail.tsx`, `frontend/src/pages/RecipeDetail.test.tsx`, `frontend/src/api/recipes.ts` (cook adapter). Built against the spec DTO — **not** wired to real calls (ticket 17).
+
+**Spec:** `docs/frontend/spec.md` §10.4 (cook action), §5 "Cook + history" (`/cook` body + `CookLogRead`). Read only these sections.
+
+**Tests:** `cd frontend && npm run test:run -- src/pages/RecipeDetail.test.tsx`.
+
 - [ ] `/recipes/:id` has a "mark as cooked" button and a "deduct from inventory" toggle (on by default) next to it.
 - [ ] Cooking posts at the current multiplier; a double batch deducts twice the stock.
 - [ ] On success, the availability table, inventory, and cook-log views are invalidated and refetch.

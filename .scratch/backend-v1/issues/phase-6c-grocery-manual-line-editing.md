@@ -9,6 +9,12 @@ nothing reaches stock until `submit` (`phase-6d`).
 
 **Status:** ready-for-agent
 
+**Files:** edit `backend/app/routers/grocery.py` (add `/items` `POST`/`PATCH`/`DELETE`), `backend/app/schemas/grocery.py`, `backend/tests/test_grocery.py`.
+
+**Spec:** `docs/spec.md` §5.6 (manual items + line editing, N6 atomic `quantity`+`unit` pair, reclassification to `manual`), §7 "Grocery mutation (N6)" oracle rows. Read only these sections.
+
+**Tests:** `cd backend && uv run pytest tests/test_grocery.py`, then full `uv run pytest`.
+
 - [ ] `POST /api/grocery/{id}/items` -> `201 GroceryListItemRead`: `404` if the
       list is absent; `409` if the list is `archived`; creates
       `GroceryListItem(source="manual", nettable=true, checked=false,

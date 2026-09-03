@@ -8,6 +8,12 @@
 
 **Status:** ready-for-agent
 
+**Files:** create `backend/app/schemas/cook_logs.py`; edit `backend/app/models.py` (add `CookLog`), `backend/app/schemas/__init__.py`, `backend/app/routers/recipes.py` (add `/cook`, `/cook-logs`), `backend/app/main.py`, `backend/tests/test_recipes.py`, `backend/tests/test_concurrency.py`.
+
+**Spec:** `docs/spec.md` §1 "cook_logs" (model), §5.4 (cook endpoint, per-recipe history, `CookDeductionRead`/`CookLogRead`), §4.5 (`deduct_calc` consumed here), §6 (transaction / `409`). Read only these sections.
+
+**Tests:** `cd backend && uv run pytest tests/test_recipes.py tests/test_inventory_math.py`, then full `uv run pytest`.
+
 - [ ] `backend/recipe.db` deleted (schema expansion).
 - [ ] `CookLog` model per §1: `recipe_id` FK `ON DELETE SET NULL`
       `passive_deletes=True`, `recipe_title` snapshot, `multiplier` (`>0`, finite,
