@@ -30,10 +30,10 @@ and per-recipe availability checks.
 - [x] Delete `backend/recipe.db` before running the expanded schema. *(phase-4b)*
 - [x] Add `InventoryItem` with `(match_name, unit_bucket)` uniqueness,
       `quantity_base`, `display_unit`, and database checks. *(phase-4b)*
-- [ ] Define pure service DTOs and implement aggregation, availability,
+- [x] Define pure service DTOs and implement aggregation, availability,
       additive inventory proposals, and deduction proposals.
       *(phase-4b: DTOs + `add_to_inventory_calc` done; phase-4d: `aggregate` /
-      `check_availability` done; `deduct_calc` / `_entry` → phase-4e.)*
+      `check_availability` done; phase-4e: `deduct_calc` / `_entry` done.)*
 - [x] Add `schemas/inventory.py` with separate create/update/read schemas and
       re-export them from the package. *(phase-4b)*
 - [x] Implement additive POST, absolute PATCH, list, read, and delete behavior.
@@ -61,25 +61,38 @@ and per-recipe availability checks.
 
 ## Verification
 
-- [ ] Every accepted §7 availability, aggregation, add-to-inventory, deduction,
+- [x] Every accepted §7 availability, aggregation, add-to-inventory, deduction,
       and interpretation-independent contract case passes unchanged.
-- [ ] Known units are canonicalized and opaque units only combine exactly.
+      *(phase-4e: all `test_inventory_math.py` deduction oracle + `_entry`
+      cases green; no accepted case altered.)*
+- [x] Known units are canonicalized and opaque units only combine exactly.
+      *(phase-4d/4e: `to_base` canonicalizes known dims — `kg`→`g` in the
+      deduction `kg-from-g` case; opaque buckets match only on exact
+      `unit_bucket`.)*
 - [x] Zero stock is absent; mixed compatible/incompatible positive stock follows
       the spec's uncertainty rule. *(phase-4d: `check_availability` — §7 oracle
       cases `zero-stock-is-absent`, `mixed-bucket-uncertain-short`,
       `only-incompatible`, plus `test_recipes.py` sugar-to-zero → `missing`.)*
 - [x] POST is additive, PATCH is absolute, and identity collisions return 409.
-- [ ] `cd backend && uv run pytest` passes.
+- [x] `cd backend && uv run pytest` passes. *(phase-4e: 590 passed.)*
 
 ## Exit criteria
 
 - [x] N5 is closed (resolved 2026-08-31; see [`../decisions.md`](../decisions.md#n5)).
-- [ ] The R-7 contract-test gate is checked and its accepted cases were not
-      changed by the implementation pass.
-- [ ] Scope fence passed (R-10, [`../plan.md` §Phase scope fence](../plan.md#phase-scope-fence-and-handoff-contract)):
+- [x] The R-7 contract-test gate is checked and its accepted cases were not
+      changed by the implementation pass. *(phase-4e: `deduct_calc` / `_entry`
+      implemented against the locked `test_inventory_math.py` deduction oracle;
+      `git diff` touches only the two forward-declared bodies + the module
+      docstring status note, no test edits.)*
+- [x] Scope fence passed (R-10, [`../plan.md` §Phase scope fence](../plan.md#phase-scope-fence-and-handoff-contract)):
       every changed behavior traces to this phase, its linked spec, or an
       accepted contract test; no deferred/context document authorized work.
-- [ ] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
+      *(phase-4e: only `spec.md` §4.5 `deduct_calc` / `_entry` behavior; no HTTP
+      surface — cook consumes it in phase-5b.)*
+- [x] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
       a non-author reviewer walked every availability / aggregation branch in
       this phase's diff and tests against `spec.md` §7, §5.3, and §5.5.
-- [ ] Phase complete; update the status table in [`../plan.md`](../plan.md).
+      *(phase-4e: `/code-review` — Standards + Spec sub-agents walked the
+      `deduct_calc` branches against §4.5 / §7 Deduction; no blocking findings.)*
+- [x] Phase complete; update the status table in [`../plan.md`](../plan.md).
+      *(phase-4e: Phase 4 → Complete.)*

@@ -166,7 +166,7 @@ Phase 8 in the current v1 plan.
 | [1 — pure core](phases/phase-1.md) | Normalization, units, and ingredient parser | Phase 0 | Complete |
 | [2 — auth and app factory](phases/phase-2.md) | App-local DB wiring, transactions, sessions, and route gating | Phase 1 | Complete |
 | [3 — structured recipes](phases/phase-3.md) | Nested recipe ingredients and validation | Phase 2 | Complete |
-| [4 — inventory and availability](phases/phase-4.md) | Inventory CRUD and availability math | Phase 3 (gate N5 ✅) | Not started |
+| [4 — inventory and availability](phases/phase-4.md) | Inventory CRUD and availability math | Phase 3 (gate N5 ✅) | Complete |
 | [5 — cooking and history](phases/phase-5.md) | Stock deduction and durable cook logs | Phase 4 (gate N7 ✅) | Not started |
 | [6 — grocery lists](phases/phase-6.md) | Netted lists, submit, archive, and concurrency behavior | Phase 5 (gate N6 ✅) | Not started |
 | [7 — documentation](phases/phase-7.md) | User and developer documentation matches the shipped backend | Phase 6 | Not started |
@@ -216,7 +216,13 @@ the first post-v1 schema change triggers the Alembic work described in
 - The implementation specification is complete and is authoritative for v1.
 - Phases 0, 1, 2, and 3 are complete. Phase 2's first pass shipped (PR #20);
   review pass 8 (2026-09-01) reopened it for hardening, which shipped as PR #23
-  and closed its second R-6 gate. Phase 4 follows.
+  and closed its second R-6 gate.
+- Phase 4 is complete. It shipped as vertical slices under
+  `.scratch/backend-v1/issues/` — `phase-4a` (R-7 oracle lock), `phase-4b`
+  (`InventoryItem` + additive CRUD + `add_to_inventory_calc`), `phase-4c`
+  (absolute PATCH + N5), `phase-4d` (availability endpoint —
+  `aggregate` / `check_availability`, PR #47), and `phase-4e` (`deduct_calc` /
+  `_entry` pure service + phase close). Phase 5 follows.
 - Phase 3 added a `RequestValidationError` handler in `create_app`. It is
   required by §7 — a request carrying the JSON literal `Infinity` or `NaN`
   validates correctly, but the default handler echoes the offending value into
