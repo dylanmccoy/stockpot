@@ -7,6 +7,7 @@ absolute replacement driven by ``body.model_fields_set``.
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.orm import Session
 
 from app.database import SessionDep, TransactionRoute
 from app.models import InventoryItem, _utcnow
@@ -22,6 +23,15 @@ router = APIRouter(
     route_class=TransactionRoute,
     dependencies=[Depends(get_current_user)],
 )
+
+
+def _get_or_404(db: Session, item_id: int) -> InventoryItem:
+    row = db.get(InventoryItem, item_id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found"
+        )
+    return row
 
 
 @router.get("", response_model=list[InventoryItemRead])
@@ -90,11 +100,7 @@ def update_inventory(
     """Absolute replacement (spec.md §5.5). Every branch is gated on
     ``S = body.model_fields_set`` — an absent field is never touched, a
     present-and-null field is a 422 (not a clear)."""
-    row = db.get(InventoryItem, item_id)
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found"
-        )
+    row = _get_or_404(db, item_id)
 
     fields_set = payload.model_fields_set
     if not fields_set:
@@ -165,10 +171,6 @@ def update_inventory(
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_inventory(item_id: int, db: SessionDep) -> None:
-    row = db.get(InventoryItem, item_id)
-    if row is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found"
-        )
+    row = _get_or_404(db, item_id)
     db.delete(row)
     db.flush()  # TransactionRoute owns the commit

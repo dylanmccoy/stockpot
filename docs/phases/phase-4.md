@@ -36,23 +36,25 @@ and per-recipe availability checks.
       `check_availability` → phase-4d, `deduct_calc` / `_entry` → phase-4e.)*
 - [x] Add `schemas/inventory.py` with separate create/update/read schemas and
       re-export them from the package. *(phase-4b)*
-- [ ] Implement additive POST, absolute PATCH, list, read, and delete behavior.
+- [x] Implement additive POST, absolute PATCH, list, read, and delete behavior.
       `match_name` (supplied or derived) is `normalize_name`d before store;
       `""` after normalize → `422`; collision check + `ON CONFLICT` key off the
       normalized value (N5).
       *(phase-4b: additive `POST`, `GET` list, `DELETE`, and the `""`-after-normalize
-      `422` done; absolute `PATCH` and the `409` collision check → phase-4c.)*
+      `422`; phase-4c: absolute `PATCH` — `model_fields_set` gate, N5, and the
+      `409` `(nm, unit_bucket)` collision check.)*
 - [ ] Implement the recipe availability endpoint. Build each `ReqLine` with
       `quantity = None if ing.quantity is None else ing.quantity * multiplier`
       so a to-taste line never hits `None * multiplier` (R-1).
-- [ ] Add `test_inventory.py` and any implementation-specific math regressions
+- [x] Add `test_inventory.py` and any implementation-specific math regressions
       without changing the accepted `test_inventory_math.py` cases.
       `test_inventory.py` covers N5: casing / surrounding whitespace normalized,
       `""`-after-normalize → `422`, post-normalization collision → `409`,
       `"Flour"`+`"flour"` POSTs land on one row.
       *(phase-4b: `test_inventory.py` added covering casing/whitespace,
-      `""`-after-normalize `422`, and `"Flour"`+`"flour"` folding; the `409`
-      collision case → phase-4c with `PATCH`.)*
+      `""`-after-normalize `422`, and `"Flour"`+`"flour"` folding; phase-4c: the
+      `PATCH` `409` `(nm, unit_bucket)` collision case + the full §5.5 example
+      table. Accepted `test_inventory_math.py` cases untouched.)*
 - [ ] Give the `test_recipes.py` availability fixture a to-taste line
       (`"salt to taste"`); assert `?multiplier=2` returns it as `status="to_taste"`
       with no `TypeError` (R-1 regression guard).
@@ -64,7 +66,7 @@ and per-recipe availability checks.
 - [ ] Known units are canonicalized and opaque units only combine exactly.
 - [ ] Zero stock is absent; mixed compatible/incompatible positive stock follows
       the spec's uncertainty rule.
-- [ ] POST is additive, PATCH is absolute, and identity collisions return 409.
+- [x] POST is additive, PATCH is absolute, and identity collisions return 409.
 - [ ] `cd backend && uv run pytest` passes.
 
 ## Exit criteria
