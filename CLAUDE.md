@@ -1,11 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Communication style
-
-Responses have been too dense to parse quickly — long paragraphs and deep
-nesting that bury the actual answer. Fix, without dropping precision:
 
 - **Lead with the answer.** First 1–3 sentences (or a short table) state the
   outcome/conclusion. Supporting detail follows — never make the reader parse
@@ -51,7 +46,8 @@ Local dev needs two terminals: backend and frontend.
 
 ## Architecture
 
-Two independent apps in one repo; the only contract between them is the JSON HTTP API under `/api`.
+Two independent apps in one repo; the only contract between them is the JSON HTTP
+API under `/api`.
 
 **Per-area maps.** `backend/CLAUDE.md` and `frontend/CLAUDE.md` are the navigation
 maps for each app: file map, the feature-area → spec-section → test-file table, and
@@ -59,67 +55,29 @@ the invariants agents keep re-deriving. Read the one for the app you're working 
 before opening spec files, and let each ticket's **Files:** / **Spec:** / **Tests:**
 header point you at the exact sections.
 
-**Doc partition.** Backend v1 planning lives in `docs/` (`spec.md`, `plan.md`, `phases/`, `issues.md`, `decisions.md`, `features.md`). Frontend planning lives in `docs/frontend/` and is **not backend implementation authority** — a backend phase must not read it as a requirement source or edit it (`docs/plan.md` §"Phase scope fence"). Frontend work reads `docs/spec.md` as the contract.
+- **Backend** (`backend/app/`) — layered FastAPI, one-way imports
+  `config → database → models → schemas/routers → main`. No migrations: schema is
+  a lifespan `Base.metadata.create_all()`, so a `models.py` change means deleting
+  `backend/recipe.db`.
+- **Frontend** (`frontend/src/`) — Vite + React 18 + TS strict, `react-router-dom`
+  v6, TanStack Query for all server state, CSS Modules + a token layer, MSW for
+  tests. Built mock-first against MSW, wired to real endpoints as each backend
+  phase lands.
 
-### Backend (`backend/app/`)
+**Doc partition.**
 
-Layered, import direction is one-way: `config` → `database` → `models` → `schemas`/`routers` → `main`.
-
-- `config.py` — `Settings` (pydantic-settings). All config comes from `RECIPE_`-prefixed env vars or `backend/.env`; `database_url` and `cors_origins` are the knobs.
-- `database.py` — the SQLAlchemy `engine`, `SessionLocal`, the `Base` declarative class, and the `get_db()` FastAPI dependency (yields a session, always closes it). SQLite gets `check_same_thread=False`.
-- `models.py` — ORM tables (`Base` subclasses, SQLAlchemy 2.0 `Mapped[...]` style).
-- `schemas.py` — Pydantic request/response models. `RecipeRead` uses `from_attributes=True` to serialize ORM objects directly.
-- `routers/` — one `APIRouter` per resource, each carrying its own path prefix (`/api/recipes`). Register new routers in `main.py` via `app.include_router(...)`.
-- `main.py` — builds the `FastAPI` app, adds CORS, includes routers. **Schema management is a lifespan `Base.metadata.create_all()` call** — there are no migrations. Changing a model requires deleting `recipe.db` (or adding Alembic).
-
-Endpoints depend on `get_db` via `Depends`; handlers commit explicitly and `db.refresh()` before returning. Missing rows raise `HTTPException(404)`.
-
-### Backend tests (`backend/tests/`)
-
-pytest + FastAPI `TestClient` (httpx under the hood). `conftest.py`'s `client` fixture is the seam: it builds a fresh in-memory SQLite DB (`StaticPool`) per test, overrides `get_db` through `app.dependency_overrides`, and tears the schema down after. Tests exercise the app through real HTTP calls — no direct DB access. Every test that touches the DB takes the `client` fixture.
-
-### Frontend (`frontend/src/`)
-
-Vite + React 18 + TS strict, `react-router-dom` v6 (classic component routing),
-TanStack Query for all server state, CSS Modules + a token layer, MSW for tests.
-The normative contract is `docs/frontend/spec.md` (§1 has the module layout);
-delivery is phased in `docs/frontend/plan.md` (Phases 0–8). Being built
-**mock-first** against MSW and wired to real endpoints as each backend phase lands.
-
-Import direction is one-way: `types → lib → api/client → api/<resource> →
-components → pages → app`. Key modules:
-
-- `types.ts` — hand-maintained mirror of `docs/spec.md` §5 (R-1). Update it and
-  `docs/frontend/spec.md` §5 together when the API changes.
-- `api/client.ts` — the one `fetch` wrapper: `/api` prefix, `Authorization:
-  Bearer` from `localStorage`, normalizes both FastAPI error shapes to a thrown
-  `ApiError`, handles 204, fires a 401 seam. Same-origin `/api/...` via the Vite
-  dev proxy — no base URL or CORS in dev.
-- `api/{auth,recipes,inventory,cookLogs,grocery}.ts` — thin typed adapters (R-2).
-- `auth/` — `AuthProvider` + `useAuth` (+ `context.ts`): token in `localStorage`
-  under `recipe.token`, login/logout, `me` hydration, cache drop on 401.
-- `app/` — `router.tsx` (`<Routes>` table), `AppShell.tsx` (responsive nav),
-  `RequireAuth.tsx` (→ `/login?next=`).
-- `lib/` — pure leaf helpers (`parseIngredients`, `format`, `apiError`) under a
-  locked-oracle gate (`docs/frontend/plan.md`).
-- `test/` — MSW `server.ts` + `handlers.ts` (happy path per `docs/spec.md` §5) +
-  `errorHandlers.ts` (one per `docs/frontend/spec.md` §6 row), wired into
-  `setupTests.ts` with `onUnhandledRequest: "error"`.
-
-`tsconfig.json` is a solution file referencing `tsconfig.app.json` (src) and
-`tsconfig.node.json` (vite config). `npm run lint` (ESLint + Prettier) joins
-`test:run` and `build` in CI.
+- Backend v1 planning lives in `docs/` (`spec.md`, `plan.md`, `phases/`,
+  `issues.md`, `decisions.md`, `features.md`).
+- Frontend planning lives in `docs/frontend/` and is **not backend implementation
+  authority** — a backend phase must not read it as a requirement source or edit
+  it (`docs/plan.md` §"Phase scope fence").
+- Frontend work reads `docs/spec.md` as the contract.
 
 ## Agent skills
 
-### Issue tracker
-
-Issues and specs live as markdown files under `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
-
-### Triage labels
-
-The five canonical triage roles, each label string equal to its name (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
-
-### Domain docs
-
-Single-context: one `CONTEXT.md` + `docs/adr/` at the repo root (created lazily by `/domain-modeling`). See `docs/agents/domain.md`.
+- **Issue tracker** — issues and specs as markdown files under
+  `.scratch/<feature-slug>/`. See `docs/agents/issue-tracker.md`.
+- **Triage labels** — five canonical roles, each label string equal to its name.
+  See `docs/agents/triage-labels.md`.
+- **Domain docs** — one `CONTEXT.md` + `docs/adr/` at the repo root, created
+  lazily by `/domain-modeling`. See `docs/agents/domain.md`.

@@ -1,9 +1,8 @@
 # frontend/CLAUDE.md
 
-Vite + React 18 + TS strict, `react-router-dom` v6, TanStack Query for all server
-state, CSS Modules + a token layer, MSW for tests. Full architecture and the
-command table are in the root `CLAUDE.md`; this file is the navigation map that
-keeps each `/implement` inside the smart zone.
+Navigation map that keeps each frontend `/implement` inside the smart zone —
+file map, spec-section table, invariants. Stack and command table: root
+`CLAUDE.md`.
 
 Import direction is one-way:
 `types → lib → api/client → api/<resource> → components → pages → app`.
@@ -75,9 +74,7 @@ markers: `.scratch/frontend-v1/issues/`.
 - Mock-first: build against MSW; the `integrate-*` tickets (15–18) wire each
   resource to the real backend and re-diff `types.ts` against `docs/spec.md` §5.
 
-## Commands (run from `frontend/`)
+## Commands
 
-- Tests: `npm run test:run`  (one file: `npm run test:run -- src/pages/RecipeForm.test.tsx`)
-- Type-check: `npm run typecheck`   Build: `npm run build`
-- Lint / format: `npm run lint` / `npm run format:check`
-- Browser E2E / visual: `npm run test:e2e`   Auth integration vs real backend: `npm run test:integration`
+Full table in root `CLAUDE.md`. From `frontend/`: `npm run test:run` (all),
+`npm run test:run -- src/pages/RecipeForm.test.tsx` (one file).

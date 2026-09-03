@@ -66,9 +66,7 @@ close: `docs/phases/phase-N.md`. Ticket dependency order and the R-7 rules:
 - Do not read `docs/frontend/` — it is not backend implementation authority
   (`docs/plan.md` §"Phase scope fence").
 
-## Commands (run from `backend/`)
+## Commands
 
-- All tests: `uv run pytest`
-- One file / test: `uv run pytest tests/test_inventory.py::test_name`
-- Dev server: `uv run uvicorn app.main:app --reload` (`:8000`, OpenAPI at `/docs`)
-- Add a dep: `uv add <pkg>` / `uv add --dev <pkg>`
+Full table in root `CLAUDE.md`. From `backend/`: `uv run pytest` (all),
+`uv run pytest tests/test_inventory.py::test_name` (one).
