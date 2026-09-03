@@ -158,3 +158,24 @@ def test_inventory_post_quantity_rejects_negative_and_non_finite(
     )
     assert response.status_code == 422, response.text
     assert auth_client.get("/api/inventory").json() == []
+
+
+@pytest.mark.parametrize("quantity", REJECTED_INVENTORY_QUANTITIES)
+def test_inventory_patch_quantity_rejects_negative_and_non_finite(
+    auth_client: TestClient, quantity: str
+) -> None:
+    """`>= 0`, `allow_inf_nan=False` on the PATCH body too. `"0"` stays out of the
+    rejected set — spec §5.5 does `max(body.quantity, 0.0)`, so a PATCH to zero is
+    a 200 (`test_inventory.py::test_patch_quantity_zero_is_accepted`)."""
+    created = auth_client.post(
+        "/api/inventory", json={"item": "Flour", "quantity": 1, "unit": "kg"}
+    ).json()
+    response = _send_raw(
+        auth_client,
+        "PATCH",
+        f"/api/inventory/{created['id']}",
+        '{"quantity": %s, "unit": "kg"}' % quantity,
+    )
+    assert response.status_code == 422, response.text
+    # The rejected PATCH left the stored quantity untouched.
+    assert auth_client.get("/api/inventory").json()[0]["quantity_base"] == 1000.0
