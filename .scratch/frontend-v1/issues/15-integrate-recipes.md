@@ -4,7 +4,7 @@
 
 **Blocked by:** 05a, 06a, 06b, 06c, 07. External gate: backend Phase 3 (structured recipes) merged.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/test/handlers.ts`, `frontend/src/types.ts`, `docs/frontend/spec.md` §5. Run the RecipeList / RecipeForm / RecipeDetail suites against the real backend. External gate: backend Phase 3 merged.
 
