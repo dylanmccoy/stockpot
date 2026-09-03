@@ -4,7 +4,7 @@
 
 **Blocked by:** 07.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/pages/RecipeDetail.tsx`, `frontend/src/pages/RecipeDetail.test.tsx`, `frontend/src/api/recipes.ts` (availability adapter). Built against the spec DTO — **not** wired to real calls (ticket 16).
 
@@ -23,7 +23,7 @@
 
 ## Comments
 
-- Branch `feat/frontend-v1-09`, worktree `.claude/worktrees/frontend-v1-09`.
+- Branch `feat/frontend-v1-09`, PR #50 — squash-merged as `c36d5ac`.
 - `api/recipes.ts` untouched: `recipesApi.availability` already existed from an
   earlier phase and matches the §5 DTO, so no adapter edit was needed.
 - Implementation in `RecipeDetail.tsx`: `AvailabilityPanel` runs
