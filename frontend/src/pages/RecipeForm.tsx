@@ -151,8 +151,10 @@ function ingredientReadToDraft(row: RecipeIngredientRead): IngredientDraft {
   const pasted = row.raw_text !== null;
   return {
     uid: uid(),
-    // same formatter the paste preview uses, so a re-seeded cell can't disagree
-    quantity: quantityToInput(row.quantity),
+    // exact stored value — the paste preview's short formatter would round a
+    // high-precision quantity (e.g. 0.123456789) and a later PUT full-replace
+    // would silently persist the rounded number (spec §10.3).
+    quantity: numToField(row.quantity),
     unit: row.unit ?? "",
     item: row.item,
     note: row.note ?? "",
@@ -811,17 +813,21 @@ function RecipeEditor({
 
 // ── Save wiring shared by both modes ─────────────────────────────────────
 
-/** The `useMutation` success/error half both forms share: invalidate the list
- *  (plus `extraKey` — the single-recipe cache on edit), go to the saved
- *  recipe, and toast anything that isn't an inline form error (§6). */
+/** The `useMutation` success/error half both forms share: prime the
+ *  single-recipe cache with the server's response — the PUT/POST returns the
+ *  canonical `RecipeRead`, so writing it straight into `extraKey` (rather than
+ *  invalidating and racing an in-flight GET) means re-opening the edit route
+ *  reseeds from the post-save state and can't resurrect removed rows. Then
+ *  invalidate the list, go to the saved recipe, and toast anything that isn't
+ *  an inline form error (§6). */
 function useRecipeRedirect(extraKey?: QueryKey) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const toast = useToast();
   return {
     onSuccess: (recipe: RecipeRead) => {
+      if (extraKey) queryClient.setQueryData(extraKey, recipe);
       queryClient.invalidateQueries({ queryKey: ["recipes"] });
-      if (extraKey) queryClient.invalidateQueries({ queryKey: extraKey });
       navigate(`/recipes/${recipe.id}`);
     },
     onError: (error: unknown) => {

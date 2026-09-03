@@ -284,6 +284,29 @@ describe("recipeToState", () => {
     expect(s.ingredients).toHaveLength(1);
     expect(buildRecipeCreate(s).ingredients).toEqual([]);
   });
+
+  it("seeds a structured row's quantity at full precision (no round on re-save)", () => {
+    const s = recipeToState({
+      ...sampleRecipe,
+      ingredients: [
+        {
+          id: 9,
+          position: 0,
+          quantity: 0.123456789,
+          unit: "kg",
+          item: "flour",
+          note: null,
+          normalized_name: "flour",
+          raw_text: null,
+        },
+      ],
+    });
+    expect(s.ingredients[0].quantity).toBe("0.123456789");
+    // an unrelated edit must not silently change the untouched quantity
+    expect(buildRecipeCreate(s).ingredients).toEqual([
+      { item: "flour", quantity: 0.123456789, unit: "kg" },
+    ]);
+  });
 });
 
 describe("asOpenableUrl", () => {
@@ -707,6 +730,42 @@ describe("RecipeForm edit flow", () => {
     expect(
       screen.queryByLabelText("Item for ingredient 2"),
     ).not.toBeInTheDocument();
+  });
+
+  it("re-opening edit after save reseeds from the PUT response, not a stale cached GET", async () => {
+    const user = userEvent.setup();
+    let getCalls = 0;
+    server.use(
+      // the GET never reflects the replace — a slow / stale refetch
+      http.get("/api/recipes/:id", () => {
+        getCalls += 1;
+        return HttpResponse.json(editable);
+      }),
+      http.put("/api/recipes/:id", async ({ request }) => {
+        const body = (await request.json()) as RecipeUpdate;
+        return HttpResponse.json(applyReplace(editable, body));
+      }),
+    );
+    renderEdit();
+
+    await screen.findByLabelText(/^Title/);
+    await user.click(
+      screen.getByRole("button", { name: "Remove ingredient 2" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await screen.findByTestId("recipe-landing");
+
+    // immediately re-edit: the seed must come from the primed cache (PUT body),
+    // so the removed onion row stays gone even though the GET is stale
+    await user.click(screen.getByRole("link", { name: "Re-edit" }));
+    expect(await screen.findByLabelText(/^Title/)).toHaveValue("Pan Sauce");
+    expect(screen.getByLabelText("Item for ingredient 1")).toHaveValue(
+      "olive oil",
+    );
+    expect(
+      screen.queryByLabelText("Item for ingredient 2"),
+    ).not.toBeInTheDocument();
+    expect(getCalls).toBeGreaterThanOrEqual(1);
   });
 
   it("on edit an untouched pasted row stays a string; an edited one becomes an object", async () => {
