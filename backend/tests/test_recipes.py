@@ -494,3 +494,95 @@ def test_tags_and_steps_round_trip_as_sent(auth_client: TestClient) -> None:
     assert body["tags"] == tags
     assert body["steps"] == steps
     assert auth_client.get(f"/api/recipes/{body['id']}").json()["tags"] == tags
+
+
+# --------------------------------------------------------------------------- #
+# Availability — GET /api/recipes/{id}/availability (spec.md §5.3, §7).
+# --------------------------------------------------------------------------- #
+
+
+def _availability_recipe(auth_client: TestClient) -> int:
+    """A recipe with a canonical-unit line, a to-taste line, and a second
+    quantified line whose stock is driven to zero — one recipe covering the
+    `ok` / `to_taste` / `missing` branches under `multiplier=2`."""
+    return auth_client.post(
+        "/api/recipes",
+        json={
+            "title": "Availability fixture",
+            "ingredients": [
+                {"item": "Flour", "quantity": 1, "unit": "kg"},
+                "salt to taste",
+                {"item": "Sugar", "quantity": 200, "unit": "g"},
+            ],
+        },
+    ).json()["id"]
+
+
+def test_availability_scales_by_multiplier_and_reports_canonical_groups(
+    auth_client: TestClient,
+) -> None:
+    recipe_id = _availability_recipe(auth_client)
+
+    # Flour: 2000 g in stock — exactly covers 1 kg * 2.
+    auth_client.post("/api/inventory", json={"item": "Flour", "quantity": 2000, "unit": "g"})
+    # Sugar: added then driven to quantity_base = 0 (zero stock is absent, §7).
+    sugar = auth_client.post(
+        "/api/inventory", json={"item": "Sugar", "quantity": 500, "unit": "g"}
+    ).json()
+    assert (
+        auth_client.patch(
+            f"/api/inventory/{sugar['id']}", json={"quantity": 0, "unit": "g"}
+        ).status_code
+        == 200
+    )
+
+    report = auth_client.get(f"/api/recipes/{recipe_id}/availability?multiplier=2")
+    assert report.status_code == 200, report.text
+    body = report.json()
+
+    assert body["recipe_id"] == recipe_id
+    assert body["multiplier"] == 2.0
+    assert body["all_available"] is False  # Sugar is missing
+
+    lines = {line["item"]: line for line in body["lines"]}
+
+    flour = lines["Flour"]
+    assert flour["status"] == "ok"
+    assert flour["need"] == 2000.0  # 1 kg * 2, in the group's canonical unit
+    assert flour["need_unit"] == "g"
+    assert flour["group_unit"] == "g"
+    assert flour["group_need"] == 2000.0
+    assert flour["group_have"] == 2000.0
+    assert flour["group_short"] == 0.0
+    # The per-line shape carries only `group_*` aggregates, never bare have/short.
+    assert "have" not in flour
+    assert "short" not in flour
+
+    salt = lines["salt"]
+    assert salt["status"] == "to_taste"  # survived `* 2` with no TypeError
+    assert salt["need"] is None
+    assert salt["group_need"] is None
+    assert salt["group_have"] is None
+    assert salt["group_short"] is None
+
+    sugar_line = lines["Sugar"]
+    assert sugar_line["status"] == "missing"  # quantity_base == 0 is absent
+    assert sugar_line["need"] == 400.0  # 200 g * 2
+    assert sugar_line["group_have"] == 0.0
+    assert sugar_line["group_short"] == 400.0
+
+
+def test_availability_of_a_title_only_recipe_is_empty_and_all_available(
+    auth_client: TestClient,
+) -> None:
+    recipe_id = auth_client.post("/api/recipes", json={"title": "Nothing yet"}).json()["id"]
+
+    body = auth_client.get(f"/api/recipes/{recipe_id}/availability").json()
+
+    assert body["lines"] == []
+    assert body["all_available"] is True
+    assert body["multiplier"] == 1.0
+
+
+def test_availability_of_a_missing_recipe_is_404(auth_client: TestClient) -> None:
+    assert auth_client.get("/api/recipes/999999/availability").status_code == 404

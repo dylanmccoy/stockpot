@@ -15,6 +15,8 @@ from app.schemas.inventory import (
     InventoryItemUpdate,
 )
 from app.schemas.recipe import (
+    AvailabilityLine,
+    AvailabilityReport,
     RecipeBase,
     RecipeCreate,
     RecipeIngredientIn,
@@ -40,6 +42,8 @@ __all__ = [
     "RecipeRead",
     "RecipeIngredientIn",
     "RecipeIngredientRead",
+    "AvailabilityLine",
+    "AvailabilityReport",
     # Inventory
     "InventoryItemCreate",
     "InventoryItemUpdate",

@@ -77,3 +77,29 @@ class RecipeRead(RecipeBase, ORMModel):
     photo_path: str | None  # reserved for v2; always null in v1
     created_by: UserMini | None
     ingredients: list[RecipeIngredientRead]
+
+
+class AvailabilityLine(ORMModel):
+    """JSON shape of one `AvailabilityLineDTO` (spec.md §4 / §5.3), field for
+    field. `from_attributes` reads it straight off the frozen dataclass."""
+
+    ingredient_id: int
+    item: str
+    need: float | None
+    need_unit: str
+    group_key: str
+    group_unit: str
+    group_need: float | None
+    group_have: float | None
+    group_short: float | None
+    status: str  # ok | short | missing | to_taste | have_uncertain
+    nettable: bool
+
+
+class AvailabilityReport(BaseModel):
+    """`GET /api/recipes/{id}/availability` response (spec.md §5.3)."""
+
+    recipe_id: int
+    multiplier: float
+    lines: list[AvailabilityLine]
+    all_available: bool
