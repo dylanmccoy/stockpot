@@ -28,7 +28,8 @@ class InventoryItemCreate(BaseModel):
 
 class InventoryItemUpdate(BaseModel):
     """`PATCH /api/inventory/{id}` body — absolute replacement, driven by
-    `model_fields_set`. The PATCH endpoint itself lands in phase-4c."""
+    `model_fields_set`: an absent field is untouched, a present-and-null `item` /
+    `match_name` / `quantity` is a 422 (the router enforces this)."""
 
     item: Annotated[str, Field(max_length=200)] | None = None
     match_name: Annotated[str, Field(max_length=200)] | None = None
