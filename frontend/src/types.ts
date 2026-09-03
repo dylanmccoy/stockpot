@@ -4,6 +4,8 @@
 // the backend section that moved.
 //
 // Last diffed against docs/spec.md §0, §5 on 2026-09-02 (backend Phase 2 merged).
+// §5.3 (availability) + §5.5 (inventory) re-diffed 2026-09-03 against backend
+// Phase 4 as merged (ticket 16).
 
 // ── Shared ──────────────────────────────────────────────────────────────────
 
@@ -117,9 +119,10 @@ export type AvailabilityStatus =
   "ok" | "have_uncertain" | "short" | "missing" | "to_taste";
 
 export interface AvailabilityLine {
+  ingredient_id: number; // the recipe ingredient row this line is for
   item: string;
   need: number | null; // this row's own quantity * multiplier, canonical unit; null for to_taste
-  need_unit: string | null;
+  need_unit: string; // group canonical unit; always set, even on a to_taste line
   group_key: string; // `${normalized_name}|${bucket}` — identical across group members
   group_unit: string;
   group_need: number | null;

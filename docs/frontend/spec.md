@@ -303,9 +303,10 @@ Ingredient build rules the client must respect:
 type AvailabilityStatus = "ok" | "have_uncertain" | "short" | "missing" | "to_taste";
 
 interface AvailabilityLine {
+  ingredient_id: number;        // the recipe ingredient row this line is for
   item: string;
   need: number | null;          // this row's own quantity * multiplier, canonical unit; null for to_taste
-  need_unit: string | null;
+  need_unit: string;            // group canonical unit; always set, even on a to_taste line
   group_key: string;            // `${normalized_name}|${bucket}` — identical across group members (R-10)
   group_unit: string;
   group_need: number | null;

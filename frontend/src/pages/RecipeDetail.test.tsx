@@ -144,6 +144,7 @@ const availabilityReport: AvailabilityReport = {
   all_available: false,
   lines: [
     {
+      ingredient_id: 1,
       item: "butter",
       need: 100,
       need_unit: "g",
@@ -156,6 +157,7 @@ const availabilityReport: AvailabilityReport = {
       nettable: true,
     },
     {
+      ingredient_id: 2,
       item: "unsalted butter",
       need: 50,
       need_unit: "g",
@@ -168,6 +170,7 @@ const availabilityReport: AvailabilityReport = {
       nettable: true,
     },
     {
+      ingredient_id: 3,
       item: "flour",
       need: 200,
       need_unit: "g",
@@ -180,6 +183,7 @@ const availabilityReport: AvailabilityReport = {
       nettable: true,
     },
     {
+      ingredient_id: 4,
       item: "sugar",
       need: 200,
       need_unit: "g",
@@ -192,6 +196,7 @@ const availabilityReport: AvailabilityReport = {
       nettable: true,
     },
     {
+      ingredient_id: 5,
       item: "milk",
       need: 300,
       need_unit: "ml",
@@ -204,6 +209,7 @@ const availabilityReport: AvailabilityReport = {
       nettable: false,
     },
     {
+      ingredient_id: 6,
       item: "vanilla",
       need: 5,
       need_unit: "ml",
@@ -213,19 +219,20 @@ const availabilityReport: AvailabilityReport = {
       group_have: 0,
       group_short: 5,
       status: "missing",
-      nettable: true,
+      nettable: false,
     },
     {
+      ingredient_id: 7,
       item: "salt",
       need: null,
-      need_unit: null,
+      need_unit: "g",
       group_key: "salt|mass",
       group_unit: "g",
       group_need: null,
       group_have: null,
       group_short: null,
       status: "to_taste",
-      nettable: true,
+      nettable: false,
     },
   ],
 };
