@@ -8,13 +8,30 @@ import {
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { recipesApi } from "../api/recipes";
-import type { RecipeCreate, RecipeIngredientIn, RecipeRead } from "../types";
-import { Button, Field, Input, Textarea, useToast } from "../components";
+import type {
+  RecipeCreate,
+  RecipeIngredientElement,
+  RecipeIngredientIn,
+  RecipeRead,
+} from "../types";
+import {
+  Button,
+  Dialog,
+  Field,
+  Input,
+  Textarea,
+  useToast,
+} from "../components";
 import {
   GENERIC_ERROR_MESSAGE,
   hasInlineFormError,
   useFormErrors,
 } from "../lib/apiError";
+import { parseIngredients } from "../lib/parseIngredients";
+import {
+  parseIngredientLine,
+  type ParsedIngredientLine,
+} from "../lib/parseIngredientLine";
 import styles from "./RecipeForm.module.css";
 
 // ── Draft model ────────────────────────────────────────────────────────────
@@ -32,6 +49,15 @@ export interface IngredientDraft {
   unit: string;
   item: string;
   note: string;
+  /** How the row entered the table. A `paste` row that is still `pristine`
+   *  serializes as a bare string element — the server re-parses it and keeps
+   *  `raw_text`. Any edit (via `setRow`) flips `pristine` off, and the row
+   *  then serializes as an object like a hand-entered one (spec §10.3). */
+  origin: "manual" | "paste";
+  pristine: boolean;
+  /** The exact pasted line, sent verbatim as the string element. `""` for
+   *  hand-entered rows. */
+  raw: string;
 }
 
 export interface StepDraft {
@@ -58,7 +84,38 @@ const blankIngredient = (): IngredientDraft => ({
   unit: "",
   item: "",
   note: "",
+  origin: "manual",
+  pristine: false,
+  raw: "",
 });
+
+/** A pasted string element is truncated to 200 chars server-side before it is
+ *  parsed (spec §5) — Python slices by code point, so mirror that with
+ *  `Array.from` rather than `String.slice` (UTF-16 units). */
+const PASTED_LINE_MAX = 200;
+const truncateLine = (raw: string): string =>
+  Array.from(raw).slice(0, PASTED_LINE_MAX).join("");
+
+interface PastePreviewRow extends ParsedIngredientLine {
+  /** the exact (already truncated) line the server will keep as `raw_text` */
+  line: string;
+}
+
+/** A previewed paste row → a `pristine` ingredient row. Its cells are seeded
+ *  from the same mirror parse the preview showed (spec §7.1, §10.3); while
+ *  pristine it serializes back to `line`, not an object. */
+function pastedIngredient(row: PastePreviewRow): IngredientDraft {
+  return {
+    uid: uid(),
+    quantity: quantityToInput(row.quantity),
+    unit: row.unit ?? "",
+    item: row.item,
+    note: row.note ?? "",
+    origin: "paste",
+    pristine: true,
+    raw: row.line,
+  };
+}
 
 const blankStep = (): StepDraft => ({ uid: uid(), text: "" });
 
@@ -86,6 +143,17 @@ function numOrNull(raw: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+/** A parsed preview quantity → the string that seeds the editable cell.
+ *  `null` (to taste / unparsed) → blank; otherwise a short decimal. The
+ *  preview shows this same string, so the cell can't disagree with it. */
+function quantityToInput(value: number | null): string {
+  if (value === null) return "";
+  return String(Number(value.toPrecision(6)));
+}
+
+/** "1 row" / "N rows" — shared by the paste dialog's button and caption. */
+const rowCount = (n: number): string => `${n} ${n === 1 ? "row" : "rows"}`;
+
 /** A row carries content once any cell is non-blank; fully blank rows never
  *  reach the server. */
 export function ingredientHasContent(row: IngredientDraft): boolean {
@@ -105,7 +173,11 @@ export function ingredientRowsToSubmit(
   return state.ingredients.filter(ingredientHasContent);
 }
 
-function toIngredientElement(row: IngredientDraft): RecipeIngredientIn {
+function toIngredientElement(row: IngredientDraft): RecipeIngredientElement {
+  // An untouched pasted row goes over as the raw line (server keeps
+  // `raw_text` and re-parses); anything hand-entered or edited is an object.
+  if (row.origin === "paste" && row.pristine) return row.raw;
+
   const el: RecipeIngredientIn = { item: row.item.trim() };
   const q = row.quantity.trim();
   if (q) el.quantity = Number(q); // blank ⇒ omitted ⇒ to-taste (spec §10.3)
@@ -116,8 +188,8 @@ function toIngredientElement(row: IngredientDraft): RecipeIngredientIn {
   return el;
 }
 
-/** Draft → `RecipeCreate`. Every hand-entered row serializes as an object
- *  element (string elements are the paste path, ticket 06b). */
+/** Draft → `RecipeCreate`. Hand-entered / edited rows serialize as object
+ *  elements; untouched pasted rows as bare strings (`toIngredientElement`). */
 export function buildRecipeCreate(state: RecipeFormState): RecipeCreate {
   return {
     title: state.title.trim(),
@@ -217,11 +289,13 @@ function CreateForm() {
   }
 
   // ── ingredient rows ──
+  // Any cell edit un-pristines the row: an edited paste row now serializes as
+  // an object, not the raw string (spec §10.3).
   const setRow = (rowUid: string, next: Partial<IngredientDraft>) =>
     setState((s) => ({
       ...s,
       ingredients: s.ingredients.map((r) =>
-        r.uid === rowUid ? { ...r, ...next } : r,
+        r.uid === rowUid ? { ...r, ...next, pristine: false } : r,
       ),
     }));
   const addRow = () =>
@@ -233,6 +307,33 @@ function CreateForm() {
     });
   const moveRow = (index: number, delta: number) =>
     patch({ ingredients: move(state.ingredients, index, delta) });
+
+  // ── paste ingredients (spec §7.1, §10.3) ──
+  // `parseIngredients` splits the block; `parseIngredientLine` previews the
+  // per-line parse the server will do. Confirm appends the rows; each starts
+  // `pristine` so an untouched one is POSTed as its raw string.
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+
+  const pastePreview = useMemo<PastePreviewRow[]>(
+    () =>
+      parseIngredients(pasteText).map((raw) => {
+        const line = truncateLine(raw);
+        return { line, ...parseIngredientLine(line) };
+      }),
+    [pasteText],
+  );
+
+  const closePaste = () => {
+    setPasteOpen(false);
+    setPasteText("");
+  };
+  const confirmPaste = () => {
+    if (pastePreview.length === 0) return;
+    const rows = pastePreview.map(pastedIngredient);
+    setState((s) => ({ ...s, ingredients: [...s.ingredients, ...rows] }));
+    closePaste();
+  };
 
   // ── steps ──
   const setStep = (stepUid: string, text: string) =>
@@ -561,10 +662,80 @@ function CreateForm() {
               </tbody>
             </table>
           </div>
-          <Button variant="secondary" onClick={addRow}>
-            Add ingredient
-          </Button>
+          <div className={styles.rowButtons}>
+            <Button variant="secondary" onClick={addRow}>
+              Add ingredient
+            </Button>
+            <Button variant="secondary" onClick={() => setPasteOpen(true)}>
+              Paste ingredients
+            </Button>
+          </div>
         </fieldset>
+
+        <Dialog
+          open={pasteOpen}
+          onClose={closePaste}
+          title="Paste ingredients"
+          footer={
+            <>
+              <Button variant="ghost" onClick={closePaste}>
+                Cancel
+              </Button>
+              <Button
+                onClick={confirmPaste}
+                disabled={pastePreview.length === 0}
+              >
+                Add {rowCount(pastePreview.length)}
+              </Button>
+            </>
+          }
+        >
+          <Field
+            label="Ingredient lines"
+            hint="One ingredient per line. Blank lines, bullets, and “For the sauce:” headers are dropped."
+          >
+            <Textarea
+              rows={8}
+              value={pasteText}
+              onChange={(e) => setPasteText(e.target.value)}
+              placeholder={"2 tbsp olive oil\n1 onion, diced\nsalt to taste"}
+            />
+          </Field>
+
+          {pasteText.trim() !== "" &&
+            (pastePreview.length === 0 ? (
+              <p className={styles.muted}>
+                Nothing to add — every line was blank or a section header.
+              </p>
+            ) : (
+              <div className={styles.tableScroll}>
+                <table className={styles.table}>
+                  <caption className={styles.previewCaption}>
+                    Preview — {rowCount(pastePreview.length)} will be appended.
+                    Fix any misparse in the table after.
+                  </caption>
+                  <thead>
+                    <tr>
+                      <th scope="col">Quantity</th>
+                      <th scope="col">Unit</th>
+                      <th scope="col">Item</th>
+                      <th scope="col">Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pastePreview.map((p, i) => (
+                      <tr key={i}>
+                        <td>{quantityToInput(p.quantity) || "—"}</td>
+                        <td>{p.unit || "—"}</td>
+                        <td>{p.item}</td>
+                        <td>{p.note || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+        </Dialog>
 
         <Field label="Notes" error={fieldErrors["notes"]}>
           <Textarea
