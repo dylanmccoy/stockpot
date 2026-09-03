@@ -22,6 +22,31 @@ export const errorHandlers = {
   validation: (method: Method, path: string, field = "value"): HttpHandler =>
     http[method](path, () => json(422, [issue(field)])),
 
+  /** 422 · ValidationIssue[] for a bad **object** ingredient element, in the
+   *  exact union-tagged shape the running backend emits (frontend ticket 15):
+   *  the field error names the winning `RecipeIngredientIn` branch, and a
+   *  sibling complains against the losing `str` branch. `lib/apiError.ts`
+   *  collapses the tag to `ingredients.<idx>.<field>` and drops the sibling. */
+  ingredientMemberValidation: (
+    idx: number,
+    field = "item",
+    msg = "field required",
+  ): HttpHandler =>
+    http.post("/api/recipes", () =>
+      json(422, [
+        {
+          loc: ["body", "ingredients", idx, "RecipeIngredientIn", field],
+          msg,
+          type: "missing",
+        },
+        {
+          loc: ["body", "ingredients", idx, "str"],
+          msg: "Input should be a valid string",
+          type: "string_type",
+        },
+      ]),
+    ),
+
   /** 422 · string — a named domain rule → inline form-level banner (verbatim). */
   domainRule: (method: Method, path: string, message: string): HttpHandler =>
     http[method](path, () => json(422, message)),

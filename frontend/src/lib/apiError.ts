@@ -50,12 +50,53 @@ export function fieldName(issue: ValidationIssue): string {
   return String(issue.loc[issue.loc.length - 1]);
 }
 
+/** How Pydantic v2 names the branch of an *untagged* union in an error `loc`:
+ *  a model branch gets its class name (`RecipeIngredientIn` — every schema in
+ *  this API is PascalCase), a builtin branch its type name. This is the closed
+ *  set of builtin scalar tags — not a guess at future needs. */
+const UNION_SCALAR_TAGS = new Set(["str", "int", "float", "bool"]);
+const isUnionBranchTag = (seg: string): boolean =>
+  UNION_SCALAR_TAGS.has(seg) || /^[A-Z][A-Za-z0-9]*$/.test(seg);
+
+/** True when this issue is untagged-union *losing*-branch noise: its `loc` ends
+ *  in a branch tag, e.g. `["body","ingredients",3,"str"]` — the "Input should be
+ *  a valid string" complaint against an object element. It names no field, so it
+ *  is dropped before mapping (spec §6, §7.3). */
+export function isUnionBranchNoise(issue: ValidationIssue): boolean {
+  const last = issue.loc[issue.loc.length - 1];
+  return typeof last === "string" && isUnionBranchTag(last);
+}
+
+/** Collapse the *interior* branch-tag segment Pydantic inserts for an
+ *  untagged-union member error. The real backend answers a bad object element
+ *  with `["body","ingredients",3,"RecipeIngredientIn","item"]`, not the
+ *  `["body","ingredients",3,"item"]` spec §10.3 assumes. A tag only appears
+ *  directly after a numeric index and before the real field; matching on
+ *  `isUnionBranchTag` (not just "any string after a number") keeps a future
+ *  `list[Object]` field whose own nested key is snake_case from being
+ *  mis-collapsed. A *trailing* tag (element neither branch validated — no field
+ *  named) is left for `isUnionBranchNoise` to drop. */
+function normalizeLoc(loc: (string | number)[]): (string | number)[] {
+  const out: (string | number)[] = [];
+  loc.forEach((seg, i) => {
+    const interiorTag =
+      typeof seg === "string" &&
+      typeof out[out.length - 1] === "number" &&
+      i < loc.length - 1 &&
+      isUnionBranchTag(seg);
+    if (!interiorTag) out.push(seg);
+  });
+  return out;
+}
+
 /** The full field path an issue targets, `body`-prefix dropped and joined with
  *  `.` — so a flat field stays `"servings"` while a nested one becomes
  *  `"ingredients.3.item"` (spec §10.3 maps `["body","ingredients",3,"item"]` to
- *  a row + field). */
+ *  a row + field). Pydantic union branch tags are collapsed first
+ *  (`normalizeLoc`). */
 function fieldPath(issue: ValidationIssue): string {
-  const segs = issue.loc[0] === "body" ? issue.loc.slice(1) : issue.loc;
+  const loc = normalizeLoc(issue.loc);
+  const segs = loc[0] === "body" ? loc.slice(1) : loc;
   return segs.length > 0 ? segs.join(".") : fieldName(issue);
 }
 
@@ -90,6 +131,7 @@ function splitFormErrors(error: unknown): FormErrors {
   if (isFieldError(error)) {
     const fieldErrors: Record<string, string> = {};
     for (const issue of error.detail) {
+      if (isUnionBranchNoise(issue)) continue;
       const key = fieldPath(issue);
       if (!(key in fieldErrors)) fieldErrors[key] = issue.msg;
     }

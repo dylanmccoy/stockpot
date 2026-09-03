@@ -2,8 +2,10 @@ import { defineConfig, devices } from "@playwright/test";
 import { E2E_REGISTRATION_CODE } from "./e2e/integration.env";
 
 /**
- * Auth integration E2E: the real SPA driving the **real FastAPI backend**
- * through the dev proxy (frontend ticket 14 / plan Phase 2 gate).
+ * Integration E2E: the real SPA driving the **real FastAPI backend** through the
+ * dev proxy. Every `*.integration.spec.ts` file runs here —
+ * `auth.integration.spec.ts` (ticket 14 / plan Phase 2 gate),
+ * `recipes.integration.spec.ts` (ticket 15 / plan Phase 3 gate).
  *
  * Kept separate from `playwright.config.ts` (the visual suite) so a plain
  * `npm run test:e2e` never boots a backend or needs `uv`. Everything here runs
