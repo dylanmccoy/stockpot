@@ -10,9 +10,9 @@ Phase status (``docs/plan.md`` §Independent contract-test gate):
 - ``phase-4d`` — ``aggregate`` / ``check_availability`` (§4.1 / §4.2).
 - ``phase-4e`` — ``deduct_calc`` / ``_entry`` (§4.5).
 
-The §7 availability and deduction oracle cases in ``tests/test_inventory_math.py``
-were authored and locked at ``phase-4a`` and stay red until ``phase-4d`` /
-``phase-4e`` land; the add-to-inventory oracle cases pass from ``phase-4b`` on.
+The §7 oracle cases in ``tests/test_inventory_math.py`` were authored and locked
+at ``phase-4a``: add-to-inventory passes from ``phase-4b`` on, availability from
+``phase-4d`` on, and deduction stays red until ``phase-4e`` lands.
 """
 
 from __future__ import annotations
@@ -136,22 +136,160 @@ def add_to_inventory_calc(
 
 
 # --------------------------------------------------------------------------- #
-# 4.2 / 4.5 — not owned by phase-4b.
-#
-# Forward declarations so ``tests/test_inventory_math.py`` (the phase-4a locked
-# oracle, which imports the whole §4 surface) collects and its add-to-inventory
-# cases run. The bodies — and ``aggregate`` (§4.1) — land in phase-4d / phase-4e;
-# the availability / deduction oracle cases stay red until then.
+# 4.1 aggregate
 # --------------------------------------------------------------------------- #
 
-_PHASE_4D = "aggregate / check_availability land in phase-4d (spec.md §4.1 / §4.2)"
-_PHASE_4E = "deduct_calc / _entry land in phase-4e (spec.md §4.5)"
+
+@dataclass(frozen=True)
+class GroupAgg:
+    """One ``aggregate`` group, keyed by ``(normalized_name, bucket)`` (§4.1)."""
+
+    norm: str
+    bucket: str
+    need_base: float  # Σ own_need_base over quantified members (canonical unit)
+    members: list[tuple[int, float]]  # (ingredient_id, own_need_base), position order
+    to_taste_members: list[int]  # ingredient ids with quantity is None, position order
+    display_item: str  # first member's item, any kind (decision S4)
+
+
+def _own_need_base(quantity: float, unit: str | None) -> float:
+    """One requirement's need in the group's canonical unit.
+
+    ``to_base`` already handles every known token — including the bare COUNT
+    tokens (``None`` / ``unit`` / ``dozen`` / ``pair``). It returns ``None`` only
+    for an opaque / unknown unit, where the raw amount *is* the canonical amount
+    (spec.md §4.1: "``to_base(qty*M, unit).amount`` (known dims) or ``qty*M``
+    (opaque / count)").
+    """
+    converted = to_base(quantity, unit)
+    return quantity if converted is None else converted[0]
+
+
+def aggregate(reqs: list[ReqLine], M: float = 1.0) -> dict[tuple[str, str], GroupAgg]:
+    """Group requirements by ``(normalized_name, bucket_of(unit))`` (spec.md §4.1).
+
+    ``ReqLine.quantity`` already has the recipe multiplier folded in (the router
+    builds it that way), so ``M`` defaults to ``1.0``; ``check_availability`` /
+    cook call this without it. Groups are returned in first-seen order; within a
+    group ``members`` and ``to_taste_members`` keep stored (position) order.
+    """
+    groups: dict[tuple[str, str], dict] = {}
+    for ing in reqs:
+        key = (ing.normalized_name, bucket_of(ing.unit))
+        slot = groups.get(key)
+        if slot is None:
+            slot = groups[key] = {
+                "members": [],
+                "to_taste": [],
+                "need_base": 0.0,
+                "display_item": ing.item,  # first writer wins (decision S4)
+            }
+        if ing.quantity is None:
+            slot["to_taste"].append(ing.ingredient_id)
+            continue
+        own = _own_need_base(ing.quantity * M, ing.unit)
+        slot["members"].append((ing.ingredient_id, own))
+        slot["need_base"] += own
+    return {
+        key: GroupAgg(
+            norm=key[0],
+            bucket=key[1],
+            need_base=slot["need_base"],
+            members=slot["members"],
+            to_taste_members=slot["to_taste"],
+            display_item=slot["display_item"],
+        )
+        for key, slot in groups.items()
+    }
+
+
+# --------------------------------------------------------------------------- #
+# 4.2 check_availability
+# --------------------------------------------------------------------------- #
 
 
 def check_availability(
     reqs: list[ReqLine], stock: list[StockRow]
 ) -> list[AvailabilityLineDTO]:
-    raise NotImplementedError(_PHASE_4D)
+    """Per-ingredient availability against current stock (spec.md §4.2).
+
+    One line per requirement. To-taste members of a group emit first (vacuous
+    line, decision SD1), then the quantified members repeat the group's ``group_*``
+    / ``status`` / ``nettable`` verbatim — stock is aggregated once per group,
+    never spent per member.
+    """
+    items = {r.ingredient_id: r.item for r in reqs}
+    out: list[AvailabilityLineDTO] = []
+    for g in aggregate(reqs).values():
+        canon = canon_unit(g.bucket)
+        group_key = f"{g.norm}|{g.bucket}"
+
+        for ing_id in g.to_taste_members:
+            out.append(
+                AvailabilityLineDTO(
+                    ingredient_id=ing_id,
+                    item=items[ing_id],
+                    need=None,
+                    need_unit=canon,
+                    group_key=group_key,
+                    group_unit=canon,
+                    group_need=None,
+                    group_have=None,
+                    group_short=None,
+                    status="to_taste",
+                    nettable=False,
+                )
+            )
+
+        if not g.members:  # group had only to-taste rows
+            continue
+
+        pos = [r for r in stock if r.match_name == g.norm and r.quantity_base > 0]
+        compat = [r for r in pos if r.unit_bucket == g.bucket]
+        incomp = [r for r in pos if r.unit_bucket != g.bucket]
+
+        if compat:
+            have = sum(r.quantity_base for r in compat)  # already canonical
+            short = g.need_base - have
+            if short <= 0:
+                gstatus, nettable, ghave, gshort = "ok", True, have, 0.0
+            elif incomp:
+                gstatus, nettable, ghave, gshort = "have_uncertain", False, have, short
+            else:
+                gstatus, nettable, ghave, gshort = "short", True, have, short
+        elif incomp:
+            gstatus, nettable, ghave, gshort = "have_uncertain", False, 0.0, g.need_base
+        else:
+            gstatus, nettable, ghave, gshort = "missing", False, 0.0, g.need_base
+
+        for ing_id, own_need_base in g.members:
+            out.append(
+                AvailabilityLineDTO(
+                    ingredient_id=ing_id,
+                    item=items[ing_id],
+                    need=own_need_base,
+                    need_unit=canon,
+                    group_key=group_key,
+                    group_unit=canon,
+                    group_need=g.need_base,
+                    group_have=ghave,
+                    group_short=gshort,
+                    status=gstatus,
+                    nettable=nettable,
+                )
+            )
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# 4.5 — not owned by phase-4d.
+#
+# Forward declarations so ``tests/test_inventory_math.py`` (the phase-4a locked
+# oracle, which imports the whole §4 surface) collects. The bodies land in
+# phase-4e; the deduction oracle cases stay red until then.
+# --------------------------------------------------------------------------- #
+
+_PHASE_4E = "deduct_calc / _entry land in phase-4e (spec.md §4.5)"
 
 
 def deduct_calc(reqs: list[ReqLine], stock: list[StockRow]) -> DeductProposal:

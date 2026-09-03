@@ -1,13 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import SessionDep, TransactionRoute
-from app.models import Recipe, RecipeIngredient, _utcnow
+from app.models import InventoryItem, Recipe, RecipeIngredient, _utcnow
 from app.normalize import normalize_name
-from app.schemas import RecipeCreate, RecipeIngredientIn, RecipeRead, RecipeUpdate
+from app.schemas import (
+    AvailabilityReport,
+    RecipeCreate,
+    RecipeIngredientIn,
+    RecipeRead,
+    RecipeUpdate,
+)
 from app.security import CurrentUser, get_current_user
 from app.services.ingredient_parse import parse_ingredient
+from app.services.inventory_math import ReqLine, StockRow, check_availability
 
 router = APIRouter(
     prefix="/api/recipes",
@@ -117,6 +124,52 @@ def create_recipe(payload: RecipeCreate, current_user: CurrentUser, db: SessionD
 @router.get("/{recipe_id}", response_model=RecipeRead)
 def get_recipe(recipe_id: int, db: SessionDep) -> Recipe:
     return _get_or_404(db, recipe_id)
+
+
+@router.get("/{recipe_id}/availability", response_model=AvailabilityReport)
+def recipe_availability(
+    recipe_id: int,
+    db: SessionDep,
+    multiplier: float = Query(1.0, gt=0, allow_inf_nan=False),
+) -> AvailabilityReport:
+    """Per-ingredient availability against current stock (spec.md §5.3).
+
+    `multiplier` is folded into each `ReqLine.quantity` here — a to-taste line
+    stays `None`, never `None * multiplier` (R-1). `all_available` is true when
+    every non-to-taste line is `ok` (an empty or all-to-taste recipe → true).
+    """
+    recipe = _get_or_404(db, recipe_id)
+
+    reqs = [
+        ReqLine(
+            ingredient_id=ing.id,
+            item=ing.item,
+            normalized_name=ing.normalized_name,
+            quantity=None if ing.quantity is None else ing.quantity * multiplier,
+            unit=ing.unit,
+        )
+        for ing in recipe.ingredients
+    ]
+    stock = [
+        StockRow(
+            id=row.id,
+            match_name=row.match_name,
+            unit_bucket=row.unit_bucket,
+            quantity_base=row.quantity_base,
+        )
+        for row in db.scalars(select(InventoryItem))
+    ]
+
+    lines = check_availability(reqs, stock)
+    all_available = all(
+        line.status == "ok" for line in lines if line.status != "to_taste"
+    )
+    return AvailabilityReport(
+        recipe_id=recipe.id,
+        multiplier=multiplier,
+        lines=lines,
+        all_available=all_available,
+    )
 
 
 @router.put("/{recipe_id}", response_model=RecipeRead)

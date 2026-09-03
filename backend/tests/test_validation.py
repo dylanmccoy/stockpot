@@ -179,3 +179,18 @@ def test_inventory_patch_quantity_rejects_negative_and_non_finite(
     assert response.status_code == 422, response.text
     # The rejected PATCH left the stored quantity untouched.
     assert auth_client.get("/api/inventory").json()[0]["quantity_base"] == 1000.0
+
+
+# `availability?multiplier=` — `Query(1.0, gt=0)`, `allow_inf_nan=False`
+# (spec.md §5.3). Same rejected set as a recipe quantity: zero, negative, and the
+# two non-finite floats. It rides in the query string, so no raw-body helper.
+@pytest.mark.parametrize("multiplier", ["0", "-1", "-0.5", "inf", "-inf", "nan"])
+def test_availability_multiplier_rejects_non_positive_and_non_finite(
+    auth_client: TestClient, multiplier: str
+) -> None:
+    recipe_id = auth_client.post("/api/recipes", json={"title": "Scale me"}).json()["id"]
+
+    response = auth_client.get(
+        f"/api/recipes/{recipe_id}/availability", params={"multiplier": multiplier}
+    )
+    assert response.status_code == 422, response.text
