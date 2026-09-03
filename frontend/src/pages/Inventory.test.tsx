@@ -9,11 +9,16 @@ import { sampleInventoryItem } from "../test/handlers";
 import { ToastProvider } from "../components";
 import type { InventoryItemRead } from "../types";
 import Inventory, {
+  bucketForUnit,
   buildInventoryCreate,
+  buildInventoryPatch,
+  editDraftFrom,
   emptyAddDraft,
+  sameBucketUnits,
   sortInventory,
   stockLabel,
   validateAddDraft,
+  validateEditDraft,
 } from "./Inventory";
 
 const mk = (over: Partial<InventoryItemRead>): InventoryItemRead => ({
@@ -114,6 +119,186 @@ describe("stockLabel", () => {
     expect(stockLabel(mk({ display_quantity: 3, display_unit: null }))).toBe(
       "3",
     );
+  });
+});
+
+// ── pure: the inline-edit seams ─────────────────────────────────────────────
+
+describe("bucketForUnit", () => {
+  it("maps mass / volume / count synonyms to their bucket", () => {
+    expect(bucketForUnit("kg")).toBe("mass");
+    expect(bucketForUnit("Grams.")).toBe("mass");
+    expect(bucketForUnit("tbsp")).toBe("volume");
+    expect(bucketForUnit("cups")).toBe("volume");
+    expect(bucketForUnit("dozen")).toBe("count");
+  });
+
+  it("brackets an opaque token as opaque:<token> and a blank unit as count", () => {
+    expect(bucketForUnit("cans")).toBe("opaque:can");
+    expect(bucketForUnit("")).toBe("count");
+    expect(bucketForUnit("   ")).toBe("count");
+  });
+
+  it("returns null for an unknown token (server decides)", () => {
+    expect(bucketForUnit("blorp")).toBeNull();
+  });
+});
+
+describe("sameBucketUnits", () => {
+  it("lists canonical units for a known bucket, nothing for opaque", () => {
+    expect(sameBucketUnits("mass")).toContain("kg");
+    expect(sameBucketUnits("count")).toEqual(["unit", "each", "dozen", "pair"]);
+    expect(sameBucketUnits("opaque:can")).toEqual([]);
+  });
+});
+
+describe("editDraftFrom", () => {
+  it("pre-fills from the row's display values; a null unit becomes ''", () => {
+    expect(
+      editDraftFrom(
+        mk({ display_quantity: 3, display_unit: null, match_name: "eggs" }),
+      ),
+    ).toEqual({ quantity: "3", unit: "", matchName: "eggs" });
+  });
+
+  it("snaps a raw response float so it never lands in the input verbatim", () => {
+    expect(
+      editDraftFrom(mk({ display_quantity: 266.1616, display_unit: "ml" }))
+        .quantity,
+    ).toBe("266.162");
+  });
+});
+
+describe("validateEditDraft", () => {
+  const massRow = mk({
+    unit_bucket: "mass",
+    display_unit: "g",
+    display_quantity: 1000,
+    match_name: "flour",
+  });
+
+  it("passes an in-bucket quantity + unit change", () => {
+    expect(
+      validateEditDraft(massRow, {
+        quantity: "0.5",
+        unit: "kg",
+        matchName: "flour",
+      }),
+    ).toBeNull();
+  });
+
+  it("blocks a quantity change that drops the unit on a non-COUNT row", () => {
+    expect(
+      validateEditDraft(massRow, {
+        quantity: "500",
+        unit: "",
+        matchName: "flour",
+      }),
+    ).toEqual({ unit: "Confirm the unit for the new quantity." });
+  });
+
+  it("blocks a unit that lands in a different bucket", () => {
+    expect(
+      validateEditDraft(massRow, {
+        quantity: "1000",
+        unit: "can",
+        matchName: "flour",
+      })?.unit,
+    ).toMatch(/not a mass unit/);
+  });
+
+  it("blocks clearing the unit on a non-COUNT row", () => {
+    expect(
+      validateEditDraft(massRow, {
+        quantity: "1000",
+        unit: "",
+        matchName: "flour",
+      })?.unit,
+    ).toMatch(/needs a unit/);
+  });
+
+  it("allows a COUNT row to change quantity with no unit", () => {
+    const countRow = mk({
+      unit_bucket: "count",
+      display_unit: null,
+      display_quantity: 6,
+    });
+    expect(
+      validateEditDraft(countRow, {
+        quantity: "12",
+        unit: "",
+        matchName: "eggs",
+      }),
+    ).toBeNull();
+  });
+
+  it("flags a blank match name", () => {
+    expect(
+      validateEditDraft(massRow, {
+        quantity: "1000",
+        unit: "g",
+        matchName: "  ",
+      }),
+    ).toEqual({ matchName: "Enter a match name." });
+  });
+});
+
+describe("buildInventoryPatch", () => {
+  const row = mk({
+    match_name: "flour",
+    unit_bucket: "mass",
+    display_unit: "g",
+    display_quantity: 1000,
+  });
+
+  it("sends only what changed", () => {
+    expect(
+      buildInventoryPatch(row, {
+        quantity: "1000",
+        unit: "g",
+        matchName: "flour",
+      }),
+    ).toEqual({});
+    expect(
+      buildInventoryPatch(row, {
+        quantity: "1000",
+        unit: "g",
+        matchName: "Bread Flour",
+      }),
+    ).toEqual({ match_name: "Bread Flour" });
+    expect(
+      buildInventoryPatch(row, {
+        quantity: "1000",
+        unit: "kg",
+        matchName: "flour",
+      }),
+    ).toEqual({ unit: "kg" });
+  });
+
+  it("rides `unit` along with any `quantity` change (decision S2)", () => {
+    expect(
+      buildInventoryPatch(row, {
+        quantity: "500",
+        unit: "g",
+        matchName: "flour",
+      }),
+    ).toEqual({ quantity: 500, unit: "g" });
+  });
+
+  it("serializes a blank unit as null", () => {
+    const countRow = mk({
+      unit_bucket: "count",
+      display_unit: "each",
+      display_quantity: 6,
+      match_name: "eggs",
+    });
+    expect(
+      buildInventoryPatch(countRow, {
+        quantity: "6",
+        unit: "",
+        matchName: "eggs",
+      }),
+    ).toEqual({ unit: null });
   });
 });
 
@@ -334,5 +519,166 @@ describe("Inventory screen", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.getByText("Flour")).toBeInTheDocument();
     expect(called).toBe(false);
+  });
+});
+
+// ── flow: inline edit + PATCH rules + match_name 409 vs MSW ──────────────────
+
+describe("Inventory edit panel", () => {
+  // sampleInventoryItem: mass row, "flour" / "g" / 1000.
+  const massItem = () =>
+    mk({ id: 1, item: "Flour", match_name: "flour", unit_bucket: "mass" });
+
+  const editPanel = () => screen.getByRole("region", { name: "Edit Flour" });
+
+  /** Open the per-row inline edit panel and return it, with a PATCH spy. */
+  async function openEdit(user: ReturnType<typeof userEvent.setup>) {
+    let patched: unknown = null;
+    server.use(
+      http.get("/api/inventory", () => HttpResponse.json([massItem()])),
+      http.patch("/api/inventory/:id", async ({ request }) => {
+        patched = await request.json();
+        return HttpResponse.json(massItem());
+      }),
+    );
+    renderInventory();
+    await user.click(await screen.findByRole("button", { name: "Edit Flour" }));
+    return { panel: editPanel(), getPatched: () => patched };
+  }
+
+  it("opens an on-page panel (not a modal) with focus on the first field", async () => {
+    const user = userEvent.setup();
+    await openEdit(user);
+    expect(editPanel()).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(within(editPanel()).getByLabelText(/^Match name/)).toHaveFocus();
+  });
+
+  it("blocks the PATCH and shows a reason when a quantity change drops the unit", async () => {
+    const user = userEvent.setup();
+    const { panel, getPatched } = await openEdit(user);
+
+    await user.clear(within(panel).getByLabelText("Unit"));
+    await user.clear(within(panel).getByLabelText(/^Quantity/));
+    await user.type(within(panel).getByLabelText(/^Quantity/), "500");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save changes" }),
+    );
+
+    expect(
+      within(panel).getByText("Confirm the unit for the new quantity."),
+    ).toBeInTheDocument();
+    expect(getPatched()).toBeNull();
+  });
+
+  it("blocks the PATCH when the unit would change bucket", async () => {
+    const user = userEvent.setup();
+    const { panel, getPatched } = await openEdit(user);
+
+    await user.clear(within(panel).getByLabelText("Unit"));
+    await user.type(within(panel).getByLabelText("Unit"), "can");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save changes" }),
+    );
+
+    expect(within(panel).getByText(/not a mass unit/)).toBeInTheDocument();
+    expect(getPatched()).toBeNull();
+  });
+
+  it("blocks the PATCH when the unit is cleared on a non-COUNT row", async () => {
+    const user = userEvent.setup();
+    const { panel, getPatched } = await openEdit(user);
+
+    await user.clear(within(panel).getByLabelText("Unit"));
+    await user.click(
+      within(panel).getByRole("button", { name: "Save changes" }),
+    );
+
+    expect(within(panel).getByText(/needs a unit/)).toBeInTheDocument();
+    expect(getPatched()).toBeNull();
+  });
+
+  it("sends a valid { quantity, unit } PATCH and reflects it in the row", async () => {
+    const user = userEvent.setup();
+    let items = [massItem()];
+    let patched: unknown;
+    server.use(
+      http.get("/api/inventory", () => HttpResponse.json(items)),
+      http.patch("/api/inventory/:id", async ({ request }) => {
+        patched = await request.json();
+        const updated = mk({
+          id: 1,
+          item: "Flour",
+          match_name: "flour",
+          unit_bucket: "mass",
+          display_unit: "g",
+          display_quantity: 500,
+        });
+        items = [updated];
+        return HttpResponse.json(updated);
+      }),
+    );
+    renderInventory();
+
+    await user.click(await screen.findByRole("button", { name: "Edit Flour" }));
+    const panel = editPanel();
+    await user.clear(within(panel).getByLabelText(/^Quantity/));
+    await user.type(within(panel).getByLabelText(/^Quantity/), "500");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save changes" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Edit Flour" }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(patched).toEqual({ quantity: 500, unit: "g" });
+    const table = screen.getByRole("table");
+    expect(within(table).getByText("500 g")).toBeInTheDocument();
+  });
+
+  it("shows a match_name 409 collision inline on the field", async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get("/api/inventory", () => HttpResponse.json([massItem()])),
+      http.patch("/api/inventory/:id", () =>
+        HttpResponse.json(
+          { detail: "match_name already in use for this bucket" },
+          { status: 409 },
+        ),
+      ),
+    );
+    renderInventory();
+
+    await user.click(await screen.findByRole("button", { name: "Edit Flour" }));
+    const panel = editPanel();
+    await user.clear(within(panel).getByLabelText(/^Match name/));
+    await user.type(within(panel).getByLabelText(/^Match name/), "sugar");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save changes" }),
+    );
+
+    expect(
+      await within(panel).findByText(
+        "match_name already in use for this bucket",
+      ),
+    ).toBeInTheDocument();
+    // still open for the user to fix the name
+    expect(editPanel()).toBeInTheDocument();
+  });
+
+  it("Cancel closes the panel and returns focus to the row's Edit button", async () => {
+    const user = userEvent.setup();
+    await openEdit(user);
+
+    await user.click(
+      within(editPanel()).getByRole("button", { name: "Cancel" }),
+    );
+
+    expect(
+      screen.queryByRole("region", { name: "Edit Flour" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit Flour" })).toHaveFocus();
   });
 });
