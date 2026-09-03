@@ -4,7 +4,7 @@
 
 **Blocked by:** 08a.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/pages/Inventory.tsx`, `frontend/src/pages/Inventory.test.tsx`, `frontend/src/api/inventory.ts` (PATCH adapter).
 
