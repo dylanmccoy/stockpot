@@ -117,6 +117,21 @@ export interface FormErrors {
  *  / unexpected errors to a generic toast. */
 export const GENERIC_ERROR_MESSAGE = "Something went wrong. Try again.";
 
+/** Copy for the generic `409` write conflict (`detail: "conflict"` — an
+ *  `IntegrityError` or a SQLite lock timeout, R-11). Every screen that mutates
+ *  stock (inventory add/patch, cook, grocery submit) shows this + refetches the
+ *  affected query rather than the bare "conflict" string (spec §6 catalog). */
+export const STOCK_CONFLICT_MESSAGE =
+  "Someone else was updating stock. We've refreshed — try again.";
+
+/** A generic `409` write conflict — the R-11 case that routes to
+ *  `STOCK_CONFLICT_MESSAGE` + a refetch. A `409` with a more specific `detail`
+ *  (e.g. `match_name` collision) is a different surface; callers that care
+ *  narrow further on `err.detail`. */
+export function isStockConflict(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 409;
+}
+
 /** Whether a thrown value has a place on a form's own inline surface — a field
  *  error or the form-level banner. When `false` the failure belongs on a toast:
  *  a transport failure, a `5xx`, a `404`, or a non-`ApiError` (spec §6). */

@@ -14,7 +14,12 @@ import type {
   RecipeIngredientRead,
   RecipeRead,
 } from "../types";
-import { ApiError, GENERIC_ERROR_MESSAGE } from "../lib/apiError";
+import {
+  ApiError,
+  GENERIC_ERROR_MESSAGE,
+  STOCK_CONFLICT_MESSAGE,
+  isStockConflict,
+} from "../lib/apiError";
 import { formatQuantity } from "../lib/format";
 import { cx } from "../lib/cx";
 import {
@@ -33,11 +38,6 @@ import styles from "./RecipeDetail.module.css";
 // still a placeholder (ticket 11). Availability and cook are built against the
 // spec DTO through the recipes adapter (R-2) and wired to real calls in tickets
 // 16 / 17.
-
-// R-11: a `409` from cook is a generic stock collision — surface the shared
-// retry copy and refetch the stock-derived views, never a bare "conflict".
-const STOCK_CONFLICT_MESSAGE =
-  "Someone else was updating stock. We've refreshed — try again.";
 
 /** `source_url` is stored verbatim and never validated (R-14); this only decides
  *  whether to offer an "open link" affordance. Mirrors `asOpenableUrl` in
@@ -279,25 +279,26 @@ function CookPanel({ id, multiplier }: { id: number; multiplier: number }) {
   const toast = useToast();
   const [deduct, setDeduct] = useState(true);
 
+  // The availability table and Inventory screen both read from stock; a cook
+  // (or a failed cook that may have half-applied) makes them stale.
+  const invalidateStockViews = () => {
+    queryClient.invalidateQueries({ queryKey: ["availability", id] });
+    queryClient.invalidateQueries({ queryKey: ["inventory"] });
+  };
+
   const cook = useMutation({
     mutationFn: () => recipesApi.cook(id, { multiplier, deduct }),
     onSuccess: () => {
       // Every stock- and history-derived view is now stale (spec §10.4).
-      queryClient.invalidateQueries({ queryKey: ["availability", id] });
-      queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      invalidateStockViews();
       queryClient.invalidateQueries({ queryKey: ["cook-logs"] });
       queryClient.invalidateQueries({ queryKey: ["recipe-cook-logs", id] });
-      toast.show(
-        deduct ? "Cooked — inventory updated." : "Cooked — logged to history.",
-        { variant: "success" },
-      );
+      toast.show("Cooked — logged to your history.", { variant: "success" });
     },
     onError: (err: unknown) => {
-      if (err instanceof ApiError && err.status === 409) {
-        // R-11 stock collision: refetch what the deduction would have touched
-        // and tell the user to try again.
-        queryClient.invalidateQueries({ queryKey: ["availability", id] });
-        queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      if (isStockConflict(err)) {
+        // R-11: refetch what the deduction would have touched, ask for a retry.
+        invalidateStockViews();
         toast.show(STOCK_CONFLICT_MESSAGE, { variant: "error" });
       } else {
         toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
@@ -321,9 +322,6 @@ function CookPanel({ id, multiplier }: { id: number; multiplier: number }) {
           Deduct from inventory
         </label>
       </div>
-      <p className={styles.muted}>
-        Recording a cook is permanent and can’t be reversed.
-      </p>
     </section>
   );
 }
