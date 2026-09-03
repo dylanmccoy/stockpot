@@ -148,4 +148,21 @@ describe("§6 error catalog handlers", () => {
       expect(err.detail).toBe(row.detail);
     }
   });
+
+  // The running backend union-tags a bad object ingredient element's `loc`
+  // (frontend ticket 15). `client.ts` passes it through verbatim; the collapse
+  // to `ingredients.<idx>.<field>` is `useFormErrors`' job (see apiError.test).
+  it("passes the union-tagged ingredient 422 through as a raw ValidationIssue[]", async () => {
+    server.use(errorHandlers.ingredientMemberValidation(2, "item"));
+    const err = await rejection(
+      request("/recipes", { method: "POST", body: {} }),
+    );
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(422);
+    const detail = err.detail as ValidationIssue[];
+    expect(detail.map((d) => d.loc)).toEqual([
+      ["body", "ingredients", 2, "RecipeIngredientIn", "item"],
+      ["body", "ingredients", 2, "str"],
+    ]);
+  });
 });

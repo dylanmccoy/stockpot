@@ -215,22 +215,48 @@ Notes on E2E coverage vs the MSW flow test:
 Spec: `spec.md` §7.1 (splitter), §10.2, §10.3, §10.4 (body only), §10.8
 (per-recipe panel shell); `../spec.md` §5.2.
 
-- [ ] `lib/parseIngredients.ts` — oracle suite authored under the gate first.
-- [ ] `api/recipes.ts`; `api/cookLogs.ts` (read shape only for the panel shell).
-- [ ] `pages/RecipeList.tsx` — `["recipes"]` query; client search / cuisine+tag
+- [x] `lib/parseIngredients.ts` — oracle suite authored under the gate first.
+- [x] `api/recipes.ts`; `api/cookLogs.ts` (read shape only for the panel shell).
+- [x] `pages/RecipeList.tsx` — `["recipes"]` query; client search / cuisine+tag
       facets / sort; card grid; multi-select mode + sticky action bar (dialog
       wired in Phase 6).
-- [ ] `pages/RecipeForm.tsx` — unified editable ingredient table + paste-to-append
+- [x] `pages/RecipeForm.tsx` — unified editable ingredient table + paste-to-append
       with a parsed-row preview; steps list; tag chips; `source_url` plain field;
       create + edit (PUT full replace); `loc`-mapped `422` errors.
-- [ ] `pages/RecipeDetail.tsx` — body, ingredients, steps, notes; multiplier
+- [x] `pages/RecipeDetail.tsx` — body, ingredients, steps, notes; multiplier
       `Stepper` rescales displayed quantities (availability/cook wired later);
       per-recipe history panel shell; delete → confirm → `/`.
-- [ ] Flow tests: RecipeForm create (mixed pasted + structured rows), RecipeForm
+- [x] Flow tests: RecipeForm create (mixed pasted + structured rows), RecipeForm
       edit (full replace clears old rows).
+- [x] Integrated against real BE Phase 3 (ticket 15): `types.ts` / `spec.md` §5.2
+      re-diffed against the merged backend — request + response shapes match
+      field-for-field, no drift. The one gap was error *shape*: Pydantic
+      union-tags a bad object ingredient element's `loc`
+      (`["body","ingredients",N,"RecipeIngredientIn","item"]`, plus a
+      `["body","ingredients",N,"str"]` sibling), which the spec §10.3 map didn't
+      expect — reconciled in `lib/apiError.ts` (`normalizeLoc` /
+      `isUnionBranchNoise`), covered by `apiError.test.ts`, `errorHandlers.ts`
+      (`ingredientMemberValidation`), and a RecipeForm screen test. End-to-end
+      confirmed by `frontend/e2e/recipes.integration.spec.ts` (the `integration`
+      Playwright project: list read, mixed create round-trip, PUT full-replace
+      row drop + id churn, `loc`-mapped `422` on the row, multiplier rescale).
 
-**Exit:** splitter oracle green; both RecipeForm flow tests green against real
-BE Phase 3.
+**Exit:** ✅ splitter oracle green; both RecipeForm flow tests green vs MSW **and**
+the create / edit-full-replace / `422`-mapping scenarios pass end-to-end against
+real BE Phase 3.
+
+Notes on E2E coverage vs the MSW flow tests:
+
+- Pydantic renders an untagged-union member error
+  (`list[RecipeIngredientIn | str]`) with the winning branch name spliced into
+  `loc` and a losing-branch sibling. `normalizeLoc` collapses the tag and
+  `isUnionBranchNoise` drops the sibling, so both the spec's clean
+  `["body","ingredients",N,"item"]` shape and the real tagged one map to the
+  same row + field.
+- Datetimes still serialize as `…Z` with microseconds, not the `…+00:00` the
+  spec form promises (already flagged for the backend track under Phase 2). The
+  frontend absorbs both via `lib/format.ts`; the MSW fixture keeps the spec
+  form per R-1.
 
 ---
 
@@ -344,7 +370,7 @@ Depends on backend Phase 7.
 | 0 — Tooling & skeleton rewrite | Complete |
 | 1 — Design system & app shell | Complete |
 | 2 — Auth | Complete — built vs MSW (ticket 04) and integrated against real BE Phase 2 (ticket 14) |
-| 3 — Recipes | In progress — 2 of 8 tickets: 03 (oracle suites), 05a (list/search/facets/sort) done; 05b, 06a–c, 07, 15 remain |
+| 3 — Recipes | Complete — built vs MSW (03 oracles, 05a/05b list, 06a–c form, 07 detail) and integrated against real BE Phase 3 (ticket 15) |
 | 4 — Inventory & availability | Complete — built vs MSW (08a, 08b, 09) and integrated against real BE Phase 4 (ticket 16) |
 | 5 — Cook & history | Not started — buildable vs MSW; wiring blocked on BE Phase 5 |
 | 6 — Grocery | Not started — buildable vs MSW; wiring blocked on BE Phase 6 |

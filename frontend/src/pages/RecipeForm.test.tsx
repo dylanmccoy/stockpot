@@ -5,6 +5,7 @@ import { http, HttpResponse } from "msw";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { server } from "../test/server";
+import { errorHandlers } from "../test/errorHandlers";
 import { makeQueryClient } from "../test/helpers";
 import { sampleRecipe } from "../test/handlers";
 import { ToastProvider } from "../components";
@@ -443,6 +444,36 @@ describe("RecipeForm create flow", () => {
       "aria-invalid",
       "true",
     );
+    expect(screen.queryByTestId("recipe-landing")).not.toBeInTheDocument();
+  });
+
+  it("maps the real backend's union-tagged ingredient 422 onto the row", async () => {
+    const user = userEvent.setup();
+    // The running backend answers a bad object element with a union-tagged
+    // `loc` (`…,1,"RecipeIngredientIn","item"`) plus a losing-`str`-branch
+    // sibling — frontend ticket 15. The row error must still land.
+    server.use(errorHandlers.ingredientMemberValidation(1, "item", "Field required"));
+    renderForm();
+
+    await user.type(screen.getByLabelText(/^Title/), "Stew");
+    await user.type(screen.getByLabelText("Item for ingredient 1"), "beef");
+    await user.click(screen.getByRole("button", { name: "Add ingredient" }));
+    await user.type(screen.getByLabelText("Item for ingredient 2"), "carrot");
+    await user.click(screen.getByRole("button", { name: "Save recipe" }));
+
+    expect(await screen.findByText("Field required")).toBeInTheDocument();
+    expect(screen.getByLabelText("Item for ingredient 2")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(screen.getByLabelText("Item for ingredient 1")).not.toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    // the "Input should be a valid string" sibling never reaches a surface
+    expect(
+      screen.queryByText("Input should be a valid string"),
+    ).not.toBeInTheDocument();
     expect(screen.queryByTestId("recipe-landing")).not.toBeInTheDocument();
   });
 

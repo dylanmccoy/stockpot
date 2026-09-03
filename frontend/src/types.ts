@@ -4,6 +4,12 @@
 // the backend section that moved.
 //
 // Last diffed against docs/spec.md §0, §5 on 2026-09-02 (backend Phase 2 merged).
+// §5.2 (Recipes CRUD) re-diffed against the merged backend on 2026-09-03
+// (frontend ticket 15 / plan Phase 3 gate): request + response shapes match
+// field-for-field, no drift. The one integration gap was error *shape*, not a
+// type: Pydantic wraps a bad `ingredients` object element's `loc` with the
+// union branch tag (`["body","ingredients",N,"RecipeIngredientIn","item"]`) —
+// reconciled in lib/apiError.ts (`normalizeLoc`), not here.
 // §5.3 (availability) + §5.5 (inventory) re-diffed 2026-09-03 against backend
 // Phase 4 as merged (ticket 16).
 

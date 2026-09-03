@@ -67,6 +67,45 @@ describe("useFormErrors", () => {
     });
   });
 
+  it("collapses the Pydantic union branch tag the real backend emits (§6)", () => {
+    // The running backend answers a bad object element with a `loc` that names
+    // the winning union branch (`RecipeIngredientIn`) between the index and the
+    // field, plus a sibling complaint against the losing `str` branch.
+    const err = parseApiError(422, {
+      detail: [
+        issue(
+          ["body", "ingredients", 1, "RecipeIngredientIn", "quantity"],
+          "Input should be greater than 0",
+        ),
+        issue(
+          ["body", "ingredients", 1, "str"],
+          "Input should be a valid string",
+        ),
+        issue(
+          ["body", "ingredients", 0, "RecipeIngredientIn", "qty"],
+          "Extra inputs are not permitted",
+        ),
+      ],
+    });
+    const { result } = renderHook(() => useFormErrors(err));
+    expect(result.current.fieldErrors).toEqual({
+      "ingredients.1.quantity": "Input should be greater than 0",
+      "ingredients.0.qty": "Extra inputs are not permitted",
+    });
+  });
+
+  it("only collapses a segment that looks like a union branch tag", () => {
+    // a hypothetical future `list[Object]` field — its own snake_case nested key
+    // sits right after the index and must survive untouched.
+    const err = parseApiError(422, {
+      detail: [issue(["body", "lines", 2, "unit_price"], "required")],
+    });
+    const { result } = renderHook(() => useFormErrors(err));
+    expect(result.current.fieldErrors).toEqual({
+      "lines.2.unit_price": "required",
+    });
+  });
+
   it("keeps the first message when a key appears twice", () => {
     const err = parseApiError(422, {
       detail: [

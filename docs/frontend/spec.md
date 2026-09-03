@@ -294,6 +294,13 @@ Ingredient build rules the client must respect:
 - `quantity: null` ⇒ **to-taste** even if `unit` is set (`unit` ignored).
 - Don't use `RecipeIngredientRead.id` as a stable React key across an edit
   (churns on every PUT, R-16); use `position` or a local uid.
+- A rejected **object** element's `422` `loc` is union-tagged:
+  `["body","ingredients",N,"RecipeIngredientIn","<field>"]`, alongside a sibling
+  `["body","ingredients",N,"str"]`. The client normalizes the tag away (§6, §7.3)
+  — real-backend confirmed, frontend ticket 15.
+- Author units are stored verbatim, lower-cased with one trailing `.` stripped,
+  **not** singularized: a pasted `2 cups flour` and `{unit:"Tbsp."}` persist as
+  `cups` / `tbsp` (`../spec.md` §5.2).
 
 ### Availability — `GET /api/recipes/{id}/availability?multiplier=<number>`
 
@@ -497,7 +504,10 @@ Behavior the UI must reflect:
 
 - **transport / `500` / unexpected** → **toast** (generic copy).
 - **`422` with `detail: ValidationIssue[]`** → **inline per-field**, mapped by
-  the last string in each `loc` to a form field.
+  each `loc` to a form field (flat `loc` → field name; `["body","ingredients",N,
+  …]` → row + field). Pydantic union branch tags in the path
+  (`…,N,"RecipeIngredientIn","item"` and the sibling `…,N,"str"`) are collapsed
+  / dropped first — `normalizeLoc` / `isUnionBranchNoise` in §7.3.
 - **`422` / `403` / `409` with `detail: string`** → **inline form-level banner**,
   message shown verbatim (the backend strings are already human).
 - **`401`** → **silent**: clear token + cache, redirect to `/login?next=`.
@@ -645,6 +655,25 @@ Rules:
 `isFieldError(e): e is ApiError & { detail: ValidationIssue[] }` and
 `fieldName(issue): string` (= `String(issue.loc.at(-1))`) are exported helpers.
 
+**Untagged-union `loc` normalization (companion-tested, not oracle-locked).**
+`parseApiError` keeps every `ValidationIssue` verbatim (oracle rows E1/E8). The
+`loc` → form-field mapping in `useFormErrors` (§6) then reconciles the one shape
+the running backend emits that spec §10.3 didn't anticipate: a bad **object**
+element of `ingredients: list[RecipeIngredientIn | str]` (`../spec.md` §5.2) comes
+back as `["body","ingredients",N,"RecipeIngredientIn","<field>"]` plus a
+losing-branch sibling `["body","ingredients",N,"str"]`.
+- `normalizeLoc` drops an *interior* branch tag (a `str`/`int`/`float`/`bool`
+  builtin name, or a PascalCase schema name — every API schema is PascalCase)
+  sitting between a numeric index and the real field, so the mapping key is
+  `ingredients.N.field` for both the real shape and the clean one.
+- `isUnionBranchNoise` drops an issue whose `loc` *ends* in such a tag (the
+  `str`-sibling, and the unreachable-from-the-form case of an element that is
+  neither a valid object nor a string).
+These live in `lib/apiError.ts` beside `parseApiError`; they are covered by
+`apiError.test.ts`, not the locked oracle table above (that table is scoped to
+`parseApiError` normalization only). Confirmed against the real backend in
+`frontend/e2e/recipes.integration.spec.ts` (frontend ticket 15).
+
 ### 7.4 "Uncertain" language (Q19 — copy, not logic)
 
 `have_uncertain` (availability) and `nettable:false` (grocery) both mean "true
@@ -759,8 +788,13 @@ sit behind their `src/api/<resource>.ts` adapter until that phase's DTOs land
       non-empty `item`; the form blocks submit otherwise, matching the server
       `422`).
   - `quantity` blank ⇒ omit / `null` ⇒ to-taste.
-- Errors: `422 ValidationIssue[]` → map `loc` (`["body","ingredients",3,"item"]`)
-  to the offending row/field; domain `422` strings → form-level banner.
+- Errors: `422 ValidationIssue[]` → map `loc` to the offending row/field; domain
+  `422` strings → form-level banner. A bad **object** ingredient element comes
+  back tagged with its union branch —
+  `["body","ingredients",3,"RecipeIngredientIn","item"]`, plus a sibling
+  `["body","ingredients",3,"str"]` losing-branch complaint. `lib/apiError.ts`
+  (`normalizeLoc` / `isUnionBranchNoise`) collapses the tag to
+  `ingredients.3.item` and drops the `str` sibling before mapping (§6).
 
 ### 10.4 RecipeDetail  (`/recipes/:id`) — body Phase 3; availability Phase 4; cook Phase 5
 
