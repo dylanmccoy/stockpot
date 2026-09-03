@@ -1,7 +1,11 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { inventoryApi } from "../api/inventory";
-import type { InventoryItemCreate, InventoryItemRead } from "../types";
+import type {
+  InventoryItemCreate,
+  InventoryItemRead,
+  InventoryItemUpdate,
+} from "../types";
 import {
   Button,
   DataTable,
@@ -31,6 +35,17 @@ const STOCK_CONFLICT_MESSAGE =
 
 const isStockConflict = (err: unknown): boolean =>
   err instanceof ApiError && err.status === 409;
+
+// The one `409` that is NOT the generic write conflict: a PATCH `match_name`
+// whose normalized value collides with another `(match_name, unit_bucket)` row.
+// Its `detail` is a fixed human string and it renders inline on the field
+// (spec §6 catalog row, §10.9).
+const MATCH_NAME_COLLISION_DETAIL = "match_name already in use for this bucket";
+
+const isMatchNameCollision = (err: unknown): boolean =>
+  err instanceof ApiError &&
+  err.status === 409 &&
+  err.detail === MATCH_NAME_COLLISION_DETAIL;
 
 // ── Add-form draft → POST body (the one serialization seam) ────────────────
 // The form holds every field as a string; `buildInventoryCreate` is the single
@@ -112,6 +127,217 @@ export function stockLabel(item: InventoryItemRead): string {
   return item.display_unit ? `${quantity} ${item.display_unit}` : quantity;
 }
 
+// ── Inline edit: draft → PATCH body + client-side PATCH-rule guards ─────────
+// `docs/spec.md` §5.5 enforces a small rule set on `PATCH /api/inventory/{id}`.
+// A handful of those rejections are *guaranteed* from what the form already
+// knows, so we block them client-side rather than round-trip a certain `422`
+// (spec §10.9). The server still owns the full rule set.
+
+// Unit token → `unit_bucket`, mirrored just far enough from
+// `backend/app/units.py` (`_UNIT_TABLE`, `OPAQUE_TOKENS`) to place a typed unit.
+// `lib/parseIngredientLine.ts` carries the sibling token lists for the paste
+// preview; kept separate here because that one is a flat "is this a unit" Set
+// while the guard needs the mass/volume/count split.
+const SYNONYM_BUCKET: Record<string, "mass" | "volume" | "count"> = {
+  g: "mass",
+  gram: "mass",
+  kg: "mass",
+  mg: "mass",
+  oz: "mass",
+  ounce: "mass",
+  lb: "mass",
+  lbs: "mass",
+  pound: "mass",
+  ml: "volume",
+  l: "volume",
+  litre: "volume",
+  liter: "volume",
+  tsp: "volume",
+  teaspoon: "volume",
+  tbsp: "volume",
+  tablespoon: "volume",
+  cup: "volume",
+  "fl-oz": "volume",
+  "fl oz": "volume",
+  floz: "volume",
+  pint: "volume",
+  quart: "volume",
+  gallon: "volume",
+  unit: "count",
+  each: "count",
+  dozen: "count",
+  pair: "count",
+};
+
+const OPAQUE_UNIT_TOKENS = new Set([
+  "clove",
+  "slice",
+  "piece",
+  "stick",
+  "can",
+  "package",
+  "pkg",
+  "jar",
+  "bottle",
+  "box",
+  "bag",
+  "head",
+  "bulb",
+  "bunch",
+  "sprig",
+  "pinch",
+  "handful",
+  "dash",
+  "splash",
+]);
+
+/** Light mirror of `normalize_unit_token`: lower, trim, drop one trailing ".",
+ *  singularize the whole string ("Cups." → "cup", "boxes" → "box"). The
+ *  singularize rule matches `singularize` in `lib/parseIngredientLine.ts`. */
+function normalizeUnitToken(raw: string): string {
+  let s = raw.trim().toLowerCase();
+  if (s.endsWith(".")) s = s.slice(0, -1);
+  if (s.length > 3 && /(?:ses|xes|ches|shes)$/.test(s)) return s.slice(0, -2);
+  if (s.length > 1 && s.endsWith("s") && !s.endsWith("ss"))
+    return s.slice(0, -1);
+  return s;
+}
+
+/** The `unit_bucket` a typed unit resolves to — `"mass" | "volume" | "count" |
+ *  "opaque:<token>"` — or `null` when the token is unknown (let the server
+ *  decide). A blank unit is the COUNT bucket (a null `display_unit`). */
+export function bucketForUnit(raw: string): string | null {
+  const t = normalizeUnitToken(raw);
+  if (!t) return "count";
+  if (t in SYNONYM_BUCKET) return SYNONYM_BUCKET[t];
+  if (OPAQUE_UNIT_TOKENS.has(t)) return `opaque:${t}`;
+  return null;
+}
+
+/** The plain noun for a `unit_bucket` in error/hint copy — the `opaque:` prefix
+ *  dropped so `"opaque:can"` reads as `"can"`. */
+function bucketNoun(bucket: string): string {
+  return bucket.startsWith("opaque:") ? bucket.slice("opaque:".length) : bucket;
+}
+
+// Short canonical unit list per bucket, for the edit hint (spec §10.9 "the
+// field offers only same-bucket units"). An `opaque:` bucket has none — that
+// unit can't change without a remove-and-re-add.
+const BUCKET_UNITS: Record<string, string[]> = {
+  mass: ["g", "kg", "mg", "oz", "lb"],
+  volume: ["ml", "l", "tsp", "tbsp", "cup", "pint", "quart", "gallon"],
+  count: ["unit", "each", "dozen", "pair"],
+};
+
+export function sameBucketUnits(bucket: string): string[] {
+  return BUCKET_UNITS[bucket] ?? [];
+}
+
+export interface InventoryEditDraft {
+  quantity: string;
+  unit: string;
+  matchName: string;
+}
+
+/** The edit form opens pre-filled with the row's current display values. The
+ *  quantity is snapped to 6 significant figures so a raw response float
+ *  (`266.1616…`) never lands in the input verbatim (spec §7.2). */
+export function editDraftFrom(item: InventoryItemRead): InventoryEditDraft {
+  return {
+    quantity: String(Number(item.display_quantity.toPrecision(6))),
+    unit: item.display_unit ?? "",
+    matchName: item.match_name,
+  };
+}
+
+export interface EditDraftErrors {
+  quantity?: string;
+  unit?: string;
+  matchName?: string;
+}
+
+interface EditDraftDiff {
+  matchChanged: boolean;
+  qtyChanged: boolean;
+  unitChanged: boolean;
+  qtyValid: boolean;
+}
+
+/** Which fields the draft actually moves off the row — the single place the
+ *  "what changed" question is answered, shared by the validator and the
+ *  PATCH-body builder so they can't drift. */
+function diffEditDraft(
+  item: InventoryItemRead,
+  draft: InventoryEditDraft,
+): EditDraftDiff {
+  const raw = draft.quantity.trim();
+  const qty = Number(raw);
+  const qtyValid = raw !== "" && Number.isFinite(qty) && qty >= 0;
+  return {
+    matchChanged: draft.matchName.trim() !== item.match_name,
+    qtyValid,
+    qtyChanged: qtyValid && qty !== item.display_quantity,
+    unitChanged:
+      normalizeUnitToken(draft.unit) !==
+      normalizeUnitToken(item.display_unit ?? ""),
+  };
+}
+
+/** Guards that block a PATCH which `docs/spec.md` §5.5 is certain to reject.
+ *  Everything else (a real collision, an unknown unit) still goes to the
+ *  server. Returns `null` when the draft is safe to send. */
+export function validateEditDraft(
+  item: InventoryItemRead,
+  draft: InventoryEditDraft,
+): EditDraftErrors | null {
+  const errors: EditDraftErrors = {};
+  const { qtyValid, qtyChanged, unitChanged } = diffEditDraft(item, draft);
+
+  if (!draft.matchName.trim()) errors.matchName = "Enter a match name.";
+  if (!qtyValid) errors.quantity = "Enter a quantity of zero or more.";
+
+  const nextUnit = draft.unit.trim();
+  const isCountRow = item.unit_bucket === "count";
+
+  if (qtyChanged && !nextUnit && !isCountRow) {
+    // A quantity change forces its unit into the request (decision S2); a
+    // non-COUNT row can't ride along with a null unit.
+    errors.unit = "Confirm the unit for the new quantity.";
+  } else if (unitChanged || (!nextUnit && !isCountRow)) {
+    const bucket = bucketForUnit(nextUnit);
+    if (bucket !== null && bucket !== item.unit_bucket) {
+      errors.unit = nextUnit
+        ? `“${nextUnit}” is not a ${bucketNoun(item.unit_bucket)} unit — remove the item and re-add it to change bucket.`
+        : `A ${bucketNoun(item.unit_bucket)} item needs a unit — clearing it would change the bucket.`;
+    }
+  }
+
+  return Object.keys(errors).length ? errors : null;
+}
+
+/** Draft → `InventoryItemUpdate`, keyed on what actually changed (the server
+ *  drives off `model_fields_set`, §5.5). A `quantity` change always carries
+ *  `unit` (decision S2); a blank unit serializes as `null`. */
+export function buildInventoryPatch(
+  item: InventoryItemRead,
+  draft: InventoryEditDraft,
+): InventoryItemUpdate {
+  const body: InventoryItemUpdate = {};
+  const { matchChanged, qtyChanged, unitChanged } = diffEditDraft(item, draft);
+
+  if (matchChanged) body.match_name = draft.matchName.trim();
+
+  const unitValue = draft.unit.trim() === "" ? null : draft.unit.trim();
+  if (qtyChanged) {
+    body.quantity = Number(draft.quantity.trim());
+    body.unit = unitValue;
+  } else if (unitChanged) {
+    body.unit = unitValue;
+  }
+
+  return body;
+}
+
 export default function Inventory() {
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -126,6 +352,11 @@ export default function Inventory() {
   const [pendingDelete, setPendingDelete] = useState<InventoryItemRead | null>(
     null,
   );
+  const [pendingEdit, setPendingEdit] = useState<InventoryItemRead | null>(
+    null,
+  );
+  const [editDraft, setEditDraft] = useState<InventoryEditDraft | null>(null);
+  const [clientEditErrors, setClientEditErrors] = useState<EditDraftErrors>({});
 
   const add = useMutation({
     mutationFn: (body: InventoryItemCreate) => inventoryApi.create(body),
@@ -159,11 +390,98 @@ export default function Inventory() {
     },
   });
 
+  const edit = useMutation({
+    mutationFn: (vars: { id: number; body: InventoryItemUpdate }) =>
+      inventoryApi.update(vars.id, vars.body),
+    onSuccess: () => {
+      setPendingEdit(null);
+      setEditDraft(null);
+      setClientEditErrors({});
+      queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
+    },
+    onError: (err: unknown) => {
+      // A `match_name` collision and any `422` render inline (below). A generic
+      // write conflict closes the editor with a toast + refetch; anything else
+      // is the generic toast (spec §6).
+      if (isMatchNameCollision(err)) return;
+      if (isStockConflict(err)) {
+        setPendingEdit(null);
+        setEditDraft(null);
+        toast.show(STOCK_CONFLICT_MESSAGE, { variant: "error" });
+        queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
+      } else if (!hasInlineFormError(err)) {
+        toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
+      }
+    },
+  });
+
   // A `409` is handled by the toast + refetch above, so keep it off the inline
   // banner (`isFormLevelStatus` would otherwise show the bare "conflict").
   const { fieldErrors, formError } = useFormErrors(
     isStockConflict(add.error) ? null : add.error,
   );
+
+  // The `match_name` collision is a `409` we DO want inline (on the field), so
+  // it is excluded from `useFormErrors` and threaded in by hand below.
+  const { fieldErrors: editFieldErrors, formError: editFormError } =
+    useFormErrors(isStockConflict(edit.error) ? null : edit.error);
+
+  const editMatchNameError =
+    clientEditErrors.matchName ??
+    (isMatchNameCollision(edit.error)
+      ? MATCH_NAME_COLLISION_DETAIL
+      : undefined) ??
+    editFieldErrors["match_name"];
+  const editQuantityError =
+    clientEditErrors.quantity ?? editFieldErrors["quantity"];
+  const editUnitError = clientEditErrors.unit ?? editFieldErrors["unit"];
+
+  // The row's Edit button, so focus can return to it when the panel closes (§9).
+  const editTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const editPanelRef = useRef<HTMLElement | null>(null);
+
+  function openEdit(item: InventoryItemRead, trigger: HTMLButtonElement) {
+    edit.reset();
+    editTriggerRef.current = trigger;
+    setClientEditErrors({});
+    setEditDraft(editDraftFrom(item));
+    setPendingEdit(item);
+  }
+
+  function closeEdit() {
+    setPendingEdit(null);
+    setEditDraft(null);
+    setClientEditErrors({});
+    editTriggerRef.current?.focus();
+  }
+
+  // Move focus to the first field when the panel opens (§9).
+  useEffect(() => {
+    if (pendingEdit) editPanelRef.current?.querySelector("input")?.focus();
+  }, [pendingEdit]);
+
+  const editUnitOptions = pendingEdit
+    ? sameBucketUnits(pendingEdit.unit_bucket)
+    : [];
+  const editUnitHint =
+    pendingEdit?.unit_bucket === "count"
+      ? `Leave blank to track by count, or use ${editUnitOptions.join(", ")}.`
+      : editUnitOptions.length
+        ? `Use a ${bucketNoun(pendingEdit?.unit_bucket ?? "")} unit — ${editUnitOptions.join(", ")}.`
+        : "This unit can't change here — remove and re-add the item to change it.";
+
+  function submitEdit() {
+    if (!pendingEdit || !editDraft) return;
+    const problems = validateEditDraft(pendingEdit, editDraft);
+    setClientEditErrors(problems ?? {});
+    if (problems) return;
+    const body = buildInventoryPatch(pendingEdit, editDraft);
+    if (Object.keys(body).length === 0) {
+      closeEdit(); // nothing changed — no-op
+      return;
+    }
+    edit.mutate({ id: pendingEdit.id, body });
+  }
 
   const setField = (next: Partial<InventoryAddDraft>) =>
     setDraft((d) => ({ ...d, ...next }));
@@ -193,13 +511,22 @@ export default function Inventory() {
       header: "Actions",
       align: "end",
       render: (r) => (
-        <Button
-          variant="ghost"
-          aria-label={`Delete ${r.item}`}
-          onClick={() => setPendingDelete(r)}
-        >
-          Delete
-        </Button>
+        <div className={styles.rowActions}>
+          <Button
+            variant="ghost"
+            aria-label={`Edit ${r.item}`}
+            onClick={(e) => openEdit(r, e.currentTarget)}
+          >
+            Edit
+          </Button>
+          <Button
+            variant="ghost"
+            aria-label={`Delete ${r.item}`}
+            onClick={() => setPendingDelete(r)}
+          >
+            Delete
+          </Button>
+        </div>
       ),
     },
   ];
@@ -270,6 +597,86 @@ export default function Inventory() {
           </Button>
         </div>
       </form>
+
+      {pendingEdit && editDraft && (
+        <section
+          ref={editPanelRef}
+          className={styles.editPanel}
+          aria-label={`Edit ${pendingEdit.item}`}
+        >
+          <form
+            className={styles.editForm}
+            noValidate
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitEdit();
+            }}
+          >
+            <div className={styles.editHead}>
+              <h2 className={styles.addHeading}>Edit {pendingEdit.item}</h2>
+              <Button variant="ghost" onClick={closeEdit}>
+                Cancel
+              </Button>
+            </div>
+
+            {editFormError !== null && (
+              <p className={styles.banner} role="alert">
+                {editFormError}
+              </p>
+            )}
+
+            <div className={styles.editMatchName}>
+              <Field
+                label="Match name"
+                error={editMatchNameError}
+                hint="Links this stock to recipe ingredients — a recipe line and a stock row meet on this name. The server stores it normalized (lower-case, trimmed)."
+                required
+              >
+                <Input
+                  value={editDraft.matchName}
+                  onChange={(e) =>
+                    setEditDraft((d) =>
+                      d ? { ...d, matchName: e.target.value } : d,
+                    )
+                  }
+                />
+              </Field>
+            </div>
+
+            <div className={styles.editGrid}>
+              <Field label="Quantity" error={editQuantityError} required>
+                <Input
+                  type="number"
+                  min="0"
+                  inputMode="decimal"
+                  value={editDraft.quantity}
+                  onChange={(e) =>
+                    setEditDraft((d) =>
+                      d ? { ...d, quantity: e.target.value } : d,
+                    )
+                  }
+                />
+              </Field>
+              <Field label="Unit" error={editUnitError} hint={editUnitHint}>
+                <Input
+                  value={editDraft.unit}
+                  onChange={(e) =>
+                    setEditDraft((d) =>
+                      d ? { ...d, unit: e.target.value } : d,
+                    )
+                  }
+                />
+              </Field>
+            </div>
+
+            <div className={styles.addActions}>
+              <Button type="submit" loading={edit.isPending}>
+                Save changes
+              </Button>
+            </div>
+          </form>
+        </section>
+      )}
 
       {status === "pending" && (
         <>
