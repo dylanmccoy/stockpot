@@ -12,6 +12,7 @@ import {
 } from "../components";
 import type { Column } from "../components";
 import {
+  ApiError,
   GENERIC_ERROR_MESSAGE,
   hasInlineFormError,
   useFormErrors,
@@ -20,6 +21,16 @@ import { formatDateTime, formatQuantity } from "../lib/format";
 import styles from "./Inventory.module.css";
 
 const INVENTORY_KEY = ["inventory"] as const;
+
+// Generic write conflict on the additive-upsert POST (spec §6 catalog: a `409`
+// with `detail: "conflict"` from inventory `POST`). Surfaced as a toast + a
+// refetch, not the verbatim "conflict" banner the string-`detail` rule would
+// otherwise produce.
+const STOCK_CONFLICT_MESSAGE =
+  "Someone else was updating stock. We've refreshed — try again.";
+
+const isStockConflict = (err: unknown): boolean =>
+  err instanceof ApiError && err.status === 409;
 
 // ── Add-form draft → POST body (the one serialization seam) ────────────────
 // The form holds every field as a string; `buildInventoryCreate` is the single
@@ -124,9 +135,13 @@ export default function Inventory() {
       queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
     },
     onError: (err: unknown) => {
-      // Field / form-level `422`s render inline via `useFormErrors`; anything
-      // else (transport, `5xx`) is a toast (spec §6).
-      if (!hasInlineFormError(err)) {
+      // Field / form-level `422`s render inline via `useFormErrors`. A write
+      // conflict gets its own copy + a refetch; anything else (transport,
+      // `5xx`) is the generic toast (spec §6).
+      if (isStockConflict(err)) {
+        toast.show(STOCK_CONFLICT_MESSAGE, { variant: "error" });
+        queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
+      } else if (!hasInlineFormError(err)) {
         toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
       }
     },
@@ -144,9 +159,13 @@ export default function Inventory() {
     },
   });
 
-  const { fieldErrors, formError } = useFormErrors(add.error);
+  // A `409` is handled by the toast + refetch above, so keep it off the inline
+  // banner (`isFormLevelStatus` would otherwise show the bare "conflict").
+  const { fieldErrors, formError } = useFormErrors(
+    isStockConflict(add.error) ? null : add.error,
+  );
 
-  const patch = (next: Partial<InventoryAddDraft>) =>
+  const setField = (next: Partial<InventoryAddDraft>) =>
     setDraft((d) => ({ ...d, ...next }));
 
   function onAdd(e: FormEvent<HTMLFormElement>) {
@@ -211,7 +230,7 @@ export default function Inventory() {
           <Field label="Item" error={itemError} required>
             <Input
               value={draft.item}
-              onChange={(e) => patch({ item: e.target.value })}
+              onChange={(e) => setField({ item: e.target.value })}
             />
           </Field>
           <Field label="Quantity" error={quantityError} required>
@@ -220,7 +239,7 @@ export default function Inventory() {
               min="0"
               inputMode="decimal"
               value={draft.quantity}
-              onChange={(e) => patch({ quantity: e.target.value })}
+              onChange={(e) => setField({ quantity: e.target.value })}
             />
           </Field>
           <Field
@@ -230,7 +249,7 @@ export default function Inventory() {
           >
             <Input
               value={draft.unit}
-              onChange={(e) => patch({ unit: e.target.value })}
+              onChange={(e) => setField({ unit: e.target.value })}
             />
           </Field>
           <Field
@@ -240,7 +259,7 @@ export default function Inventory() {
           >
             <Input
               value={draft.matchName}
-              onChange={(e) => patch({ matchName: e.target.value })}
+              onChange={(e) => setField({ matchName: e.target.value })}
             />
           </Field>
         </div>
@@ -253,9 +272,12 @@ export default function Inventory() {
       </form>
 
       {status === "pending" && (
-        <p role="status" className={styles.muted}>
-          Loading inventory…
-        </p>
+        <>
+          <p role="status" className="sr-only">
+            Loading inventory…
+          </p>
+          <div className={styles.skeleton} aria-hidden="true" />
+        </>
       )}
 
       {status === "error" && (

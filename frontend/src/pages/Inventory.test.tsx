@@ -255,6 +255,34 @@ describe("Inventory screen", () => {
     );
   });
 
+  it("on a 409 add conflict, toasts + refetches instead of a bare 'conflict' banner", async () => {
+    const user = userEvent.setup();
+    let getCalls = 0;
+    server.use(
+      http.get("/api/inventory", () => {
+        getCalls += 1;
+        return HttpResponse.json([]);
+      }),
+      http.post("/api/inventory", () =>
+        HttpResponse.json({ detail: "conflict" }, { status: 409 }),
+      ),
+    );
+    renderInventory();
+
+    await screen.findByText("No stock yet — add an item above.");
+    const getsBeforeAdd = getCalls;
+
+    await user.type(screen.getByLabelText(/^Item/), "Flour");
+    await user.type(screen.getByLabelText(/^Quantity/), "5");
+    await user.click(screen.getByRole("button", { name: "Add stock" }));
+
+    expect(
+      await screen.findByText(/Someone else was updating stock/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("conflict")).not.toBeInTheDocument();
+    await waitFor(() => expect(getCalls).toBeGreaterThan(getsBeforeAdd));
+  });
+
   it("deletes a row behind a confirmation dialog", async () => {
     const user = userEvent.setup();
     let items = [
