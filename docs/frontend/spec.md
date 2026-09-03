@@ -94,6 +94,7 @@ src/
   lib/
     cx.ts                  # join truthy class-name parts (pure leaf helper)
     parseIngredients.ts    # paste-block splitter (§7.1)
+    parseIngredientLine.ts # display-only mirror of the server parse_ingredient, for the paste preview (§10.3)
     format.ts              # quantity / number / fraction / datetime formatting (§7.2)
     apiError.ts            # parseApiError + useFormErrors (§7.3)
   components/              # the ~8 primitives (§8)

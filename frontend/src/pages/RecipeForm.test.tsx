@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -12,8 +12,40 @@ import RecipeForm, {
   asOpenableUrl,
   buildRecipeCreate,
   ingredientRowsToSubmit,
+  type IngredientDraft,
   type RecipeFormState,
 } from "./RecipeForm";
+
+/** A hand-entered ingredient row for the serialization fixtures. */
+function manualRow(over: Partial<IngredientDraft>): IngredientDraft {
+  return {
+    uid: "r?",
+    quantity: "",
+    unit: "",
+    item: "",
+    note: "",
+    origin: "manual",
+    pristine: false,
+    raw: "",
+    ...over,
+  };
+}
+
+/** A minimal valid draft; tests override `ingredients`. */
+function baseState(): RecipeFormState {
+  return {
+    title: "R",
+    cuisine: "",
+    servings: "",
+    prepTime: "",
+    cookTime: "",
+    sourceUrl: "",
+    notes: "",
+    tags: [],
+    steps: [],
+    ingredients: [],
+  };
+}
 
 function RecipeLanding() {
   const { id } = useParams();
@@ -54,15 +86,15 @@ describe("buildRecipeCreate", () => {
       { uid: "s2", text: "   " },
     ],
     ingredients: [
-      {
+      manualRow({
         uid: "r1",
         quantity: "2",
         unit: "lb",
         item: "chicken thighs",
         note: "bone-in",
-      },
-      { uid: "r2", quantity: "", unit: "", item: "kosher salt", note: "" },
-      { uid: "r3", quantity: "", unit: "", item: "", note: "" },
+      }),
+      manualRow({ uid: "r2", item: "kosher salt" }),
+      manualRow({ uid: "r3" }),
     ],
   };
 
@@ -95,6 +127,71 @@ describe("buildRecipeCreate", () => {
     expect(ingredientRowsToSubmit(base).map((r) => r.uid)).toEqual([
       "r1",
       "r2",
+    ]);
+  });
+});
+
+describe("buildRecipeCreate — mixed pasted / edited ingredients", () => {
+  const pasteRow = (over: Partial<IngredientDraft>): IngredientDraft => ({
+    ...manualRow(over),
+    origin: "paste",
+    pristine: over.pristine ?? true,
+  });
+
+  it("serializes an untouched pasted row as its raw string", () => {
+    const state = {
+      ...baseState(),
+      ingredients: [
+        pasteRow({
+          uid: "p1",
+          quantity: "2",
+          unit: "tbsp",
+          item: "olive oil",
+          raw: "2 tbsp olive oil",
+        }),
+      ],
+    };
+    expect(buildRecipeCreate(state).ingredients).toEqual(["2 tbsp olive oil"]);
+  });
+
+  it("serializes an edited pasted row (pristine cleared) as an object", () => {
+    const state = {
+      ...baseState(),
+      ingredients: [
+        pasteRow({
+          uid: "p1",
+          quantity: "1",
+          unit: "",
+          item: "onion, diced and chopped",
+          raw: "1 onion, diced",
+          pristine: false,
+        }),
+      ],
+    };
+    expect(buildRecipeCreate(state).ingredients).toEqual([
+      { item: "onion, diced and chopped", quantity: 1 },
+    ]);
+  });
+
+  it("keeps both element kinds in one array, in row order", () => {
+    const state = {
+      ...baseState(),
+      ingredients: [
+        pasteRow({ uid: "p1", item: "olive oil", raw: "2 tbsp olive oil" }),
+        pasteRow({
+          uid: "p2",
+          quantity: "1",
+          item: "garlic",
+          raw: "1 garlic",
+          pristine: false,
+        }),
+        manualRow({ uid: "m1", item: "kosher salt" }),
+      ],
+    };
+    expect(buildRecipeCreate(state).ingredients).toEqual([
+      "2 tbsp olive oil",
+      { item: "garlic", quantity: 1 },
+      { item: "kosher salt" },
     ]);
   });
 });
@@ -273,5 +370,92 @@ describe("RecipeForm create flow", () => {
     expect(
       screen.queryByRole("link", { name: "Open link" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// ── flow: paste ingredients with preview (ticket 06b) ─────────────────────────
+
+describe("RecipeForm paste ingredients", () => {
+  const PASTE_BLOCK = "- 2 tbsp olive oil\n\nFor the sauce:\n1 onion, diced";
+
+  async function openPaste(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole("button", { name: "Paste ingredients" }));
+    return screen.getByLabelText("Ingredient lines");
+  }
+
+  it("previews per-line parse, dropping the blank line, bullet, and header", async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    const textarea = await openPaste(user);
+    await user.click(textarea);
+    await user.paste(PASTE_BLOCK);
+
+    // header + blank line gone; two rows survive
+    expect(screen.queryByText("For the sauce:")).not.toBeInTheDocument();
+    const preview = screen.getByRole("table", { name: /Preview/ });
+    const bodyRows = within(preview).getAllByRole("row").slice(1); // drop <thead>
+    expect(bodyRows).toHaveLength(2);
+    expect(within(bodyRows[0]).getByText("olive oil")).toBeInTheDocument();
+    expect(within(bodyRows[0]).getByText("tbsp")).toBeInTheDocument();
+    expect(within(bodyRows[1]).getByText("onion, diced")).toBeInTheDocument();
+  });
+
+  it("cancel discards the preview — no rows appended", async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    const textarea = await openPaste(user);
+    await user.click(textarea);
+    await user.paste(PASTE_BLOCK);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(
+      screen.queryByLabelText("Item for ingredient 2"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Item for ingredient 1")).toHaveValue("");
+  });
+
+  it("confirm appends parsed rows; untouched → string, edited → object on save", async () => {
+    const user = userEvent.setup();
+    let posted: { ingredients: unknown } | undefined;
+    server.use(
+      http.post("/api/recipes", async ({ request }) => {
+        posted = (await request.json()) as { ingredients: unknown };
+        return HttpResponse.json({ ...sampleRecipe, id: 7 }, { status: 201 });
+      }),
+    );
+    renderForm();
+
+    const textarea = await openPaste(user);
+    await user.click(textarea);
+    await user.paste(PASTE_BLOCK);
+    await user.click(screen.getByRole("button", { name: "Add 2 rows" }));
+
+    // appended after the default blank row 1
+    expect(screen.getByLabelText("Item for ingredient 2")).toHaveValue(
+      "olive oil",
+    );
+    expect(screen.getByLabelText("Quantity for ingredient 2")).toHaveValue("2");
+    expect(screen.getByLabelText("Item for ingredient 3")).toHaveValue(
+      "onion, diced",
+    );
+
+    // hand-fix the second appended row → it must serialize as an object
+    await user.type(
+      screen.getByLabelText("Item for ingredient 3"),
+      " and garlic",
+    );
+
+    await user.type(screen.getByLabelText(/^Title/), "Pan sauce");
+    await user.click(screen.getByRole("button", { name: "Save recipe" }));
+
+    expect(await screen.findByTestId("recipe-landing")).toHaveTextContent(
+      "recipe 7",
+    );
+    expect(posted?.ingredients).toEqual([
+      "2 tbsp olive oil",
+      { item: "onion, diced and garlic", quantity: 1 },
+    ]);
   });
 });
