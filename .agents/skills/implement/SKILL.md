@@ -68,12 +68,6 @@ any you are deliberately skipping and why.
 
 Re-run typechecking and the full test suite after actioning any review findings.
 
-The second, independent `/codex:review` pass is **not** run here. It is done by
-hand in a fresh window after `/implement` ends (see "Close out"), so its findings
-are actioned against a clean context budget instead of eating into this session's
-— by review time the build context has already cashed out into the diff, the
-tests, and the ticket.
-
 ## Close out
 
 Commit your work to this ticket's branch. Do not merge it or open a PR unless
@@ -81,14 +75,13 @@ the user asks.
 
 ### Update the ticket
 
-The tracker is not touched by any of the steps above, and this skill's branch is
-never merged on its own, so update the ticket **in the primary checkout**, not in
-the worktree — a status change committed only to the ticket branch stays
-invisible until that branch lands. Consult `docs/agents/issue-tracker.md` for how
-this repo's tracker is shaped.
+The tracker is not touched by any of the steps above. Update the ticket **in the
+worktree**, on this ticket's branch, and commit it with the work — the tracker
+files merge in later with the branch. Consult `docs/agents/issue-tracker.md` for
+how this repo's tracker is shaped.
 
 - **Local-file tracker** — edit `.scratch/<feature-slug>/issues/<ticket-id>-*.md`
-  in the primary checkout:
+  in the worktree:
   - set the `Status:` line to `in-review` (the work is done and the branch is
     awaiting review/merge; use `done` only once it has merged);
   - tick every `- [ ]` acceptance criterion the work satisfies, leaving any
@@ -98,22 +91,12 @@ this repo's tracker is shaped.
 - **Real issue tracker** — make the equivalent changes on the issue itself
   (status/label, acceptance checklist, a comment linking the branch).
 
-Do not make these edits inside the worktree as well; a single source of truth
-avoids a merge conflict when the branch lands. Leave the primary-checkout edit
-uncommitted and point the user at it so they can commit it when ready.
+Commit these edits on the ticket branch along with the code.
 
 ### Hand back
 
-Leave the worktree in place and tell the user where it is, along with the ticket
-file you updated. Remind them to run the independent review by hand before
-merging:
-
-1. Open a fresh session (`/clear`, or a new terminal) and `cd` into
-   `.claude/worktrees/<feature-slug>-<ticket-id>`.
-2. Run `/codex:review` against this branch.
-3. Action the findings that hold up (note any deliberate skips and why), re-run
-   typechecking and the full test suite, and `git commit --amend` or add a fixup
-   commit on this branch.
+Leave the worktree in place and tell the user where it is, and which ticket file
+you updated and committed on the branch.
 
 Once the branch is merged the worktree can be cleaned up with:
 ```
