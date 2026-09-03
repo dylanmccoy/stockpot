@@ -1,16 +1,38 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { recipesApi } from "../api/recipes";
-import type { RecipeIngredientRead, RecipeRead } from "../types";
+import type {
+  AvailabilityLine,
+  AvailabilityReport,
+  AvailabilityStatus,
+  RecipeIngredientRead,
+  RecipeRead,
+} from "../types";
 import { ApiError, GENERIC_ERROR_MESSAGE } from "../lib/apiError";
 import { formatQuantity } from "../lib/format";
-import { Button, Dialog, Stepper, useToast } from "../components";
+import { cx } from "../lib/cx";
+import {
+  Badge,
+  Button,
+  DataTable,
+  Dialog,
+  Stepper,
+  useToast,
+} from "../components";
+import type { BadgeTone, Column } from "../components";
 import styles from "./RecipeDetail.module.css";
 
-// RecipeDetail — body + multiplier (spec §10.4, body Phase 3). Availability
-// (Phase 4) and the cook action (Phase 5) hang off the same multiplier and land
-// in later tickets; the made-history panel below is a placeholder for ticket 11.
+// RecipeDetail — body + multiplier (spec §10.4, body Phase 3) and the
+// availability table (Phase 4). The cook action (Phase 5) hangs off the same
+// multiplier and lands in a later ticket, as does the made-history panel
+// (placeholder below, ticket 11). Availability is built against the spec DTO
+// through the recipes adapter (R-2) and wired to real calls in ticket 16.
 
 /** `source_url` is stored verbatim and never validated (R-14); this only decides
  *  whether to offer an "open link" affordance. Mirrors `asOpenableUrl` in
@@ -31,6 +53,14 @@ export function asOpenableUrl(raw: string | null): string | null {
 /** Count units carry no unit word — the label is just the number (spec §7.2). */
 const COUNT_UNITS: ReadonlySet<string | null> = new Set([null, "unit", "each"]);
 
+/** Append the unit word to an already-formatted amount, except for count units
+ *  which carry none (spec §7.2). Empty in → empty out. */
+function withUnitWord(formatted: string, unit: string | null): string {
+  if (!formatted) return "";
+  if (COUNT_UNITS.has(unit)) return formatted;
+  return [formatted, unit].filter(Boolean).join(" ");
+}
+
 /** A recipe row's quantity, scaled by the multiplier and run through
  *  `formatQuantity` (spec §7.2), with its unit appended — never a raw float.
  *  `null` quantity (to-taste) → `""`; the caller renders "to taste" itself. */
@@ -40,9 +70,198 @@ export function scaledQuantityLabel(
 ): string {
   const { quantity, unit } = ingredient;
   if (quantity === null) return "";
-  const formatted = formatQuantity(quantity * multiplier, unit);
-  if (COUNT_UNITS.has(unit)) return formatted;
-  return [formatted, unit].filter(Boolean).join(" ");
+  return withUnitWord(formatQuantity(quantity * multiplier, unit), unit);
+}
+
+/** A bare amount + unit for availability copy (spec §7.2); `null`/non-finite
+ *  → `""`. */
+export function amountLabel(value: number | null, unit: string | null): string {
+  return withUnitWord(formatQuantity(value, unit), unit);
+}
+
+interface StatusMeta {
+  tone: BadgeTone;
+  /** Non-color status glyph — status is never color-only (spec §9). */
+  icon: string;
+  /** Badge text; `short` gets the shortfall amount appended by the caller. */
+  label: string;
+  /** Counted toward the "Missing N items" banner tally. `have_uncertain` is
+   *  not — the household may in fact have it, just in an incomparable unit
+   *  (spec §7.4). */
+  countsAsMissing: boolean;
+}
+
+const STATUS_META: Record<AvailabilityStatus, StatusMeta> = {
+  ok: { tone: "ok", icon: "✓", label: "Have it", countsAsMissing: false },
+  short: { tone: "warn", icon: "△", label: "Short", countsAsMissing: true },
+  have_uncertain: {
+    tone: "warn",
+    icon: "?",
+    label: "Check what you have",
+    countsAsMissing: false,
+  },
+  missing: {
+    tone: "danger",
+    icon: "✕",
+    label: "Missing",
+    countsAsMissing: true,
+  },
+  to_taste: {
+    tone: "neutral",
+    icon: "•",
+    label: "To taste",
+    countsAsMissing: false,
+  },
+};
+
+interface AvailabilityRow {
+  groupKey: string;
+  item: string;
+  status: AvailabilityStatus;
+  /** Scaled requirement for the group, canonical unit; `"—"` for to-taste. */
+  needLabel: string;
+  /** Badge text — includes the shortfall amount only for `short` (§7.4). */
+  statusLabel: string;
+}
+
+/** Collapse the per-member availability lines into one row per `group_key`
+ *  (spec §10.4 — ingredients sharing a match name + unit bucket are one row).
+ *  Insertion order is preserved so the table reads like the recipe. */
+export function groupAvailabilityLines(
+  lines: AvailabilityLine[],
+): AvailabilityRow[] {
+  const order: string[] = [];
+  const byKey = new Map<string, AvailabilityLine[]>();
+  for (const line of lines) {
+    const members = byKey.get(line.group_key);
+    if (members) {
+      members.push(line);
+    } else {
+      byKey.set(line.group_key, [line]);
+      order.push(line.group_key);
+    }
+  }
+  return order.map((key) => {
+    const members = byKey.get(key)!;
+    const first = members[0];
+    const item = [...new Set(members.map((m) => m.item))].join(", ");
+    const needLabel =
+      first.status === "to_taste"
+        ? "—"
+        : amountLabel(first.group_need, first.group_unit) || "—";
+    const statusLabel =
+      first.status === "short"
+        ? `Short ${amountLabel(first.group_short, first.group_unit)}`.trimEnd()
+        : STATUS_META[first.status].label;
+    return {
+      groupKey: key,
+      item,
+      status: first.status,
+      needLabel,
+      statusLabel,
+    };
+  });
+}
+
+const availabilityColumns: Column<AvailabilityRow>[] = [
+  { key: "item", header: "Ingredient", render: (r) => r.item },
+  { key: "need", header: "Need", align: "end", render: (r) => r.needLabel },
+  {
+    key: "status",
+    header: "Status",
+    render: (r) => (
+      <span className={styles.statusCell}>
+        <Badge
+          tone={STATUS_META[r.status].tone}
+          icon={STATUS_META[r.status].icon}
+        >
+          {r.statusLabel}
+        </Badge>
+        {r.status === "have_uncertain" && (
+          <span className={styles.statusNote}>
+            You have some, but in a unit we can’t compare (e.g. cans vs grams).
+          </span>
+        )}
+      </span>
+    ),
+  },
+];
+
+/** Header banner (spec §10.4). `all_available` is the server's word for "every
+ *  non-to-taste line is ok". When it isn't, tally the distinct groups that are
+ *  genuinely short/missing; a report whose only gaps are `have_uncertain` rows
+ *  gets the §7.4 "check what you have" prompt instead of a "missing" count. */
+function availabilityBanner(report: AvailabilityReport): string {
+  if (report.all_available) return "You have everything";
+  const missing = new Set(
+    report.lines
+      .filter((l) => STATUS_META[l.status].countsAsMissing)
+      .map((l) => l.group_key),
+  ).size;
+  if (missing === 0) return "Check what you have";
+  return `Missing ${missing} ${missing === 1 ? "item" : "items"}`;
+}
+
+/** Availability table (spec §10.4). Driven by the same multiplier as the
+ *  ingredient list; `["availability", id, multiplier]` re-runs on each change,
+ *  keeping the last result on screen while the next loads. */
+function AvailabilityPanel({
+  id,
+  multiplier,
+}: {
+  id: number;
+  multiplier: number;
+}) {
+  const query = useQuery({
+    queryKey: ["availability", id, multiplier],
+    queryFn: () => recipesApi.availability(id, multiplier),
+    placeholderData: keepPreviousData,
+  });
+
+  return (
+    <section className={styles.section} aria-labelledby="availability-heading">
+      <h2 id="availability-heading">Availability</h2>
+
+      {query.isPending && (
+        <p role="status" className={styles.muted}>
+          Checking what you have…
+        </p>
+      )}
+
+      {query.isError && (
+        <div className={styles.availError} role="alert">
+          <p className={styles.muted}>Couldn’t check availability.</p>
+          <Button variant="secondary" onClick={() => query.refetch()}>
+            Retry
+          </Button>
+        </div>
+      )}
+
+      {query.data && (
+        <>
+          <p
+            aria-live="polite"
+            className={cx(
+              styles.banner,
+              query.data.all_available ? styles.bannerOk : styles.bannerWarn,
+            )}
+          >
+            <span aria-hidden="true">
+              {query.data.all_available ? "✓ " : "! "}
+            </span>
+            {availabilityBanner(query.data)}
+          </p>
+          <DataTable
+            caption="Per-ingredient availability at the current multiplier"
+            columns={availabilityColumns}
+            rows={groupAvailabilityLines(query.data.lines)}
+            rowKey={(r) => r.groupKey}
+            empty="No tracked ingredients to check."
+          />
+        </>
+      )}
+    </section>
+  );
 }
 
 function NotFoundPanel() {
@@ -196,6 +415,8 @@ function RecipeDetailView({ id }: { id: number }) {
           })}
         </ul>
       </section>
+
+      <AvailabilityPanel id={id} multiplier={multiplier} />
 
       {recipe.steps.length > 0 && (
         <section className={styles.section} aria-labelledby="steps-heading">

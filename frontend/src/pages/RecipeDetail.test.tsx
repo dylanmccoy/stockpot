@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -9,9 +9,11 @@ import { errorHandlers } from "../test/errorHandlers";
 import { makeQueryClient } from "../test/helpers";
 import { sampleRecipe } from "../test/handlers";
 import { ToastProvider } from "../components";
-import type { RecipeRead } from "../types";
+import type { AvailabilityReport, RecipeRead } from "../types";
 import RecipeDetail, {
+  amountLabel,
   asOpenableUrl,
+  groupAvailabilityLines,
   scaledQuantityLabel,
 } from "./RecipeDetail";
 
@@ -128,6 +130,145 @@ describe("asOpenableUrl", () => {
     expect(asOpenableUrl("ftp://example.com")).toBeNull();
     expect(asOpenableUrl("from grandma")).toBeNull();
     expect(asOpenableUrl(null)).toBeNull();
+  });
+});
+
+// ── availability fixture ─────────────────────────────────────────────────────
+
+// 7 lines → 6 rows: the two butter members share a `group_key` (spec §10.4,
+// dedupe). `all_available: false` with 3 distinct short/uncertain/missing
+// groups → banner "Missing 3 items".
+const availabilityReport: AvailabilityReport = {
+  recipe_id: 1,
+  multiplier: 1,
+  all_available: false,
+  lines: [
+    {
+      item: "butter",
+      need: 100,
+      need_unit: "g",
+      group_key: "butter|mass",
+      group_unit: "g",
+      group_need: 150,
+      group_have: 200,
+      group_short: 0,
+      status: "ok",
+      nettable: true,
+    },
+    {
+      item: "unsalted butter",
+      need: 50,
+      need_unit: "g",
+      group_key: "butter|mass",
+      group_unit: "g",
+      group_need: 150,
+      group_have: 200,
+      group_short: 0,
+      status: "ok",
+      nettable: true,
+    },
+    {
+      item: "flour",
+      need: 200,
+      need_unit: "g",
+      group_key: "flour|mass",
+      group_unit: "g",
+      group_need: 200,
+      group_have: 500,
+      group_short: 0,
+      status: "ok",
+      nettable: true,
+    },
+    {
+      item: "sugar",
+      need: 200,
+      need_unit: "g",
+      group_key: "sugar|mass",
+      group_unit: "g",
+      group_need: 200,
+      group_have: 50,
+      group_short: 150,
+      status: "short",
+      nettable: true,
+    },
+    {
+      item: "milk",
+      need: 300,
+      need_unit: "ml",
+      group_key: "milk|volume",
+      group_unit: "ml",
+      group_need: 300,
+      group_have: 100,
+      group_short: 100,
+      status: "have_uncertain",
+      nettable: false,
+    },
+    {
+      item: "vanilla",
+      need: 5,
+      need_unit: "ml",
+      group_key: "vanilla|volume",
+      group_unit: "ml",
+      group_need: 5,
+      group_have: 0,
+      group_short: 5,
+      status: "missing",
+      nettable: true,
+    },
+    {
+      item: "salt",
+      need: null,
+      need_unit: null,
+      group_key: "salt|mass",
+      group_unit: "g",
+      group_need: null,
+      group_have: null,
+      group_short: null,
+      status: "to_taste",
+      nettable: true,
+    },
+  ],
+};
+
+function useAvailability(report: AvailabilityReport) {
+  server.use(
+    http.get("/api/recipes/:id/availability", () => HttpResponse.json(report)),
+  );
+}
+
+describe("groupAvailabilityLines", () => {
+  it("collapses lines sharing a group_key into one row, keeping order", () => {
+    const rows = groupAvailabilityLines(availabilityReport.lines);
+    expect(rows.map((r) => r.item)).toEqual([
+      "butter, unsalted butter",
+      "flour",
+      "sugar",
+      "milk",
+      "vanilla",
+      "salt",
+    ]);
+  });
+
+  it("labels each status per §7.4; shortfall amount only on 'short'", () => {
+    const byItem = Object.fromEntries(
+      groupAvailabilityLines(availabilityReport.lines).map((r) => [r.item, r]),
+    );
+    expect(byItem["flour"].statusLabel).toBe("Have it");
+    expect(byItem["flour"].needLabel).toBe("200 g");
+    expect(byItem["sugar"].statusLabel).toBe("Short 150 g");
+    expect(byItem["milk"].statusLabel).toBe("Check what you have");
+    expect(byItem["vanilla"].statusLabel).toBe("Missing");
+    expect(byItem["salt"].statusLabel).toBe("To taste");
+    expect(byItem["salt"].needLabel).toBe("—");
+  });
+});
+
+describe("amountLabel", () => {
+  it("appends the unit word, drops it for count units, empty for null", () => {
+    expect(amountLabel(150, "g")).toBe("150 g");
+    expect(amountLabel(3, null)).toBe("3");
+    expect(amountLabel(2, "unit")).toBe("2");
+    expect(amountLabel(null, "g")).toBe("");
   });
 });
 
@@ -294,5 +435,158 @@ describe("RecipeDetail not-found", () => {
     expect(
       screen.getByRole("link", { name: "Back to recipes" }),
     ).toHaveAttribute("href", "/");
+  });
+});
+
+// ── availability table ───────────────────────────────────────────────────────
+
+const availabilityRegion = () =>
+  screen.getByRole("region", { name: "Availability" });
+
+const availabilityTable = () =>
+  within(availabilityRegion()).findByRole("table");
+
+// Match on the Ingredient cell's comma-separated members so "salt" doesn't
+// also hit an "unsalted butter" group.
+const rowFor = (table: HTMLElement, item: string) =>
+  within(table)
+    .getAllByRole("row")
+    .find((r) =>
+      within(r)
+        .queryAllByRole("cell")[0]
+        ?.textContent?.split(", ")
+        .includes(item),
+    );
+
+describe("RecipeDetail availability", () => {
+  it("renders a per-ingredient table, deduped by group, one status each", async () => {
+    useRecipe(detailRecipe);
+    useAvailability(availabilityReport);
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    const table = await availabilityTable();
+    expect(within(table).getAllByRole("row").slice(1)).toHaveLength(6);
+
+    const flour = rowFor(table, "flour")!;
+    expect(flour).toHaveTextContent("200 g");
+    expect(flour).toHaveTextContent("Have it");
+
+    expect(rowFor(table, "sugar")).toHaveTextContent("Short 150 g");
+    expect(rowFor(table, "vanilla")).toHaveTextContent("Missing");
+    expect(rowFor(table, "salt")).toHaveTextContent("To taste");
+
+    // the two butter members collapse to a single row
+    expect(rowFor(table, "butter")).toBe(rowFor(table, "unsalted butter"));
+    expect(rowFor(table, "butter")).toBeDefined();
+  });
+
+  it("marks an incomparable-unit line 'Check what you have' — explanation, no number", async () => {
+    useRecipe(detailRecipe);
+    useAvailability(availabilityReport);
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    const milk = rowFor(await availabilityTable(), "milk")!;
+    expect(within(milk).getByText("Check what you have")).toBeInTheDocument();
+    expect(
+      within(milk).getByText(/unit we can.t compare/i),
+    ).toBeInTheDocument();
+    // group_short (100) must never surface for this status (§7.4)
+    expect(milk).not.toHaveTextContent("100");
+  });
+
+  it("banner says everything is available", async () => {
+    useRecipe(detailRecipe);
+    useAvailability({
+      ...availabilityReport,
+      all_available: true,
+      lines: [availabilityReport.lines[2]],
+    });
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    expect(
+      await within(availabilityRegion()).findByText("You have everything"),
+    ).toBeInTheDocument();
+  });
+
+  it("banner counts short + missing groups, not the incomparable-unit ones", async () => {
+    useRecipe(detailRecipe);
+    useAvailability(availabilityReport); // 1 short + 1 missing + 1 have_uncertain
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    expect(
+      await within(availabilityRegion()).findByText("Missing 2 items"),
+    ).toBeInTheDocument();
+  });
+
+  it("banner prompts a check when the only gaps are incomparable-unit rows", async () => {
+    useRecipe(detailRecipe);
+    useAvailability({
+      ...availabilityReport,
+      all_available: false,
+      lines: [availabilityReport.lines[4]], // milk, have_uncertain
+    });
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    // banner (a <p>), distinct from the milk row's status badge of the same text
+    expect(
+      await within(availabilityRegion()).findByText("Check what you have", {
+        selector: "p",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("re-queries and rescales the table when the multiplier changes", async () => {
+    const user = userEvent.setup();
+    useRecipe(detailRecipe);
+    server.use(
+      http.get("/api/recipes/:id/availability", ({ request }) => {
+        const m = Number(
+          new URL(request.url).searchParams.get("multiplier") ?? "1",
+        );
+        return HttpResponse.json({
+          ...availabilityReport,
+          multiplier: m,
+          lines: availabilityReport.lines.map((l) => ({
+            ...l,
+            need: l.need == null ? null : l.need * m,
+            group_need: l.group_need == null ? null : l.group_need * m,
+            group_short: l.group_short == null ? null : l.group_short * m,
+          })),
+        });
+      }),
+    );
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    const flourNeed = async () =>
+      rowFor(await availabilityTable(), "flour")!.textContent;
+
+    await waitFor(async () => expect(await flourNeed()).toContain("200 g"));
+
+    await user.click(screen.getByRole("button", { name: "2" }));
+
+    await waitFor(async () => expect(await flourNeed()).toContain("400 g"));
+  });
+
+  it("offers a retry when the availability call fails", async () => {
+    useRecipe(detailRecipe);
+    server.use(
+      errorHandlers.serverError("get", "/api/recipes/:id/availability"),
+    );
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    const region = availabilityRegion();
+    expect(
+      await within(region).findByText("Couldn’t check availability."),
+    ).toBeInTheDocument();
+    expect(
+      within(region).getByRole("button", { name: "Retry" }),
+    ).toBeInTheDocument();
   });
 });
