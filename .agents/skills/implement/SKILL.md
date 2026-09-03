@@ -57,8 +57,34 @@ tests, and the ticket.
 Commit your work to this ticket's branch. Do not merge it or open a PR unless
 the user asks.
 
-Leave the worktree in place and tell the user where it is, and remind them to run
-the independent review by hand before merging:
+### Update the ticket
+
+The tracker is not touched by any of the steps above, and this skill's branch is
+never merged on its own, so update the ticket **in the primary checkout**, not in
+the worktree — a status change committed only to the ticket branch stays
+invisible until that branch lands. Consult `docs/agents/issue-tracker.md` for how
+this repo's tracker is shaped.
+
+- **Local-file tracker** — edit `.scratch/<feature-slug>/issues/<ticket-id>-*.md`
+  in the primary checkout:
+  - set the `Status:` line to `in-review` (the work is done and the branch is
+    awaiting review/merge; use `done` only once it has merged);
+  - tick every `- [ ]` acceptance criterion the work satisfies, leaving any
+    genuinely unmet ones unchecked with a one-line note;
+  - append a note under a `## Comments` heading recording the branch name and
+    worktree path.
+- **Real issue tracker** — make the equivalent changes on the issue itself
+  (status/label, acceptance checklist, a comment linking the branch).
+
+Do not make these edits inside the worktree as well; a single source of truth
+avoids a merge conflict when the branch lands. Leave the primary-checkout edit
+uncommitted and point the user at it so they can commit it when ready.
+
+### Hand back
+
+Leave the worktree in place and tell the user where it is, along with the ticket
+file you updated. Remind them to run the independent review by hand before
+merging:
 
 1. Open a fresh session (`/clear`, or a new terminal) and `cd` into
    `.claude/worktrees/<feature-slug>-<ticket-id>`.
