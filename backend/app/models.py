@@ -167,6 +167,65 @@ class InventoryItem(Base):
     )
 
 
+class GroceryList(Base):
+    __tablename__ = "grocery_lists"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    # Informational only, **no FK** — a deleted source recipe must not touch this
+    # list (spec.md §1).
+    source_recipe_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    # Attribution only, never reassigned. No cascade: deleting a user (which v1
+    # never does) must not take their grocery lists with them.
+    created_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+
+    created_by: Mapped[User | None] = relationship()
+    items: Mapped[list["GroceryListItem"]] = relationship(
+        back_populates="grocery_list",
+        order_by="GroceryListItem.id",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class GroceryListItem(Base):
+    __tablename__ = "grocery_list_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    grocery_list_id: Mapped[int] = mapped_column(
+        ForeignKey("grocery_lists.id", ondelete="CASCADE"), nullable=False
+    )
+    item: Mapped[str] = mapped_column(String(200), nullable=False)
+    # `normalize_name(item)`; recomputed whenever `item` is edited.
+    normalized_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    # For `source="generated"`: the shortfall in the bucket's canonical unit. For
+    # `source="manual"`: as the user typed. `None` = to taste / no amount.
+    quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    checked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Set when `checked` flips true, cleared to NULL when it flips false.
+    checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    # Set by `submit` when the line is applied.
+    submitted_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    # `false` = the true shortfall is uncertain (incompatible stock present).
+    nettable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Idempotency guard **and** freeze flag: once true, the line rejects further
+    # PATCH / DELETE (spec.md §5.6).
+    added_to_inventory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Canonical amount / unit `submit` actually added, for the applied snapshot.
+    applied_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    applied_unit: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
+    grocery_list: Mapped[GroceryList] = relationship(
+        back_populates="items", passive_deletes=True
+    )
+
+
 class CookLog(Base):
     __tablename__ = "cook_logs"
 
