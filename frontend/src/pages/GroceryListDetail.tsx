@@ -157,9 +157,15 @@ function GroceryListDetailView({ id }: { id: number }) {
           <LineGroup
             title="From your recipes"
             items={generated}
+            active={active}
             onToggle={toggle}
           />
-          <LineGroup title="Added manually" items={manual} onToggle={toggle} />
+          <LineGroup
+            title="Added manually"
+            items={manual}
+            active={active}
+            onToggle={toggle}
+          />
         </>
       )}
     </section>
@@ -169,10 +175,12 @@ function GroceryListDetailView({ id }: { id: number }) {
 function LineGroup({
   title,
   items,
+  active,
   onToggle,
 }: {
   title: string;
   items: GroceryListItemRead[];
+  active: boolean;
   onToggle: (item: GroceryListItemRead) => void;
 }) {
   if (items.length === 0) return null;
@@ -181,7 +189,7 @@ function LineGroup({
       <h2 className={styles.groupTitle}>{title}</h2>
       <ul className={styles.lines}>
         {items.map((item) => (
-          <GroceryLine key={item.id} item={item} onToggle={onToggle} />
+          <GroceryLine key={item.id} item={item} active={active} onToggle={onToggle} />
         ))}
       </ul>
     </section>
@@ -190,12 +198,18 @@ function LineGroup({
 
 function GroceryLine({
   item,
+  active,
   onToggle,
 }: {
   item: GroceryListItemRead;
+  active: boolean;
   onToggle: (item: GroceryListItemRead) => void;
 }) {
   const frozen = item.added_to_inventory;
+  // A frozen line's PATCH 409s, and so does any PATCH once the list is
+  // archived (spec §10.7: "Archived list → all mutation affordances hidden");
+  // the checkbox itself is the only affordance this ticket renders.
+  const disabled = frozen || !active;
   return (
     <li>
       <label
@@ -209,7 +223,7 @@ function GroceryLine({
           type="checkbox"
           className={styles.checkbox}
           checked={item.checked}
-          disabled={frozen}
+          disabled={disabled}
           onChange={() => onToggle(item)}
           aria-label={item.item}
         />

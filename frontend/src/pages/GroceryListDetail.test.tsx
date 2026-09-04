@@ -178,6 +178,18 @@ describe("GroceryListDetail", () => {
     expect(screen.getByText("Added to inventory")).toBeInTheDocument();
   });
 
+  it("disables every checkbox on an archived list", async () => {
+    useGroceryList({
+      ...sampleGroceryList,
+      status: "archived",
+      items: [{ ...sampleGroceryItem, id: 1, item: "flour" }],
+    });
+    renderPage();
+
+    expect(await screen.findByText("Archived")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "flour" })).toBeDisabled();
+  });
+
   it("shows a not-found panel for a 404", async () => {
     server.use(
       http.get("/api/grocery/:id", () =>
