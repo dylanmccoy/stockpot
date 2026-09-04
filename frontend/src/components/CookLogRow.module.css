@@ -16,6 +16,15 @@
   font-weight: 600;
 }
 
+.titleLink {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.titleLink:hover {
+  text-decoration: underline;
+}
+
 .deleted {
   font-weight: 400;
   color: var(--color-muted);
