@@ -288,19 +288,28 @@ the merged BE Phase 4 backend.
 
 Spec: `spec.md` §10.4 (cook action), §10.8; `../spec.md` §5.4.
 
-- [ ] `api/cookLogs.ts` full; cook mutation on `api/recipes.ts`.
-- [ ] RecipeDetail cook action: "Mark as cooked" + "deduct" toggle → `POST
+- [x] `api/cookLogs.ts` full; cook mutation on `api/recipes.ts`. (ticket 10; wired
+      to the real backend, ticket 17)
+- [x] RecipeDetail cook action: "Mark as cooked" + "deduct" toggle → `POST
       /cook`; on `201` invalidate availability/inventory/cook-logs; on `409` the
-      R-11 toast + refetch. No undo affordance.
-- [ ] Shared `CookLogRow` + `DeductionDetail` accordion (collapsed summary from
+      R-11 toast + refetch. No undo affordance. (ticket 10)
+- [x] Shared `CookLogRow` + `DeductionDetail` accordion (collapsed summary from
       `reason`s; expanded 11-key table; the 5 reason chips including the amber
-      "check what you have").
-- [ ] `pages/History.tsx` — `["cook-logs", {limit, offset}]`; newest-first;
-      recipe-title link with the deleted-recipe fallback; Load more.
-- [ ] Wire the per-recipe panel (`["recipe-cook-logs", id]`).
+      "check what you have"). (tickets 11a, 11b)
+- [x] `pages/History.tsx` — `["cook-logs", {limit, offset}]`; newest-first;
+      recipe-title link with the deleted-recipe fallback; Load more. (ticket 11b)
+- [x] Wire the per-recipe panel (`["recipe-cook-logs", id]`). (ticket 11a)
 
 **Exit:** cook adapter diff-reviewed against merged BE Phase 5; the accordion
-renders all five `reason` branches with `null`s only where §5.4 permits.
+renders all five `reason` branches with `null`s only where §5.4 permits. —
+**cleared** (ticket 17): `CookRequest`/`CookDeductionRead`/`CookLogRead` verified
+field-for-field against the merged BE Phase 5 backend, live — a single real
+`POST /cook` produced all five `reason` branches (`ok`, `clamped to 0`,
+`to taste`, `not in inventory`, `have uncertain (incompatible unit)`), each
+matching `types.ts`'s null-per-branch shape exactly; deleting the cooked recipe
+then confirmed `recipe_id: null` / `recipe_title` snapshot on both the global
+and per-recipe feeds. No DTO drift — `api/cookLogs.ts`, `api/recipes.ts` cook
+adapter, and `types.ts` needed no code changes, only the dated re-diff note.
 
 ---
 
@@ -372,7 +381,7 @@ Depends on backend Phase 7.
 | 2 — Auth | Complete — built vs MSW (ticket 04) and integrated against real BE Phase 2 (ticket 14) |
 | 3 — Recipes | Complete — built vs MSW (03 oracles, 05a/05b list, 06a–c form, 07 detail) and integrated against real BE Phase 3 (ticket 15) |
 | 4 — Inventory & availability | Complete — built vs MSW (08a, 08b, 09) and integrated against real BE Phase 4 (ticket 16) |
-| 5 — Cook & history | Not started — buildable vs MSW; wiring blocked on BE Phase 5 |
+| 5 — Cook & history | Complete — built vs MSW (10, 11a, 11b) and integrated against real BE Phase 5 (ticket 17) |
 | 6 — Grocery | Not started — buildable vs MSW; wiring blocked on BE Phase 6 |
 | 7 — Hardening | Not started |
 | 8 — Deployment docs | Not started — blocked on BE Phase 7 |
