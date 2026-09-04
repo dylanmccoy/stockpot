@@ -843,8 +843,9 @@ sit behind their `src/api/<resource>.ts` adapter until that phase's DTOs land
 ### 10.7 GroceryListDetail  (`/groceries/:id`) — backend Phase 6
 
 - Query `["grocery", id]` → `GET /api/grocery/{id}`.
-- Lines grouped **generated** vs **manual**; each: `item`, `formatQuantity`,
-  a `checked` checkbox, `source`/`nettable`/frozen `Badge`s.
+- Lines grouped **generated** vs **manual** — the grouping conveys `source`,
+  no separate per-line source `Badge`; each line: `item`, `formatQuantity`, a
+  `checked` checkbox, `nettable`/frozen `Badge`s.
 - **Check / uncheck** → `PATCH .../items/{id} { checked }` — the **only
   optimistic** mutation (Q16): flip immediately, roll back on error via React
   Query `onError`. Does **not** reclassify.
