@@ -1,10 +1,19 @@
-import { useMemo, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { recipesApi } from "../api/recipes";
-import type { RecipeRead } from "../types";
-import { Badge, Button, Card, Field, Input, Select } from "../components";
+import type { GroceryListRead, RecipeRead } from "../types";
+import {
+  Badge,
+  Button,
+  Card,
+  Field,
+  Input,
+  Select,
+  useToast,
+} from "../components";
 import { cx } from "../lib/cx";
+import { GroceryCreateDialog } from "./GroceryCreateDialog";
 import styles from "./RecipeList.module.css";
 
 export type SortMode = "newest" | "title" | "updated";
@@ -200,6 +209,11 @@ export default function RecipeList() {
   // grocery list. Leaving the mode drops the selection.
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  const navigate = useNavigate();
+  const toast = useToast();
+  const queryClient = useQueryClient();
 
   function toggleSelectMode() {
     if (selectMode) setSelected(new Set());
@@ -215,11 +229,37 @@ export default function RecipeList() {
     });
   }
 
-  function createGroceryList() {
-    // wired in ticket 12a
+  function deselect(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+  }
+
+  function handleCreated(list: GroceryListRead) {
+    // spec §10.5: a new list makes the /groceries index (ticket 12b) stale.
+    queryClient.invalidateQueries({ queryKey: ["grocery"] });
+    toast.show("Grocery list created.", { variant: "success" });
+    setDialogOpen(false);
+    setSelected(new Set());
+    setSelectMode(false);
+    navigate(`/groceries/${list.id}`);
   }
 
   const recipes = useMemo(() => data ?? [], [data]);
+
+  // The dialog operates on the selected recipes that still exist in the list —
+  // a refetch after the R-13 recovery path shrinks this, and an emptied
+  // selection closes the dialog.
+  const selectedRecipes = useMemo(
+    () => recipes.filter((r) => selected.has(r.id)),
+    [recipes, selected],
+  );
+
+  useEffect(() => {
+    if (dialogOpen && selectedRecipes.length === 0) setDialogOpen(false);
+  }, [dialogOpen, selectedRecipes.length]);
 
   const cuisineOptions = useMemo(
     () =>
@@ -358,9 +398,19 @@ export default function RecipeList() {
           {selected.size > 0 && (
             <div className={styles.actionBar}>
               <span aria-hidden="true">{selected.size} selected</span>
-              <Button onClick={createGroceryList}>Create grocery list</Button>
+              <Button onClick={() => setDialogOpen(true)}>
+                Create grocery list
+              </Button>
             </div>
           )}
+
+          <GroceryCreateDialog
+            open={dialogOpen}
+            recipes={selectedRecipes}
+            onClose={() => setDialogOpen(false)}
+            onDrop={deselect}
+            onCreated={handleCreated}
+          />
         </>
       )}
     </section>
