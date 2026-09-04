@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { CookLogRow, deductionSummary } from "./CookLogRow";
 import { makeCookLog, makeDeduction as ded } from "../test/handlers";
 import { formatDateTime } from "../lib/format";
@@ -23,9 +24,11 @@ function log(overrides: Partial<CookLogRead> = {}): CookLogRead {
 
 function renderRow(l: CookLogRead, showRecipeTitle = false) {
   return render(
-    <ul>
-      <CookLogRow log={l} showRecipeTitle={showRecipeTitle} />
-    </ul>,
+    <MemoryRouter>
+      <ul>
+        <CookLogRow log={l} showRecipeTitle={showRecipeTitle} />
+      </ul>
+    </MemoryRouter>,
   );
 }
 
@@ -48,9 +51,7 @@ describe("CookLogRow — collapsed line", () => {
 describe("CookLogRow — no deduction", () => {
   it("shows 'stock not changed' with no accordion or table", () => {
     renderRow(log({ deducted: false, deductions: [] }));
-    expect(
-      screen.getByText("logged — stock not changed"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("logged — stock not changed")).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
@@ -85,10 +86,9 @@ describe("CookLogRow — deduction accordion", () => {
     const table = screen.getByRole("table", {
       name: /per-ingredient stock change/i,
     });
-    expect(screen.getByRole("button", { name: /5 ingredients/ })).toHaveAttribute(
-      "aria-expanded",
-      "true",
-    );
+    expect(
+      screen.getByRole("button", { name: /5 ingredients/ }),
+    ).toHaveAttribute("aria-expanded", "true");
     for (const chip of [
       "deducted",
       "ran out",
@@ -119,10 +119,19 @@ describe("CookLogRow — recipe title", () => {
     expect(screen.queryByText("Buttermilk Pancakes")).not.toBeInTheDocument();
   });
 
-  it("is shown when asked, with a deleted marker once `recipe_id` is null", () => {
+  it("links to the recipe when it still exists", () => {
+    renderRow(log({ recipe_id: 42 }), true);
+    const link = screen.getByRole("link", { name: "Buttermilk Pancakes" });
+    expect(link).toHaveAttribute("href", "/recipes/42");
+  });
+
+  it("is shown when asked, with a deleted marker and no link once `recipe_id` is null", () => {
     renderRow(log({ recipe_id: null }), true);
     expect(screen.getByText("Buttermilk Pancakes")).toBeInTheDocument();
     expect(screen.getByText(/recipe deleted/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: /Buttermilk Pancakes/ }),
+    ).not.toBeInTheDocument();
   });
 });
 

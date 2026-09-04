@@ -1,6 +1,8 @@
 import { useId, useState } from "react";
+import { Link } from "react-router-dom";
 import { Badge } from "./Badge";
 import { DeductionDetail } from "./DeductionDetail";
+import { cx } from "../lib/cx";
 import { formatDateTime, formatQuantity } from "../lib/format";
 import type { CookDeductionRead, CookLogRead } from "../types";
 import styles from "./CookLogRow.module.css";
@@ -49,14 +51,22 @@ export function CookLogRow({ log, showRecipeTitle = false }: CookLogRowProps) {
   return (
     <li className={styles.row}>
       <div className={styles.line}>
-        {showRecipeTitle && (
-          <span className={styles.title}>
-            {log.recipe_title}
-            {log.recipe_id === null && (
+        {showRecipeTitle &&
+          (log.recipe_id === null ? (
+            // Recipe deleted: title snapshot survives, but there is nothing to
+            // link to (spec §10.8).
+            <span className={styles.title}>
+              {log.recipe_title}
               <span className={styles.deleted}> (recipe deleted)</span>
-            )}
-          </span>
-        )}
+            </span>
+          ) : (
+            <Link
+              to={`/recipes/${log.recipe_id}`}
+              className={cx(styles.title, styles.titleLink)}
+            >
+              {log.recipe_title}
+            </Link>
+          ))}
         <span className={styles.when}>{when}</span>
         <span className={styles.sep} aria-hidden="true">
           ·
