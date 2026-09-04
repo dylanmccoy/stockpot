@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -219,5 +219,140 @@ describe("GroceryListDetail", () => {
     renderPage();
     const panel = await screen.findByRole("alert");
     expect(panel).toHaveTextContent("Internal Server Error");
+  });
+
+  it("adds a manual line, POSTing the right body, and it appears in the manual group", async () => {
+    useGroceryList(makeList([{ ...sampleGroceryItem, id: 1, item: "flour" }]));
+    let postedBody: unknown;
+    server.use(
+      http.post("/api/grocery/:id/items", async ({ request }) => {
+        postedBody = await request.json();
+        const created: GroceryListItemRead = {
+          ...sampleGroceryItem,
+          id: 2,
+          item: "duct tape",
+          source: "manual",
+          quantity: 2,
+          unit: "roll",
+        };
+        useGroceryList(
+          makeList([
+            { ...sampleGroceryItem, id: 1, item: "flour" },
+            created,
+          ]),
+        );
+        return HttpResponse.json(created, { status: 201 });
+      }),
+    );
+    renderPage();
+    await screen.findByText("flour");
+
+    await userEvent.type(screen.getByLabelText("Item"), "duct tape");
+    await userEvent.type(screen.getByLabelText("Quantity"), "2");
+    await userEvent.type(screen.getByLabelText("Unit"), "roll");
+    await userEvent.click(screen.getByRole("button", { name: "Add item" }));
+
+    await waitFor(() =>
+      expect(postedBody).toEqual({ item: "duct tape", quantity: 2, unit: "roll" }),
+    );
+    expect(await screen.findByText("Added manually")).toBeInTheDocument();
+    expect(screen.getByText("duct tape")).toBeInTheDocument();
+  });
+
+  it("adds a manual line with no quantity/unit, posting the item alone", async () => {
+    useGroceryList(makeList([{ ...sampleGroceryItem, id: 1, item: "flour" }]));
+    let postedBody: unknown;
+    server.use(
+      http.post("/api/grocery/:id/items", async ({ request }) => {
+        postedBody = await request.json();
+        return HttpResponse.json(
+          { ...sampleGroceryItem, id: 2, item: "napkins", source: "manual" },
+          { status: 201 },
+        );
+      }),
+    );
+    renderPage();
+    await screen.findByText("flour");
+
+    await userEvent.type(screen.getByLabelText("Item"), "napkins");
+    await userEvent.click(screen.getByRole("button", { name: "Add item" }));
+
+    await waitFor(() => expect(postedBody).toEqual({ item: "napkins" }));
+  });
+
+  it("edits a generated line's quantity, sending quantity+unit together, and shows the reclassify note", async () => {
+    useGroceryList(
+      makeList([
+        {
+          ...sampleGroceryItem,
+          id: 1,
+          item: "flour",
+          source: "generated",
+          quantity: 250,
+          unit: "g",
+        },
+      ]),
+    );
+    let patchedBody: unknown;
+    server.use(
+      http.patch("/api/grocery/:id/items/:itemId", async ({ request }) => {
+        patchedBody = await request.json();
+        const updated: GroceryListItemRead = {
+          ...sampleGroceryItem,
+          id: 1,
+          item: "flour",
+          source: "manual",
+          nettable: true,
+          quantity: 500,
+          unit: "g",
+        };
+        useGroceryList(makeList([updated]));
+        return HttpResponse.json(updated);
+      }),
+    );
+    renderPage();
+    await screen.findByText("flour");
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit flour" }));
+    const editForm = screen.getByRole("form", { name: "Edit flour" });
+    const quantityField = within(editForm).getByLabelText("Quantity");
+    await userEvent.clear(quantityField);
+    await userEvent.type(quantityField, "500");
+    await userEvent.click(within(editForm).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(patchedBody).toEqual({ quantity: 500, unit: "g" }),
+    );
+    expect(
+      await screen.findByText(
+        "This is now a manual line — we'll stop netting it against your stock.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show an edit affordance on a frozen line", async () => {
+    useGroceryList(
+      makeList([
+        { ...sampleGroceryItem, id: 1, item: "flour", added_to_inventory: true },
+      ]),
+    );
+    renderPage();
+    await screen.findByText("flour");
+    expect(
+      screen.queryByRole("button", { name: "Edit flour" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show an edit affordance on an archived list", async () => {
+    useGroceryList({
+      ...sampleGroceryList,
+      status: "archived",
+      items: [{ ...sampleGroceryItem, id: 1, item: "flour" }],
+    });
+    renderPage();
+    expect(await screen.findByText("Archived")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit flour" }),
+    ).not.toBeInTheDocument();
   });
 });
