@@ -12,6 +12,10 @@
 // reconciled in lib/apiError.ts (`normalizeLoc`), not here.
 // §5.3 (availability) + §5.5 (inventory) re-diffed 2026-09-03 against backend
 // Phase 4 as merged (ticket 16).
+// §5.4 (cook + made-history) re-diffed 2026-09-04 against backend Phase 5 as
+// merged (ticket 17): `CookRequest`, `CookDeductionRead` (all five `reason`
+// branches, incl. the applied/null-key shape per branch), and `CookLogRead`
+// match field-for-field, no drift.
 
 // ── Shared ──────────────────────────────────────────────────────────────────
 
