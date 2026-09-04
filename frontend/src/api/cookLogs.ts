@@ -21,4 +21,9 @@ export const cookLogsApi = {
   },
   get: (logId: number, signal?: AbortSignal) =>
     client.get<CookLogRead>(`/cook-logs/${logId}`, signal),
+
+  // Per-recipe history feed (spec §10.8): unpaginated, `cooked_at DESC, id DESC`
+  // from the server. Backs the `["recipe-cook-logs", id]` query in RecipeDetail.
+  byRecipe: (recipeId: number, signal?: AbortSignal) =>
+    client.get<CookLogRead[]>(`/recipes/${recipeId}/cook-logs`, signal),
 };

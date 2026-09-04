@@ -31,6 +31,6 @@ export const recipesApi = {
   cook: (id: number, body: CookRequest) =>
     client.post<CookLogRead>(`/recipes/${id}/cook`, body),
 
-  cookLogs: (id: number, signal?: AbortSignal) =>
-    client.get<CookLogRead[]>(`/recipes/${id}/cook-logs`, signal),
+  // Per-recipe cook history lives on `cookLogsApi.byRecipe` (one adapter home
+  // per concern — R-2); see `api/cookLogs.ts`.
 };

@@ -6,6 +6,8 @@
 import { http, HttpResponse } from "msw";
 import type {
   AvailabilityReport,
+  CookDeductionRead,
+  CookDeductionReason,
   CookLogList,
   CookLogRead,
   GroceryListItemRead,
@@ -79,6 +81,35 @@ export const sampleCookLog: CookLogRead = {
   cooked_by: userMini,
   deductions: [],
 };
+
+/** One `CookDeductionRead` for a given reason — shared by the CookLogRow and
+ *  RecipeDetail history tests. `applied` follows the reason. */
+export function makeDeduction(
+  reason: CookDeductionReason,
+  item = "flour",
+  overrides: Partial<CookDeductionRead> = {},
+): CookDeductionRead {
+  return {
+    item,
+    normalized_name: item,
+    requested: 50,
+    requested_unit: "g",
+    deducted: 40,
+    deducted_unit: "g",
+    inventory_unit: "g",
+    before: 100,
+    after: 60,
+    applied: reason === "ok" || reason === "clamped to 0",
+    reason,
+    ...overrides,
+  };
+}
+
+/** A `CookLogRead` built off `sampleCookLog` — override only what a test cares
+ *  about (id, cooked_at, multiplier, deducted, deductions). */
+export function makeCookLog(overrides: Partial<CookLogRead> = {}): CookLogRead {
+  return { ...sampleCookLog, ...overrides };
+}
 
 const sampleCookLogList: CookLogList = {
   items: [sampleCookLog],
