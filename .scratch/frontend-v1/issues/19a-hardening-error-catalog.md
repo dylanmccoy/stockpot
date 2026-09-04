@@ -4,7 +4,7 @@
 
 **Blocked by:** 14, 15, 16, 17, 18.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/test/errorHandlers.ts`, `frontend/src/test/errorHandlers.test.ts`, `frontend/src/api/client.ts` + `frontend/src/main.tsx` (QueryClient defaults), plus the owning screen for any gap found.
 
