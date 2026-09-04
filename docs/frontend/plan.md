@@ -317,21 +317,36 @@ adapter, and `types.ts` needed no code changes, only the dated re-diff note.
 
 Spec: `spec.md` §10.5, §10.6, §10.7; `../spec.md` §5.6.
 
-- [ ] `api/grocery.ts` (adapter — R-2).
-- [ ] Grocery create `Dialog` from RecipeList multi-select: per-recipe multiplier
+- [x] `api/grocery.ts` (adapter — R-2). (ticket 12a; wired to the real backend,
+      ticket 18)
+- [x] Grocery create `Dialog` from RecipeList multi-select: per-recipe multiplier
       `Stepper`s (the only place multipliers are set), optional name; `422`
-      missing-`recipe_id` recovery (R-13).
-- [ ] `pages/GroceryLists.tsx` — active/archived; delete-in-any-status.
-- [ ] `pages/GroceryListDetail.tsx` — generated vs manual grouping; **optimistic**
+      missing-`recipe_id` recovery (R-13). (ticket 12a)
+- [x] `pages/GroceryLists.tsx` — active/archived; delete-in-any-status. (ticket 12b)
+- [x] `pages/GroceryListDetail.tsx` — generated vs manual grouping; **optimistic**
       check/uncheck with rollback; atomic `{quantity, unit}` inline edit +
       "now manual" note on a generated line; add manual line; frozen lines
       read-only with `applied_*`; submit `Dialog` (forward-only copy) + re-submit
-      allowed; archive confirm + `409` handling.
-- [ ] Flow test: check two lines → submit → inventory invalidated, lines frozen;
+      allowed; archive confirm + `409` handling. (tickets 13a, 13b, 13c)
+- [x] Flow test: check two lines → submit → inventory invalidated, lines frozen;
       PATCH a frozen line → `409` toast; edit a generated line → reclassified.
+      (tickets 13c, 18 — live-verified against the real backend)
 
 **Exit:** grocery adapter diff-reviewed against merged BE Phase 6; check→submit
-flow test green.
+flow test green. — **cleared** (ticket 18): `GroceryListCreate`,
+`GroceryListItemUpdate`, `GroceryListItemRead`, `GroceryListRead` verified
+field-for-field against the merged BE Phase 6 backend, live. Found and fixed one
+real drift: `GroceryListItemIn.quantity`/`.unit` were typed `?:` (omittable) in
+`types.ts`, but the backend schema declares them required-nullable (no default)
+— an amount-less manual-line POST that omitted the keys 422'd ("field
+required"). Fixed `types.ts`, the `docs/frontend/spec.md` §5 mirror, and
+`buildAddLine` (now always sends `quantity`/`unit`, `null` when blank).
+Live-drove the full flow against a booted BE Phase 6: create, `422` missing
+`recipe_id`, check two lines → submit → both frozen with `applied_*` set and
+`GET /inventory` reflecting both, `PATCH`/`DELETE` on a frozen line → `409`,
+editing an unfrozen generated line → reclassified to `manual`/`nettable:true`,
+a non-atomic `{quantity}`-only PATCH → `422` (N6), archive → `409` on
+re-archive/PATCH/submit/item-POST of an archived list, `DELETE` on any status.
 
 ---
 
@@ -382,6 +397,6 @@ Depends on backend Phase 7.
 | 3 — Recipes | Complete — built vs MSW (03 oracles, 05a/05b list, 06a–c form, 07 detail) and integrated against real BE Phase 3 (ticket 15) |
 | 4 — Inventory & availability | Complete — built vs MSW (08a, 08b, 09) and integrated against real BE Phase 4 (ticket 16) |
 | 5 — Cook & history | Complete — built vs MSW (10, 11a, 11b) and integrated against real BE Phase 5 (ticket 17) |
-| 6 — Grocery | Not started — buildable vs MSW; wiring blocked on BE Phase 6 |
+| 6 — Grocery | Complete — built vs MSW (12a, 12b, 13a, 13b, 13c) and integrated against real BE Phase 6 (ticket 18) |
 | 7 — Hardening | Not started |
 | 8 — Deployment docs | Not started — blocked on BE Phase 7 |

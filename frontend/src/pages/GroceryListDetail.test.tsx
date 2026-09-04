@@ -265,7 +265,7 @@ describe("GroceryListDetail", () => {
     expect(screen.getByText("duct tape")).toBeInTheDocument();
   });
 
-  it("adds a manual line with no quantity/unit, posting the item alone", async () => {
+  it("adds a manual line with no quantity/unit, sending both keys as null", async () => {
     useGroceryList(makeList([{ ...sampleGroceryItem, id: 1, item: "flour" }]));
     let postedBody: unknown;
     server.use(
@@ -283,7 +283,11 @@ describe("GroceryListDetail", () => {
     await userEvent.type(screen.getByLabelText("Item"), "napkins");
     await userEvent.click(screen.getByRole("button", { name: "Add item" }));
 
-    await waitFor(() => expect(postedBody).toEqual({ item: "napkins" }));
+    // Both keys must be present (possibly null) — the backend schema has no
+    // default for them, so omitting either 422s (ticket 18 re-diff).
+    await waitFor(() =>
+      expect(postedBody).toEqual({ item: "napkins", quantity: null, unit: null }),
+    );
   });
 
   it("edits a generated line's quantity, sending quantity+unit together, and shows the reclassify note", async () => {

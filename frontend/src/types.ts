@@ -16,6 +16,12 @@
 // merged (ticket 17): `CookRequest`, `CookDeductionRead` (all five `reason`
 // branches, incl. the applied/null-key shape per branch), and `CookLogRead`
 // match field-for-field, no drift.
+// §5.6 (grocery) re-diffed 2026-09-04 against backend Phase 6 as merged
+// (ticket 18): `GroceryListCreate`, `GroceryListItemUpdate`,
+// `GroceryListItemRead`, `GroceryListRead` match field-for-field, no drift.
+// `GroceryListItemIn` had a real gap — `quantity`/`unit` were `?:` (omittable)
+// here but the backend schema declares them required-nullable (no default),
+// so a key-omitting POST 422s; fixed to non-optional `| null` above.
 
 // ── Shared ──────────────────────────────────────────────────────────────────
 
@@ -234,8 +240,12 @@ export interface GroceryListCreate {
 
 export interface GroceryListItemIn {
   item: string; // 1..200
-  quantity?: number | null; // > 0 when set, finite
-  unit?: string | null; // <= 30
+  // Both keys are REQUIRED (possibly null) — unlike GroceryListItemUpdate below,
+  // the backend schema has no default, so an amount-less manual line must send
+  // `quantity: null, unit: null` explicitly; omitting either key is a 422
+  // "field required" (backend/app/schemas/grocery.py GroceryListItemIn).
+  quantity: number | null; // > 0 when set, finite
+  unit: string | null; // <= 30
 }
 
 export interface GroceryListItemUpdate {
