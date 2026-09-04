@@ -11,12 +11,14 @@ import type {
 import {
   ApiError,
   GENERIC_ERROR_MESSAGE,
+  STOCK_CONFLICT_MESSAGE,
   hasInlineFormError,
+  isStockConflict,
   useFormErrors,
 } from "../lib/apiError";
 import { formatQuantity } from "../lib/format";
 import { cx } from "../lib/cx";
-import { Badge, Button, Field, Input, useToast } from "../components";
+import { Badge, Button, Dialog, Field, Input, useToast } from "../components";
 import styles from "./GroceryListDetail.module.css";
 
 // GroceryListDetail — render + optimistic check (ticket 13a), add/edit lines
@@ -42,6 +44,18 @@ export function quantityLabel(
   item: Pick<GroceryListItemRead, "quantity" | "unit">,
 ): string {
   return withUnitWord(formatQuantity(item.quantity, item.unit), item.unit);
+}
+
+/** A frozen line's amount actually added to inventory (`applied_*`) — shown
+ *  in place of `quantityLabel` once `added_to_inventory` is true (spec §10.7:
+ *  "show the amount that was added"). Same formatter, different source field. */
+export function appliedLabel(
+  item: Pick<GroceryListItemRead, "applied_quantity" | "applied_unit">,
+): string {
+  return withUnitWord(
+    formatQuantity(item.applied_quantity, item.applied_unit),
+    item.applied_unit,
+  );
 }
 
 // ── Line drafts — add form + inline edit form share one shape ──────────────
@@ -114,7 +128,8 @@ function diffLineDraft(original: GroceryListItemRead, draft: GroceryLineDraft) {
   return {
     itemChanged: draft.item.trim() !== original.item,
     quantityOrUnitChanged:
-      draft.quantity.trim() !== currentQuantity || draft.unit.trim() !== currentUnit,
+      draft.quantity.trim() !== currentQuantity ||
+      draft.unit.trim() !== currentUnit,
   };
 }
 
@@ -154,6 +169,21 @@ export function buildEditPatch(
 // (spec §10.7 "a quiet note ... no longer netted against stock").
 const RECLASSIFY_NOTE =
   "This is now a manual line — we'll stop netting it against your stock.";
+
+// Two distinct 409s a line PATCH can hit once submit/archive exist (spec §6
+// catalog): the list itself went archived out from under the editor, or —
+// same wire detail ("conflict") as the R-11 generic race, but only reachable
+// on this endpoint — the line was frozen by a submit that landed first.
+const LIST_ARCHIVED_MESSAGE = "This list is archived.";
+const FROZEN_LINE_MESSAGE = "This item was already added to inventory.";
+
+function isListNotActive(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status === 409 &&
+    err.detail === "list is not active"
+  );
+}
 
 function NotFoundPanel() {
   return (
@@ -270,6 +300,26 @@ function GroceryListDetailView({ id }: { id: number }) {
       }
     },
     onError: (err: unknown) => {
+      // A stale editor can hit either 409: the list was archived out from
+      // under it, or (same wire "conflict" detail, only possible here) the
+      // line was frozen by a submit that landed first. Both close the editor
+      // and refetch rather than rendering the bare detail inline.
+      if (isListNotActive(err)) {
+        setEditingId(null);
+        setEditDraft(null);
+        setEditErrors({});
+        toast.show(LIST_ARCHIVED_MESSAGE, { variant: "error" });
+        queryClient.invalidateQueries({ queryKey });
+        return;
+      }
+      if (isStockConflict(err)) {
+        setEditingId(null);
+        setEditDraft(null);
+        setEditErrors({});
+        toast.show(FROZEN_LINE_MESSAGE, { variant: "error" });
+        queryClient.invalidateQueries({ queryKey });
+        return;
+      }
       if (!hasInlineFormError(err)) {
         toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
       }
@@ -310,6 +360,51 @@ function GroceryListDetailView({ id }: { id: number }) {
       wasGenerated: original.source === "generated",
     });
   }
+
+  // Submit checked lines into inventory (spec §10.7 "Submit"). Forward-only:
+  // re-running only picks up newly-checked lines, so the button stays live —
+  // no "already submitted" state to track here.
+  const [submitDialogOpen, setSubmitDialogOpen] = useState(false);
+  const submitMutation = useMutation({
+    mutationFn: () => groceryApi.submit(id),
+    onSuccess: () => {
+      setSubmitDialogOpen(false);
+      queryClient.invalidateQueries({ queryKey });
+      queryClient.invalidateQueries({ queryKey: ["inventory"] });
+    },
+    onError: (err: unknown) => {
+      setSubmitDialogOpen(false);
+      if (isListNotActive(err)) {
+        toast.show(LIST_ARCHIVED_MESSAGE, { variant: "error" });
+        queryClient.invalidateQueries({ queryKey });
+      } else if (isStockConflict(err)) {
+        toast.show(STOCK_CONFLICT_MESSAGE, { variant: "error" });
+        queryClient.invalidateQueries({ queryKey });
+      } else {
+        toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
+      }
+    },
+  });
+
+  // Archive a finished list (spec §10.7 "Archive"). Forward-only — no
+  // un-archive; a stale attempt on an already-archived list 409s.
+  const [archiveDialogOpen, setArchiveDialogOpen] = useState(false);
+  const archiveMutation = useMutation({
+    mutationFn: () => groceryApi.archive(id),
+    onSuccess: () => {
+      setArchiveDialogOpen(false);
+      queryClient.invalidateQueries({ queryKey });
+    },
+    onError: (err: unknown) => {
+      setArchiveDialogOpen(false);
+      if (isListNotActive(err)) {
+        toast.show(LIST_ARCHIVED_MESSAGE, { variant: "error" });
+        queryClient.invalidateQueries({ queryKey });
+      } else {
+        toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
+      }
+    },
+  });
 
   if (query.isPending) {
     return (
@@ -456,6 +551,71 @@ function GroceryListDetailView({ id }: { id: number }) {
           </form>
         </section>
       )}
+
+      {active && (
+        <section className={styles.actions}>
+          <Button variant="primary" onClick={() => setSubmitDialogOpen(true)}>
+            Submit checked items to inventory
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => setArchiveDialogOpen(true)}
+          >
+            Archive list
+          </Button>
+        </section>
+      )}
+
+      <Dialog
+        open={submitDialogOpen}
+        onClose={() => setSubmitDialogOpen(false)}
+        title="Add checked items to inventory?"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setSubmitDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              loading={submitMutation.isPending}
+              onClick={() => submitMutation.mutate()}
+            >
+              Add to inventory
+            </Button>
+          </>
+        }
+      >
+        <p>
+          This adds every checked, unfrozen, quantified line to your inventory.
+          It can’t be undone. You can keep shopping and submit again later for
+          anything newly checked.
+        </p>
+      </Dialog>
+
+      <Dialog
+        open={archiveDialogOpen}
+        onClose={() => setArchiveDialogOpen(false)}
+        title="Archive this list?"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setArchiveDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="secondary"
+              loading={archiveMutation.isPending}
+              onClick={() => archiveMutation.mutate()}
+            >
+              Archive
+            </Button>
+          </>
+        }
+      >
+        <p>
+          “{list.name}” will be archived. You won’t be able to check off or add
+          items on it afterward.
+        </p>
+      </Dialog>
     </section>
   );
 }
@@ -636,19 +796,30 @@ function GroceryLine({
           />
           <span className={styles.lineBody}>
             <span className={styles.lineItem}>{item.item}</span>
-            {item.nettable ? (
-              <span className={styles.lineQty}>{quantityLabel(item) || "—"}</span>
-            ) : (
-              <span className={styles.uncertain}>
-                <Badge tone="warn">amount uncertain</Badge>
-                <span className={styles.uncertainNote}>
-                  buy based on what you find you’re short.
+            {/* Frozen: the applied amount below is the number that matters —
+                showing the (now moot) current quantity too would just repeat
+                it (spec §10.7 "show the amount that was added"). */}
+            {!frozen &&
+              (item.nettable ? (
+                <span className={styles.lineQty}>
+                  {quantityLabel(item) || "—"}
                 </span>
-              </span>
-            )}
+              ) : (
+                <span className={styles.uncertain}>
+                  <Badge tone="warn">amount uncertain</Badge>
+                  <span className={styles.uncertainNote}>
+                    buy based on what you find you’re short.
+                  </span>
+                </span>
+              ))}
           </span>
         </label>
-        {frozen && <Badge tone="ok">Added to inventory</Badge>}
+        {frozen && (
+          <span className={styles.frozenMeta}>
+            <Badge tone="ok">Added to inventory</Badge>
+            <span className={styles.appliedQty}>{appliedLabel(item)}</span>
+          </span>
+        )}
         {!frozen && active && (
           <Button
             variant="ghost"
