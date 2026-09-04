@@ -4,7 +4,7 @@
 
 **Blocked by:** 04, 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Files:** edit `frontend/src/pages/GroceryLists.tsx`, `frontend/src/api/grocery.ts`; create `frontend/src/pages/GroceryLists.module.css`, `frontend/src/pages/GroceryLists.test.tsx`. Built against the spec DTO — **not** wired to real calls (ticket 18).
 
@@ -12,10 +12,17 @@
 
 **Tests:** `cd frontend && npm run test:run -- src/pages/GroceryLists.test.tsx`.
 
-- [ ] `/groceries` lists the user's grocery lists, filterable to active or archived (`?status=active` default), with item and checked counts per list.
-- [ ] A list can be opened (→ `/groceries/:id`) and deleted in any status with a confirmation.
-- [ ] Empty state when the user has no lists in the current filter.
-- [ ] The grocery calls sit behind the grocery resource adapter (R-2); built against the spec DTO, **not** wired to real calls here (that is ticket 18).
-- [ ] Flow test (vs MSW): the index renders lists with counts; switching to archived sends `?status=archived`; delete confirms then removes the list.
+- [x] `/groceries` lists the user's grocery lists, filterable to active or archived (`?status=active` default), with item and checked counts per list.
+- [x] A list can be opened (→ `/groceries/:id`) and deleted in any status with a confirmation.
+- [x] Empty state when the user has no lists in the current filter.
+- [x] The grocery calls sit behind the grocery resource adapter (R-2); built against the spec DTO, **not** wired to real calls here (that is ticket 18).
+- [x] Flow test (vs MSW): the index renders lists with counts; switching to archived sends `?status=archived`; delete confirms then removes the list.
 
 **Refs:** `docs/frontend/spec.md` §10.6; plan Phase 6. Split from ticket 12.
+
+## Comments
+
+Implemented on `feat/frontend-v1-12b` in worktree
+`.claude/worktrees/frontend-v1-12b`. `/code-review` (Standards + Spec) ran
+clean — no hard violations, no missing/wrong requirements. Merged to `main`
+via PR #63 (squash, `c03e112`).

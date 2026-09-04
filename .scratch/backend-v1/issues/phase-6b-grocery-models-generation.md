@@ -7,7 +7,7 @@ land in later Phase 6 tickets.
 
 **Blocked by:** `phase-6a`.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Files:** create `backend/app/schemas/grocery.py`, `backend/app/routers/grocery.py`, `backend/tests/test_grocery.py`; edit `backend/app/models.py` (add `GroceryList`, `GroceryListItem`), `backend/app/services/inventory_math.py` (add `generate_lines`), `backend/app/schemas/__init__.py`, `backend/app/main.py`, `backend/tests/test_validation.py`.
 
@@ -15,17 +15,17 @@ land in later Phase 6 tickets.
 
 **Tests:** `cd backend && uv run pytest tests/test_grocery.py tests/test_inventory_math.py tests/test_validation.py`, then full `uv run pytest`.
 
-- [ ] `backend/recipe.db` deleted (schema expansion).
-- [ ] `GroceryList` + `GroceryListItem` models per §1: all columns incl.
+- [x] `backend/recipe.db` deleted (schema expansion).
+- [x] `GroceryList` + `GroceryListItem` models per §1: all columns incl.
       `source_recipe_ids` JSON (no FK), `nettable` (default `true`),
       `added_to_inventory` (default `false`, idempotency + freeze flag),
       `applied_quantity` / `applied_unit`, `checked_at` / `submitted_at`;
       `items` relationship `cascade="all, delete-orphan"` ordered by `id`; item
       FK `ON DELETE CASCADE` `passive_deletes=True`.
-- [ ] `backend/app/schemas/grocery.py` (`GroceryListCreate`, `GroceryListItemIn`,
+- [x] `backend/app/schemas/grocery.py` (`GroceryListCreate`, `GroceryListItemIn`,
       `GroceryListItemUpdate`, `GroceryListItemRead`, `GroceryListRead`) per §5.6;
       re-exported from `app.schemas`.
-- [ ] `generate_lines(reqs_by_recipe, stock) -> list[GroceryLineDTO]` in
+- [x] `generate_lines(reqs_by_recipe, stock) -> list[GroceryLineDTO]` in
       `backend/app/services/inventory_math.py` per §4.3: consolidate via
       `add_quantities`; canonical `need_base`; the netting table (compatible
       covers -> no line; compatible short + no incompatible -> shortfall
@@ -35,7 +35,7 @@ land in later Phase 6 tickets.
       unquantified opaque / `None` -> `quantity=null` `nettable=false`; entirely
       to-taste -> `quantity=null, unit=null` `nettable=false`); output order =
       first-seen normalized-name then first-seen partition.
-- [ ] `backend/app/routers/grocery.py` (`prefix="/api/grocery"`,
+- [x] `backend/app/routers/grocery.py` (`prefix="/api/grocery"`,
       `route_class=TransactionRoute`, auth):
   - `POST /api/grocery` -> `201 GroceryListRead`: validate `recipe_ids`
     non-empty + unique + all exist -> `422`; `multipliers` keys subset of
@@ -51,18 +51,31 @@ land in later Phase 6 tickets.
     `?status=active|archived`, order `created_at DESC, id DESC`.
   - `GET /api/grocery/{id}` -> `200 GroceryListRead` / `404`.
   - `DELETE /api/grocery/{id}` -> `204`, any status, cascades items.
-- [ ] Router registered; route-class guard green.
-- [ ] `generate_lines` oracle cases in `test_inventory_math.py` pass unchanged.
-- [ ] `backend/tests/test_grocery.py`: generate from 2 selected recipes
+- [x] Router registered; route-class guard green.
+- [x] `generate_lines` oracle cases in `test_inventory_math.py` pass unchanged.
+- [x] `backend/tests/test_grocery.py`: generate from 2 selected recipes
       (consolidation + netting; generated `quantity` / `unit` canonical); a
       to-taste ingredient (`quantity=None`) survives `multipliers` scaling (no
       `TypeError`) and emits a `quantity=null, unit=null` line; a food cooked to
       `quantity_base=0` still produces a full-need line; delete list cascades
       items; a non-nettable line is present; N3: `need 3 can` / `1 can + 1 jar`
       -> a `2 can` line `nettable=false`; `1 can` only -> `nettable=true`.
-- [ ] `test_validation.py`: `recipe_ids` empty or with a duplicate -> `422`; a
+- [x] `test_validation.py`: `recipe_ids` empty or with a duplicate -> `422`; a
       `multipliers` key not in `recipe_ids` -> `422`; `multipliers` value `0` /
       `inf` / `nan` -> `422`.
-- [ ] `cd backend && uv run pytest` green.
-- [ ] `docs/phases/phase-6.md` model / `generate_lines` / list-create-read-delete
+- [ ] `cd backend && uv run pytest` green. Not fully: `test_grocery_contract.py`
+      (the `phase-6a` locked oracle) has 20 expected failures in its PATCH /
+      submit / archive / submit-race sections — those routes are `phase-6c`-`6e`
+      scope, and that file's own docstring says it "does not fully pass until
+      `phase-6d` (submit) / `phase-6e` (archive)". Every other file, including
+      the three named above, is green.
+- [x] `docs/phases/phase-6.md` model / `generate_lines` / list-create-read-delete
       checkboxes ticked.
+
+## Comments
+
+- Implemented on `feat/backend-v1-phase-6b` (worktree:
+  `.claude/worktrees/backend-v1-phase-6b`), reviewed with `/code-review since
+  main` (Standards + Spec both clean), opened as
+  [PR #64](https://github.com/dylanmccoy/stockpot/pull/64), and squash-merged
+  to `main` at `bd06e95`.
