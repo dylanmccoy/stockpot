@@ -6,7 +6,7 @@
 
 **Blocked by:** `phase-5a`.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** create `backend/app/schemas/cook_logs.py`; edit `backend/app/models.py` (add `CookLog`), `backend/app/schemas/__init__.py`, `backend/app/routers/recipes.py` (add `/cook`, `/cook-logs`), `backend/app/main.py`, `backend/tests/test_recipes.py`, `backend/tests/test_concurrency.py`.
 
