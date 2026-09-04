@@ -90,7 +90,10 @@ and keep logs readable after recipe deletion.
 - [x] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
       a non-author reviewer walked every deduction / clamp-to-zero / reason
       branch in this phase's diff and tests against `spec.md` §7, §4.5, and §5.4.
-      (phase-5b covered the deduction branches; phase-5c `/code-review` walked
-      the read-only global-feed diff — pagination bounds, ordering, count,
-      recipe-deletion survival — against `spec.md` §5.4.)
+      (phase-5b covered the deduction / clamp / reason branches at merge;
+      phase-5c ran `/code-review` — fresh-context, non-author Standards + Spec
+      sub-agents — over the global-feed diff: pagination bounds, ordering,
+      `total` count, recipe-deletion survival, against `spec.md` §5.4. No
+      correctness findings; three judgement-call naming/typing nits actioned,
+      one cross-router query-shape duplication left to phase-5b's owner.)
 - [x] Phase complete; update the status table in [`../plan.md`](../plan.md).

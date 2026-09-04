@@ -24,11 +24,11 @@ router = APIRouter(
 
 
 @router.get("", response_model=CookLogList)
-def list_cook_logs(
+def list_all_cook_logs(
     db: SessionDep,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-) -> dict:
+) -> CookLogList:
     """Global made-history feed, ``cooked_at DESC, id DESC``, paginated."""
     total = db.scalar(select(func.count()).select_from(CookLog)) or 0
     stmt = (
@@ -38,18 +38,15 @@ def list_cook_logs(
         .limit(limit)
         .offset(offset)
     )
-    return {
-        "items": list(db.scalars(stmt)),
-        "total": total,
-        "limit": limit,
-        "offset": offset,
-    }
+    return CookLogList(
+        items=list(db.scalars(stmt)), total=total, limit=limit, offset=offset
+    )
 
 
 @router.get("/{log_id}", response_model=CookLogRead)
 def get_cook_log(log_id: int, db: SessionDep) -> CookLog:
     """One cook log by id; ``404`` if absent. Resolves after the recipe is gone."""
-    log = db.get(CookLog, log_id)
+    log = db.get(CookLog, log_id, options=[selectinload(CookLog.cooked_by)])
     if log is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Cook log not found"
