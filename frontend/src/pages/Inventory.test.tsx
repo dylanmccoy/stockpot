@@ -657,6 +657,43 @@ describe("Inventory edit panel", () => {
     expect(within(table).getByText("500 g")).toBeInTheDocument();
   });
 
+  // §6 catalog: 409 "conflict" (IntegrityError / lock) on an inventory PATCH —
+  // distinct from the match_name-collision 409 below, which stays inline.
+  it("on a generic 409 edit conflict, toasts + refetches and closes the panel", async () => {
+    const user = userEvent.setup();
+    let getCalls = 0;
+    server.use(
+      http.get("/api/inventory", () => {
+        getCalls += 1;
+        return HttpResponse.json([massItem()]);
+      }),
+      http.patch("/api/inventory/:id", () =>
+        HttpResponse.json({ detail: "conflict" }, { status: 409 }),
+      ),
+    );
+    renderInventory();
+
+    await user.click(await screen.findByRole("button", { name: "Edit Flour" }));
+    const panel = editPanel();
+    const getsBeforeSave = getCalls;
+    await user.clear(within(panel).getByLabelText(/^Quantity/));
+    await user.type(within(panel).getByLabelText(/^Quantity/), "500");
+    await user.click(
+      within(panel).getByRole("button", { name: "Save changes" }),
+    );
+
+    expect(
+      await screen.findByText(/Someone else was updating stock/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("conflict")).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Edit Flour" }),
+      ).not.toBeInTheDocument(),
+    );
+    await waitFor(() => expect(getCalls).toBeGreaterThan(getsBeforeSave));
+  });
+
   it("shows a match_name 409 collision inline on the field", async () => {
     const user = userEvent.setup();
     server.use(

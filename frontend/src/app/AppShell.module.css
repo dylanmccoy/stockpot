@@ -4,6 +4,15 @@
   flex-direction: column;
 }
 
+.reconnecting {
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-warn-surface);
+  color: var(--color-warn);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-align: center;
+}
+
 .topbar {
   display: flex;
   align-items: center;
