@@ -6,7 +6,7 @@
 
 **Status:** in-review
 
-**Files:** edit `frontend/src/pages/History.tsx`, `frontend/src/api/cookLogs.ts`; create `frontend/src/pages/History.test.tsx`. Reuse `CookLogRow`/`DeductionDetail` from 11a.
+**Files:** edit `frontend/src/pages/History.tsx` (+ `.module.css`), `frontend/src/components/CookLogRow.tsx` (+ `.module.css`, `.test.tsx` — add the recipe-title `<Link>`); create `frontend/src/pages/History.test.tsx`. Reuse `CookLogRow`/`DeductionDetail` from 11a. (`frontend/src/api/cookLogs.ts` was listed but needed no change — `cookLogsApi.list` from 11a already suffices.)
 
 **Spec:** `docs/frontend/spec.md` §10.8 (global `/history` — pagination, load-more, deleted-recipe title), §5 "Cook + history" (`/api/cook-logs` list shape). Read only these sections.
 
@@ -31,3 +31,27 @@
 - `cookLogsApi.list` already existed from 11a and needed no change; the
   queryFn does **not** forward TanStack's `signal` (matches RecipeList /
   RecipeDetail — the abort signal breaks `fetch` under the jsdom test env).
+
+### `/code-review` findings
+
+Actioned:
+- **Spec c1** — a failed "load more" now renders its own `errorPanel` with a
+  working **Retry** (`query.refetch()` on the same offset), replacing the weak
+  text-only "try again"; added a flow test covering fail → Retry → recover.
+- **Spec a1** — empty-state action is now a styled CTA (`.cta`, matching
+  RecipeList's `CtaLink`), not a bare link.
+- **Spec c2** — "Load more" spinner is gated on `fetchingNext`
+  (`isFetching && query.data?.offset !== offset`), so a background refetch of an
+  already-loaded page no longer spins it.
+- **Standards / Files fence** — updated the **Files:** line above.
+- **Standards CSS dup** — dropped the one-off `.link`; empty-state CTA reuses
+  the shared token set.
+- **Standards test naming** — `feed(n, over)` → `feed(n, overrides)`.
+
+Deliberately skipped:
+- **Standards #1 / Spec c1 root — `useInfiniteQuery`.** Spec §10.8 and this
+  ticket both pin the query key as `["cook-logs", { limit, offset }]`;
+  `useInfiniteQuery`'s key omits `offset`. Kept one `useQuery` per offset with a
+  retained-pages map; the c1/c2 fixes above address the practical fallout.
+- **Divergent-change split of `History.tsx`** — a `usePagedCookLogs` hook is not
+  worth it for a single ~110-line screen.

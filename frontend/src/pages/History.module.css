@@ -53,6 +53,22 @@
   color: var(--color-muted);
 }
 
-.link {
-  color: var(--color-accent);
+/* Primary action for the empty state, styled to match RecipeList's CtaLink. */
+.cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+}
+
+.cta:hover {
+  background: var(--color-accent-hover);
 }

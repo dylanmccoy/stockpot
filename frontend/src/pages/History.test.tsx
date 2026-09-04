@@ -16,7 +16,7 @@ const AT = "2026-09-01T12:00:00+00:00";
 /** `n` cook logs, ids `n..1`, already newest-first (server order). */
 function feed(
   n: number,
-  over: (i: number) => Partial<CookLogRead> = () => ({}),
+  overrides: (id: number) => Partial<CookLogRead> = () => ({}),
 ) {
   return Array.from({ length: n }, (_, i) => {
     const id = n - i;
@@ -26,7 +26,7 @@ function feed(
       recipe_title: `Recipe ${id}`,
       cooked_at: AT,
       cooked_by: { id: 1, username: "sam" },
-      ...over(id),
+      ...overrides(id),
     });
   });
 }
@@ -96,6 +96,43 @@ describe("History — global feed", () => {
     expect(
       screen.queryByRole("button", { name: /load more/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("recovers a failed 'load more' with its own Retry, keeping the loaded rows", async () => {
+    const user = userEvent.setup();
+    const all = feed(55);
+    let failNext = true;
+    server.use(
+      http.get("/api/cook-logs", ({ request }) => {
+        const url = new URL(request.url);
+        const offset = Number(url.searchParams.get("offset") ?? 0);
+        const limit = Number(url.searchParams.get("limit") ?? 50);
+        if (offset > 0 && failNext) {
+          failNext = false;
+          return new HttpResponse("boom", { status: 500 });
+        }
+        return HttpResponse.json({
+          items: all.slice(offset, offset + limit),
+          total: all.length,
+          limit,
+          offset,
+        });
+      }),
+    );
+    renderHistory();
+
+    await screen.findByText("Showing 50 of 55");
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+
+    const retry = await screen.findByRole("button", { name: /retry/i });
+    expect(screen.getAllByRole("listitem")).toHaveLength(50);
+    expect(
+      screen.queryByRole("button", { name: /load more/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(retry);
+    expect(await screen.findByText("Showing 55 of 55")).toBeInTheDocument();
+    expect(screen.getAllByRole("listitem")).toHaveLength(55);
   });
 
   it("shows a since-deleted recipe's title as plain text with no link", async () => {

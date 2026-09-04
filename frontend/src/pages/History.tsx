@@ -10,6 +10,12 @@ import styles from "./History.module.css";
 // newest first, paged in on demand with a running "showing X of total". Each
 // row is the shared `CookLogRow`, here with the recipe title shown and linked.
 // Forward-only — no undo affordance (R-12).
+//
+// Paging keeps the spec's exact `["cook-logs", { limit, offset }]` query key
+// (not `useInfiniteQuery`, whose key omits `offset`): one `useQuery` per
+// offset, and every page fetched so far is retained in `pages` and shown in
+// offset order. `total` and "load more" are driven by the current (latest)
+// page's response.
 
 const PAGE_SIZE = 50; // spec §10.8 / §5: `limit=50`
 
@@ -23,9 +29,8 @@ export default function History() {
     placeholderData: keepPreviousData,
   });
 
-  // "Load more" advances `offset`; every page fetched so far is retained and
-  // concatenated in `offset` order. Keyed by the page's own `offset` so a
-  // background refetch replaces that page in place instead of duplicating it.
+  // Retain each page keyed by its own `offset`, so a background refetch
+  // replaces that page in place instead of duplicating it.
   const [pages, setPages] = useState<Record<number, CookLogRead[]>>({});
   useEffect(() => {
     const data = query.data;
@@ -39,7 +44,9 @@ export default function History() {
 
   const total = query.data?.total ?? 0;
   const hasMore = logs.length < total;
-  const firstLoad = query.isPending && logs.length === 0;
+  // True only while the page for the *current* `offset` is still loading — not
+  // for a background refetch of an already-loaded page.
+  const fetchingNext = query.isFetching && query.data?.offset !== offset;
 
   return (
     <section className={styles.page} aria-busy={query.isFetching || undefined}>
@@ -47,7 +54,7 @@ export default function History() {
         <h1>History</h1>
       </header>
 
-      {firstLoad && (
+      {query.isPending && (
         <p role="status" className={styles.muted}>
           Loading history…
         </p>
@@ -69,7 +76,7 @@ export default function History() {
       {query.data && logs.length === 0 && (
         <div className={styles.empty}>
           <p>No cooks logged yet.</p>
-          <Link to="/" className={styles.link}>
+          <Link to="/" className={styles.cta}>
             Browse recipes
           </Link>
         </div>
@@ -87,20 +94,28 @@ export default function History() {
             ))}
           </ul>
 
-          {query.isError && (
-            <p className={styles.muted} role="alert">
-              Couldn’t load more — try again.
-            </p>
-          )}
-
-          {hasMore && (
-            <Button
-              variant="secondary"
-              loading={query.isFetching}
-              onClick={() => setOffset((o) => o + PAGE_SIZE)}
-            >
-              Load more
-            </Button>
+          {query.isError ? (
+            // A later page failed — offer a real retry of that same offset.
+            <div className={styles.errorPanel} role="alert">
+              <p>
+                {query.error instanceof Error
+                  ? query.error.message
+                  : "Couldn’t load more."}
+              </p>
+              <Button variant="secondary" onClick={() => query.refetch()}>
+                Retry
+              </Button>
+            </div>
+          ) : (
+            hasMore && (
+              <Button
+                variant="secondary"
+                loading={fetchingNext}
+                onClick={() => setOffset((o) => o + PAGE_SIZE)}
+              >
+                Load more
+              </Button>
+            )
           )}
         </>
       )}
