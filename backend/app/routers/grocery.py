@@ -71,6 +71,15 @@ def _check_line_mutable(grocery_list: GroceryList, item: GroceryListItem) -> Non
         )
 
 
+def _require_active(grocery_list: GroceryList) -> None:
+    """`409` unless the list is `active` — shared submit/archive guard
+    (spec.md §5.6)."""
+    if grocery_list.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="list is not active"
+        )
+
+
 def _stock_rows(db: Session) -> list[StockRow]:
     """Every `inventory_items` row as an ORM-free `StockRow`."""
     return [
@@ -288,10 +297,7 @@ def submit_grocery_list(
     archive are independent.
     """
     grocery_list = _get_or_404(db, list_id)
-    if grocery_list.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="list is not active"
-        )
+    _require_active(grocery_list)
 
     for line in grocery_list.items:
         if not line.checked or line.added_to_inventory or line.quantity is None:
@@ -346,10 +352,7 @@ def archive_grocery_list(list_id: int, db: SessionDep) -> GroceryList:
     read-then-set can't race a concurrent archive.
     """
     grocery_list = _get_or_404(db, list_id)
-    if grocery_list.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="list is not active"
-        )
+    _require_active(grocery_list)
     grocery_list.status = "archived"
     db.flush()  # TransactionRoute owns the commit
     return grocery_list
