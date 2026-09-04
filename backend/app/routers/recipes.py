@@ -1,12 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import SessionDep, TransactionRoute
-from app.models import InventoryItem, Recipe, RecipeIngredient, _utcnow
+from app.models import CookLog, InventoryItem, Recipe, RecipeIngredient, _utcnow
 from app.normalize import normalize_name
 from app.schemas import (
     AvailabilityReport,
+    CookLogRead,
+    CookRequest,
     RecipeCreate,
     RecipeIngredientIn,
     RecipeRead,
@@ -14,7 +16,7 @@ from app.schemas import (
 )
 from app.security import CurrentUser, get_current_user
 from app.services.ingredient_parse import parse_ingredient
-from app.services.inventory_math import ReqLine, StockRow, check_availability
+from app.services.inventory_math import ReqLine, StockRow, check_availability, deduct_calc
 
 router = APIRouter(
     prefix="/api/recipes",
@@ -93,6 +95,36 @@ def _build_ingredients(
     ]
 
 
+def _req_lines(recipe: Recipe, multiplier: float) -> list[ReqLine]:
+    """Recipe ingredients → `ReqLine`s with `multiplier` already folded in.
+
+    A to-taste line stays `quantity=None` — never `None * multiplier` (R-1).
+    """
+    return [
+        ReqLine(
+            ingredient_id=ing.id,
+            item=ing.item,
+            normalized_name=ing.normalized_name,
+            quantity=None if ing.quantity is None else ing.quantity * multiplier,
+            unit=ing.unit,
+        )
+        for ing in recipe.ingredients
+    ]
+
+
+def _stock_rows(db: Session) -> list[StockRow]:
+    """Every `inventory_items` row as an ORM-free `StockRow`."""
+    return [
+        StockRow(
+            id=row.id,
+            match_name=row.match_name,
+            unit_bucket=row.unit_bucket,
+            quantity_base=row.quantity_base,
+        )
+        for row in db.scalars(select(InventoryItem))
+    ]
+
+
 @router.get("", response_model=list[RecipeRead])
 def list_recipes(db: SessionDep) -> list[Recipe]:
     stmt = (
@@ -140,27 +172,7 @@ def recipe_availability(
     """
     recipe = _get_or_404(db, recipe_id)
 
-    reqs = [
-        ReqLine(
-            ingredient_id=ing.id,
-            item=ing.item,
-            normalized_name=ing.normalized_name,
-            quantity=None if ing.quantity is None else ing.quantity * multiplier,
-            unit=ing.unit,
-        )
-        for ing in recipe.ingredients
-    ]
-    stock = [
-        StockRow(
-            id=row.id,
-            match_name=row.match_name,
-            unit_bucket=row.unit_bucket,
-            quantity_base=row.quantity_base,
-        )
-        for row in db.scalars(select(InventoryItem))
-    ]
-
-    lines = check_availability(reqs, stock)
+    lines = check_availability(_req_lines(recipe, multiplier), _stock_rows(db))
     all_available = all(
         line.status == "ok" for line in lines if line.status != "to_taste"
     )
@@ -170,6 +182,64 @@ def recipe_availability(
         lines=lines,
         all_available=all_available,
     )
+
+
+@router.post(
+    "/{recipe_id}/cook",
+    response_model=CookLogRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def cook_recipe(
+    recipe_id: int, payload: CookRequest, current_user: CurrentUser, db: SessionDep
+) -> CookLog:
+    """Record a cook event and, when `deduct=true`, draw inventory down (spec.md §5.4).
+
+    The `deduct_calc` proposal is applied with Core `UPDATE`s inside the
+    request's single `BEGIN IMMEDIATE` transaction (`TransactionRoute` owns the
+    commit). A Core `UPDATE` does not fire the ORM `onupdate`, so `updated_at`
+    is bound explicitly. An `IntegrityError` / lock timeout rolls the whole
+    thing back and surfaces as `409` via the global handlers.
+    """
+    recipe = _get_or_404(db, recipe_id)
+
+    log = CookLog(
+        recipe_id=recipe.id,
+        recipe_title=recipe.title,
+        multiplier=payload.multiplier,
+        deducted=payload.deduct,
+        cooked_by=current_user,
+        deductions=[],
+    )
+
+    if payload.deduct:
+        proposal = deduct_calc(
+            _req_lines(recipe, payload.multiplier), _stock_rows(db)
+        )
+        now = _utcnow()
+        for row_update in proposal.row_updates:
+            db.execute(
+                update(InventoryItem)
+                .where(InventoryItem.id == row_update.row_id)
+                .values(quantity_base=row_update.new_quantity_base, updated_at=now)
+            )
+        log.deductions = proposal.log_entries
+
+    db.add(log)
+    db.flush()  # populate id / cooked_at; TransactionRoute owns the commit
+    return log
+
+
+@router.get("/{recipe_id}/cook-logs", response_model=list[CookLogRead])
+def list_cook_logs(recipe_id: int, db: SessionDep) -> list[CookLog]:
+    """This recipe's made-history, newest-first, unpaginated (spec.md §5.4)."""
+    _get_or_404(db, recipe_id)
+    stmt = (
+        select(CookLog)
+        .options(selectinload(CookLog.cooked_by))
+        .where(CookLog.recipe_id == recipe_id)
+        .order_by(CookLog.cooked_at.desc(), CookLog.id.desc())
+    )
+    return list(db.scalars(stmt))
 
 
 @router.put("/{recipe_id}", response_model=RecipeRead)

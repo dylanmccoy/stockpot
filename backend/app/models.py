@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     CheckConstraint,
     Float,
     ForeignKey,
@@ -87,6 +88,12 @@ class Recipe(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    # No cascade: a cook log outlives its recipe. `ON DELETE SET NULL` +
+    # `passive_deletes` lets the DB null `recipe_id` on delete; the
+    # `recipe_title` snapshot keeps the history readable (spec.md §1).
+    cook_logs: Mapped[list["CookLog"]] = relationship(
+        back_populates="recipe", passive_deletes=True
+    )
 
 
 class RecipeIngredient(Base):
@@ -156,5 +163,41 @@ class InventoryItem(Base):
         CheckConstraint(
             "quantity_base >= 0 AND quantity_base < 9e999",
             name="ck_inventory_quantity_base_nonneg_finite",
+        ),
+    )
+
+
+class CookLog(Base):
+    __tablename__ = "cook_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # `ON DELETE SET NULL`: the row survives its recipe (spec.md §1).
+    recipe_id: Mapped[int | None] = mapped_column(
+        ForeignKey("recipes.id", ondelete="SET NULL"), nullable=True
+    )
+    # Snapshot taken at cook time, so a deleted recipe stays named in history.
+    recipe_title: Mapped[str] = mapped_column(String(200), nullable=False)
+    # The schema guarantees `> 0` and finite on the HTTP path; the check is
+    # defense in depth, mirroring `inventory_items.quantity_base`.
+    multiplier: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    # `false` = the event was logged without touching stock.
+    deducted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    cooked_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
+    # Attribution only, never reassigned. No cascade: deleting a user (which v1
+    # never does) must not take their cook history with them.
+    cooked_by_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id"), nullable=True
+    )
+    # One entry per member ingredient; `[]` when `deducted=false`. Stored raw,
+    # serialized through `list[CookDeductionRead]` on read (spec.md §1, §5.4).
+    deductions: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+
+    recipe: Mapped[Recipe | None] = relationship(back_populates="cook_logs")
+    cooked_by: Mapped[User | None] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            "multiplier > 0 AND multiplier < 9e999",
+            name="ck_cook_logs_multiplier_positive_finite",
         ),
     )

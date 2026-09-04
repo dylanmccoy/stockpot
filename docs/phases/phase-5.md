@@ -30,37 +30,45 @@ and keep logs readable after recipe deletion.
 
 ## Work
 
-- [ ] Delete `backend/recipe.db` before running the expanded schema.
-- [ ] Add `CookLog` with recipe-title and deduction snapshots.
-- [ ] Add cook request and log response schemas, including `CookDeductionRead`
+- [x] Delete `backend/recipe.db` before running the expanded schema. (phase-5b)
+- [x] Add `CookLog` with recipe-title and deduction snapshots. (phase-5b)
+- [x] Add cook request and log response schemas, including `CookDeductionRead`
       (`BaseModel`, `model_config = ConfigDict(extra="forbid")`, `reason` a
       `Literal` of the 5 allowed strings); `CookLogRead.deductions` is
       `list[CookDeductionRead]`. Define `_entry()` with all 11 params required
-      (no defaults) (N7).
-- [ ] Implement cook with `deduct=true` and log-only `deduct=false` modes.
+      (no defaults) (N7). (phase-5b — `_entry()` already lived in
+      `services/inventory_math.py` from phase-4e)
+- [x] Implement cook with `deduct=true` and log-only `deduct=false` modes.
       Build each `ReqLine` with
       `quantity = None if ing.quantity is None else ing.quantity * multiplier`
-      so a to-taste line never hits `None * multiplier` (R-1).
-- [ ] Apply service proposals inside the request's single transaction.
-- [ ] Add per-recipe made-history reads.
+      so a to-taste line never hits `None * multiplier` (R-1). (phase-5b)
+- [x] Apply service proposals inside the request's single transaction. (phase-5b —
+      Core `UPDATE ... SET quantity_base=?, updated_at=?`, `_utcnow()` bound explicitly)
+- [x] Add per-recipe made-history reads. (phase-5b —
+      `GET /api/recipes/{id}/cook-logs`)
 - [ ] Add paginated global list and detail routes that survive recipe deletion.
-- [ ] Add remaining cook/history coverage without changing the accepted
+      (phase-5c)
+- [x] Add remaining cook/history coverage without changing the accepted
       contract cases, including the file-backed HTTP cook race. The `/cook`
       fixture recipe carries a to-taste line (`"salt to taste"`); assert it
       scales with `multiplier` without `TypeError` and yields a `"to taste"`
-      deduction entry that is never applied (R-1 regression guard).
+      deduction entry that is never applied (R-1 regression guard). (phase-5b —
+      `test_recipes.py` cook section + `test_concurrency.py`)
 
 ## Verification
 
-- [ ] Every accepted §7 cook, audit-log, and cook-race contract case passes
-      unchanged.
-- [ ] Deduction amounts and before/after snapshots use canonical units.
-- [ ] Deduction clamps at zero and reports every non-applied reason consistently.
-- [ ] Every `deductions[]` entry validates against `CookDeductionRead`; all 5
+- [x] Every accepted §7 cook, audit-log, and cook-race contract case passes
+      unchanged. (phase-5b — `test_cook_contract.py`, 53 cases, no expected
+      value altered)
+- [x] Deduction amounts and before/after snapshots use canonical units. (phase-5b)
+- [x] Deduction clamps at zero and reports every non-applied reason consistently.
+      (phase-5b)
+- [x] Every `deductions[]` entry validates against `CookDeductionRead`; all 5
       `reason` values exercised; a stored entry with an extra key or unlisted
-      `reason` → `500` on read.
-- [ ] Concurrent cooks do not lose an update.
-- [ ] `cd backend && uv run pytest` passes.
+      `reason` → `500` on read. (phase-5b)
+- [x] Concurrent cooks do not lose an update. (phase-5b —
+      `test_concurrency.py` + `test_cook_contract.py` section D)
+- [x] `cd backend && uv run pytest` passes. (phase-5b — 654 passed)
 
 ## Exit criteria
 
