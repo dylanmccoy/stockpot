@@ -7,7 +7,7 @@ before Phase 6 production code.
 
 **Blocked by:** `phase-5c` (Phase 5 complete).
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `backend/tests/test_inventory_math.py` and/or create a grocery contract test; `docs/phases/phase-6.md`. Authored black-box from the spec in a fresh context — no production code.
 
