@@ -71,7 +71,9 @@ Re-run typechecking and the full test suite after actioning any review findings.
 ## Close out
 
 Commit your work to this ticket's branch. Do not merge it or open a PR unless
-the user asks.
+the user asks — and if they do, open the PR only *after* the ticket update
+below is committed on the branch. The tracker edit is part of the branch's
+diff, not a follow-up to it.
 
 ### Update the ticket
 
@@ -96,7 +98,9 @@ Commit these edits on the ticket branch along with the code.
 ### Hand back
 
 Leave the worktree in place and tell the user where it is, and which ticket file
-you updated and committed on the branch.
+you updated and committed on the branch. If the user asked for a PR, open it now
+(`gh pr create`, from the worktree) — the ticket edit is already committed, so
+the PR's diff includes it.
 
 Once the branch is merged the worktree can be cleaned up with:
 ```
