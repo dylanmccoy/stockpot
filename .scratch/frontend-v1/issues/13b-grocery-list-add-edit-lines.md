@@ -4,7 +4,7 @@
 
 **Blocked by:** 13a.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/pages/GroceryListDetail.tsx`, `frontend/src/pages/GroceryListDetail.test.tsx`, `frontend/src/api/grocery.ts`.
 
@@ -44,3 +44,8 @@
   draft/diff/validate/patch helpers (the atomic-pairing rule differs enough
   that sharing isn't obviously clean yet), and a data-clump of edit-related
   props threaded through `LineGroup`/`GroceryLine`.
+- Merged via PR #68 (`feat/frontend-v1-13b`). At merge time backend CI on
+  `main` was red on `test_grocery_contract.py` submit/archive cases — a
+  pre-existing gap from before this ticket (`grocery.py` had submit/archive
+  not yet implemented, "land in phase-6d-6e"), unrelated to this frontend
+  diff; merged with admin override. `main` has since picked up phase-6d.
