@@ -1,11 +1,13 @@
-"""Grocery generation + list read/delete/mutation (spec.md §5.6, `phase-6b`-`6c`).
+"""Grocery generation + list read/delete/mutation/submit (spec.md §5.6,
+`phase-6b`-`6d`).
 
-Submit and archive are `phase-6d`-`6e`'s; the locked N6/submit/race contract
-oracle lives in `test_grocery_contract.py` (`phase-6a`) and stays partially
-failing until those land — see that file's module docstring. This file covers
-the HTTP wiring phase-6b/6c actually ship: `POST` generation (consolidation,
-netting, canonical units), `GET` (list + single, `?status`), `DELETE`
-(cascade), and manual item add / line edit (N6) / line delete.
+Archive is `phase-6e`'s; the locked N6/submit/race contract oracle lives in
+`test_grocery_contract.py` (`phase-6a`) and stays partially failing until it
+lands — see that file's module docstring. This file covers the HTTP wiring
+phase-6b/6c/6d actually ship: `POST` generation (consolidation, netting,
+canonical units), `GET` (list + single, `?status`), `DELETE` (cascade), manual
+item add / line edit (N6) / line delete, and `submit` (forward-only apply into
+inventory, freeze).
 
 The consolidated-shortfall arithmetic itself is locked as a pure-service oracle
 in `test_inventory_math.py::test_generate_lines_oracle` — this file does not
@@ -391,3 +393,147 @@ def test_delete_unknown_list_or_line_is_404(auth_client: TestClient) -> None:
 
     assert auth_client.delete(f"/api/grocery/999999/items/{line['id']}").status_code == 404
     assert auth_client.delete(f"/api/grocery/{gid}/items/999999").status_code == 404
+
+
+# ===========================================================================
+# Submit (phase-6d)
+# ===========================================================================
+
+
+def _submit(client: TestClient, gid: int):
+    return client.post(f"/api/grocery/{gid}/submit")
+
+
+def _inventory_row(client: TestClient, normalized_name: str, unit_bucket: str) -> dict | None:
+    rows = [
+        r
+        for r in client.get("/api/inventory").json()
+        if r["normalized_name"] == normalized_name and r["unit_bucket"] == unit_bucket
+    ]
+    assert len(rows) <= 1, rows
+    return rows[0] if rows else None
+
+
+def test_submit_applies_the_edited_value_not_the_generated_one(
+    auth_client: TestClient,
+) -> None:
+    """Edit a generated `500 g` line to `0.5 kg` before checking it: submit
+    applies the edited value, not the original generated one."""
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+
+    _patch_item(auth_client, gid, line["id"], quantity=0.5, unit="kg")
+    _patch_item(auth_client, gid, line["id"], checked=True)
+
+    resp = _submit(auth_client, gid)
+    assert resp.status_code == 200, resp.text
+    row = _inventory_row(auth_client, "flour", "mass")
+    assert row is not None
+    assert row["quantity_base"] == pytest.approx(500.0)  # 0.5 kg canonical, not 500 kg
+
+
+def test_submit_freezes_the_line_and_raises_inventory(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+    _patch_item(auth_client, gid, line["id"], checked=True)
+
+    resp = _submit(auth_client, gid)
+    assert resp.status_code == 200, resp.text
+    out = _line_by_norm(resp.json()["items"], "flour")
+    assert out["added_to_inventory"] is True
+    assert out["applied_quantity"] == pytest.approx(500.0)
+    assert out["applied_unit"] == "g"
+    row = _inventory_row(auth_client, "flour", "mass")
+    assert row is not None
+    assert row["quantity_base"] == pytest.approx(500.0)
+
+
+def test_patch_and_delete_a_frozen_line_are_409(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+    _patch_item(auth_client, gid, line["id"], checked=True)
+    assert _submit(auth_client, gid).status_code == 200
+
+    assert _patch_item(auth_client, gid, line["id"], checked=False).status_code == 409
+    assert auth_client.delete(f"/api/grocery/{gid}/items/{line['id']}").status_code == 409
+
+
+def test_unchecking_before_submit_is_a_no_op(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+    _patch_item(auth_client, gid, line["id"], checked=True)
+    _patch_item(auth_client, gid, line["id"], checked=False)
+
+    resp = _submit(auth_client, gid)
+    assert resp.status_code == 200, resp.text
+    out = _line_by_norm(resp.json()["items"], "flour")
+    assert out["added_to_inventory"] is False
+    assert _inventory_row(auth_client, "flour", "mass") is None
+
+
+def test_submit_does_not_archive_and_a_further_check_resubmits_only_the_new_line(
+    auth_client: TestClient,
+) -> None:
+    """`submit` never changes `list.status`, and is forward-only: checking a
+    further line and re-submitting applies only the newly-eligible one."""
+    rid = _mk_recipe(
+        auth_client,
+        [
+            {"item": "Flour", "quantity": 500, "unit": "g"},
+            {"item": "Sugar", "quantity": 200, "unit": "g"},
+        ],
+    )
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    items = auth_client.get(f"/api/grocery/{gid}").json()["items"]
+    flour = _line_by_norm(items, "flour")
+    sugar = _line_by_norm(items, "sugar")
+
+    _patch_item(auth_client, gid, flour["id"], checked=True)
+    first = _submit(auth_client, gid)
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "active"  # submit never archives
+
+    _patch_item(auth_client, gid, sugar["id"], checked=True)
+    second = _submit(auth_client, gid)
+    assert second.status_code == 200, second.text
+    out_items = second.json()["items"]
+    assert _line_by_norm(out_items, "flour")["added_to_inventory"] is True
+    assert _line_by_norm(out_items, "sugar")["added_to_inventory"] is True
+    assert _inventory_row(auth_client, "flour", "mass")["quantity_base"] == pytest.approx(500.0)
+    assert _inventory_row(auth_client, "sugar", "mass")["quantity_base"] == pytest.approx(200.0)
+
+
+def test_submit_with_nothing_checked_is_a_200_no_op(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+
+    resp = _submit(auth_client, gid)
+    assert resp.status_code == 200, resp.text
+    out = _line_by_norm(resp.json()["items"], "flour")
+    assert out["added_to_inventory"] is False
+    assert _inventory_row(auth_client, "flour", "mass") is None
+
+
+def test_sequential_double_submit_is_idempotent(auth_client: TestClient) -> None:
+    """Submitting the same already-applied (frozen) line again does not
+    double-add it into inventory."""
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+    _patch_item(auth_client, gid, line["id"], checked=True)
+
+    first = _submit(auth_client, gid)
+    second = _submit(auth_client, gid)
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    row = _inventory_row(auth_client, "flour", "mass")
+    assert row is not None
+    assert row["quantity_base"] == pytest.approx(500.0)
+
+
+def test_submit_unknown_list_is_404(auth_client: TestClient) -> None:
+    assert _submit(auth_client, 999999).status_code == 404

@@ -2,11 +2,13 @@
 
 `phase-6b` builds generation + list read/delete. `phase-6c` adds manual item
 add + line edit + line delete (the N6 atomic `quantity`+`unit` pair and
-reclassification). Submit and archive land in `phase-6d`-`6e`.
+reclassification). `phase-6d` adds submit (this file). Archive lands in
+`phase-6e`.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session, selectinload
 
 from app.database import SessionDep, TransactionRoute
@@ -20,7 +22,12 @@ from app.schemas import (
     GroceryListRead,
 )
 from app.security import CurrentUser, get_current_user
-from app.services.inventory_math import ReqLine, StockRow, generate_lines
+from app.services.inventory_math import (
+    ReqLine,
+    StockRow,
+    add_to_inventory_calc,
+    generate_lines,
+)
 
 router = APIRouter(
     prefix="/api/grocery",
@@ -264,3 +271,66 @@ def delete_grocery_item(list_id: int, item_id: int, db: SessionDep) -> None:
     _check_line_mutable(grocery_list, item)
     db.delete(item)
     db.flush()  # TransactionRoute owns the commit
+
+
+@router.post("/{list_id}/submit", response_model=GroceryListRead)
+def submit_grocery_list(
+    list_id: int, current_user: CurrentUser, db: SessionDep
+) -> GroceryList:
+    """Apply every checked, unfrozen, quantified line into inventory once,
+    inside this request's `BEGIN IMMEDIATE` transaction, and freeze it
+    (spec.md §5.6). `404` list missing; `409` if the list is not `active`.
+
+    Forward-only: an already-applied line is skipped, so re-submitting after
+    checking more lines applies only the newly-eligible ones (shop today,
+    finish tomorrow). `list.status` is never changed here — submit and
+    archive are independent (`phase-6e`).
+    """
+    grocery_list = _get_or_404(db, list_id)
+    if grocery_list.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="list is not active"
+        )
+
+    for line in grocery_list.items:
+        if not line.checked or line.added_to_inventory or line.quantity is None:
+            continue
+
+        delta = add_to_inventory_calc(
+            normalize_name(line.item), line.item, line.quantity, line.unit
+        )
+
+        # Additive upsert, same shape as `routers/inventory.py`'s `POST`
+        # (spec.md §5.5): one `_utcnow()` binds `updated_at` on both the
+        # insert and the conflict branch, since `INSERT ... ON CONFLICT`
+        # bypasses the ORM's `onupdate`.
+        now = _utcnow()
+        stmt = sqlite_insert(InventoryItem).values(
+            item=delta.item,
+            normalized_name=delta.normalized_name,
+            match_name=delta.match_name,
+            unit_bucket=delta.unit_bucket,
+            quantity_base=delta.add_base,
+            display_unit=delta.display_unit,
+            created_by_id=current_user.id,
+            updated_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["match_name", "unit_bucket"],
+            set_={
+                "quantity_base": InventoryItem.quantity_base + stmt.excluded.quantity_base,
+                "display_unit": func.coalesce(
+                    stmt.excluded.display_unit, InventoryItem.display_unit
+                ),
+                "updated_at": now,
+            },
+        )
+        db.execute(stmt)
+
+        line.applied_quantity = delta.canonical_added.amount
+        line.applied_unit = delta.canonical_added.unit
+        line.added_to_inventory = True
+        line.submitted_at = now
+
+    db.flush()  # TransactionRoute owns the commit
+    return grocery_list
