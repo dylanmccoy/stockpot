@@ -380,6 +380,29 @@ requirements.
 - **Why deferred:** adds endpoint complexity per router (check membership +
   role). v1 stays simpler; one household works for the initial release.
 
+### Hashed session-token storage
+
+- **v1 approach:** register/login returns an opaque bearer token generated with
+  `secrets.token_urlsafe(32)`, and `sessions.token` stores that exact token in
+  plaintext. Authentication performs an exact lookup. Database read access is
+  therefore sufficient to impersonate any user with an unexpired session.
+- **Upgrade path:** continue returning the raw random token to the client, but
+  store only a SHA-256 digest in the database and look up the digest computed
+  from the presented token. These tokens already have 256 bits of CSPRNG entropy,
+  so a fast cryptographic digest is appropriate; password hashing would add cost
+  without protecting against feasible token guessing. Keep expiry, logout, and
+  password-change revocation semantics unchanged.
+- **Rollout:** either revoke all existing sessions when the schema changes, or
+  temporarily support both representations and replace plaintext rows as users
+  authenticate. Revoking all sessions is the simpler and safer option for the
+  intended small household deployment.
+- **When to add:** before remote/public hosting, before database backups are
+  stored outside a trusted machine, or once database compromise becomes part of
+  the threat model.
+- **Why deferred:** v1 is LAN-only and already documents plaintext token storage
+  as an accepted risk. This hardening requires a schema/lookup change and a
+  deliberate existing-session migration policy, but no API contract change.
+
 ### Transport security & remote hosting (HTTPS / TLS)
 
 - **v1 approach:** LAN-only. Token auth via `Authorization: Bearer <token>`

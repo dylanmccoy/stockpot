@@ -76,6 +76,28 @@ drop blanks, then run the existing per-line build.
 **Write-up:** `features.md` §`Additional deferred features` → "Multi-line
 ingredient paste".
 
+### D3 — Session bearer tokens are stored in plaintext
+
+**Opened:** 2026-09-04, during an auth-security review.
+
+**Context:** the opaque bearer token returned by register/login is the exact
+value stored in `sessions.token`. Anyone who can read the database can therefore
+use any unexpired session token. This is an accepted v1 security posture, not an
+unknown implementation bug; `spec.md` §Accepted security posture already records
+the exposure.
+
+**Why deferred, not fixed:** v1 is LAN-only and uses short-lived, revocable
+database sessions. Changing the stored representation also needs an explicit
+rollout decision for existing sessions. No runtime or schema change is authorized
+by this note.
+
+**When to revisit:** before remote/public hosting, when database backups leave a
+trusted machine, or when the database starts containing data valuable enough to
+make credential theft a material concern.
+
+**Write-up:** `features.md` §`Infrastructure deferrals` → "Hashed session-token
+storage".
+
 ## Closing an issue
 
 Phase-gate issues:
