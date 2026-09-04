@@ -286,6 +286,46 @@ describe("groupAvailabilityLines", () => {
     expect(byItem["salt"].statusLabel).toBe("To taste");
     expect(byItem["salt"].needLabel).toBe("—");
   });
+
+  it("keeps to-taste and quantified members of the same group visible", () => {
+    const rows = groupAvailabilityLines([
+      {
+        ingredient_id: 1,
+        item: "salt to taste",
+        need: null,
+        need_unit: "g",
+        group_key: "salt|mass",
+        group_unit: "g",
+        group_need: null,
+        group_have: null,
+        group_short: null,
+        status: "to_taste",
+        nettable: false,
+      },
+      {
+        ingredient_id: 2,
+        item: "salt for brine",
+        need: 20,
+        need_unit: "g",
+        group_key: "salt|mass",
+        group_unit: "g",
+        group_need: 20,
+        group_have: 5,
+        group_short: 15,
+        status: "short",
+        nettable: true,
+      },
+    ]);
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => [row.item, row.statusLabel, row.needLabel])).toEqual(
+      [
+        ["salt to taste", "To taste", "—"],
+        ["salt for brine", "Short 15 g", "20 g"],
+      ],
+    );
+    expect(new Set(rows.map((row) => row.groupKey))).toHaveLength(2);
+  });
 });
 
 describe("amountLabel", () => {
