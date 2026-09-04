@@ -4,7 +4,7 @@
 
 **Blocked by:** 07, 10.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** create `frontend/src/components/CookLogRow.tsx` (+ `.module.css`, `.test.tsx`), `frontend/src/components/DeductionDetail.tsx`; edit `frontend/src/components/index.ts`, `frontend/src/pages/RecipeDetail.tsx`, `frontend/src/api/cookLogs.ts`.
 
