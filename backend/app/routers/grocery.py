@@ -2,8 +2,9 @@
 
 `phase-6b` builds generation + list read/delete. `phase-6c` adds manual item
 add + line edit + line delete (the N6 atomic `quantity`+`unit` pair and
-reclassification). `phase-6d` adds submit (this file). Archive lands in
-`phase-6e`.
+reclassification). `phase-6d` adds submit. `phase-6e` adds archive — the only
+path to `status="archived"` — and every mutating route above already 409s an
+archived list.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -67,6 +68,15 @@ def _check_line_mutable(grocery_list: GroceryList, item: GroceryListItem) -> Non
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="line is frozen or list is archived",
+        )
+
+
+def _require_active(grocery_list: GroceryList) -> None:
+    """`409` unless the list is `active` — shared submit/archive guard
+    (spec.md §5.6)."""
+    if grocery_list.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="list is not active"
         )
 
 
@@ -284,13 +294,10 @@ def submit_grocery_list(
     Forward-only: an already-applied line is skipped, so re-submitting after
     checking more lines applies only the newly-eligible ones (shop today,
     finish tomorrow). `list.status` is never changed here — submit and
-    archive are independent (`phase-6e`).
+    archive are independent.
     """
     grocery_list = _get_or_404(db, list_id)
-    if grocery_list.status != "active":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="list is not active"
-        )
+    _require_active(grocery_list)
 
     for line in grocery_list.items:
         if not line.checked or line.added_to_inventory or line.quantity is None:
@@ -332,5 +339,20 @@ def submit_grocery_list(
         line.added_to_inventory = True
         line.submitted_at = now
 
+    db.flush()  # TransactionRoute owns the commit
+    return grocery_list
+
+
+@router.post("/{list_id}/archive", response_model=GroceryListRead)
+def archive_grocery_list(list_id: int, db: SessionDep) -> GroceryList:
+    """The only path to `status="archived"` (spec.md §5.6). `404` if the list
+    does not exist; `409` if it is not currently `active` (already archived).
+    Safe under this app's per-request `BEGIN IMMEDIATE` write serialization
+    (spec.md §6): only one writer transaction proceeds at a time, so this
+    read-then-set can't race a concurrent archive.
+    """
+    grocery_list = _get_or_404(db, list_id)
+    _require_active(grocery_list)
+    grocery_list.status = "archived"
     db.flush()  # TransactionRoute owns the commit
     return grocery_list

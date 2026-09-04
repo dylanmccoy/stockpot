@@ -1,13 +1,14 @@
-"""Grocery generation + list read/delete/mutation/submit (spec.md §5.6,
-`phase-6b`-`6d`).
+"""Grocery generation + list read/delete/mutation/submit/archive (spec.md §5.6,
+`phase-6b`-`6e`).
 
-Archive is `phase-6e`'s; the locked N6/submit/race contract oracle lives in
-`test_grocery_contract.py` (`phase-6a`) and stays partially failing until it
-lands — see that file's module docstring. This file covers the HTTP wiring
-phase-6b/6c/6d actually ship: `POST` generation (consolidation, netting,
-canonical units), `GET` (list + single, `?status`), `DELETE` (cascade), manual
-item add / line edit (N6) / line delete, and `submit` (forward-only apply into
-inventory, freeze).
+The locked N6/submit/race contract oracle lives in `test_grocery_contract.py`
+(`phase-6a`) and stays partially failing until it lands — see that file's
+module docstring. This file covers the HTTP wiring phase-6b/6c/6d/6e actually
+ship: `POST` generation (consolidation, netting, canonical units), `GET` (list
++ single, `?status`), `DELETE` (cascade), manual item add / line edit (N6) /
+line delete, `submit` (forward-only apply into inventory, freeze), and
+`archive` (the only path to `status="archived"`, and the `409` guard it puts
+on every other mutating route).
 
 The consolidated-shortfall arithmetic itself is locked as a pure-service oracle
 in `test_inventory_math.py::test_generate_lines_oracle` — this file does not
@@ -537,3 +538,54 @@ def test_sequential_double_submit_is_idempotent(auth_client: TestClient) -> None
 
 def test_submit_unknown_list_is_404(auth_client: TestClient) -> None:
     assert _submit(auth_client, 999999).status_code == 404
+
+
+# ===========================================================================
+# Archive (phase-6e)
+# ===========================================================================
+
+
+def _archive(client: TestClient, gid: int):
+    return client.post(f"/api/grocery/{gid}/archive")
+
+
+def test_archive_sets_status_and_is_the_only_path_to_it(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+
+    resp = _archive(auth_client, gid)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "archived"
+    assert auth_client.get(f"/api/grocery/{gid}").json()["status"] == "archived"
+
+
+def test_archive_unknown_list_is_404(auth_client: TestClient) -> None:
+    assert _archive(auth_client, 999999).status_code == 404
+
+
+def test_archiving_an_already_archived_list_is_409(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    assert _archive(auth_client, gid).status_code == 200
+
+    resp = _archive(auth_client, gid)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == "list is not active"
+
+
+def test_archived_list_guards_every_mutating_grocery_route(auth_client: TestClient) -> None:
+    """`PATCH`/`submit`/item-`DELETE`/item-`POST` on an archived list -> `409`."""
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+    assert _archive(auth_client, gid).status_code == 200
+
+    assert _patch_item(auth_client, gid, line["id"], checked=True).status_code == 409
+    assert _submit(auth_client, gid).status_code == 409
+    assert auth_client.delete(f"/api/grocery/{gid}/items/{line['id']}").status_code == 409
+    assert (
+        auth_client.post(
+            f"/api/grocery/{gid}/items", json={"item": "Butter", "quantity": 1, "unit": "block"}
+        ).status_code
+        == 409
+    )

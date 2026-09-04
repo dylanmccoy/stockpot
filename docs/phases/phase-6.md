@@ -46,7 +46,7 @@ checked lines into inventory.
       `unit` edit sets `source="manual"`, `nettable=true` (a `checked`-only PATCH
       does not) (N6).
 - [x] Implement forward-only submit with line freezing and no auto-archive.
-- [ ] Implement explicit guarded archive.
+- [x] Implement explicit guarded archive.
 - [ ] Add remaining `test_grocery.py` coverage without changing the accepted
       contract cases, including the file-backed HTTP submit race. A generate
       fixture recipe carries a to-taste line; assert it scales with `multipliers`
