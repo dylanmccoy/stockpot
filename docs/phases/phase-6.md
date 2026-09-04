@@ -12,10 +12,15 @@ checked lines into inventory.
       `item` / `quantity` / `unit` edit reclassifies the line `source → "manual"`,
       `nettable → true`. See [`../decisions.md`](../decisions.md#n6). Normative in
       `spec.md` §5.6 / §7.
-- [ ] **R-7 contract tests accepted before implementation** — a fresh-context
-      reviewer writes and reviews the §7 `generate_lines`, grocery mutation,
-      submit, and submit-race contract cases before implementation. Accepted
-      cases are locked under
+- [x] **R-7 contract tests accepted before implementation** (phase-6a,
+      2026-09-03) — a fresh-context reviewer writes and reviews the §7
+      `generate_lines`, grocery mutation (N6), submit, and submit-race contract
+      cases before route/model implementation: the `generate_lines` oracle rows
+      as the **Grocery generation** section of
+      `backend/tests/test_inventory_math.py`, and the N6 / submit / submit-race
+      cases as `backend/tests/test_grocery_contract.py`. Both fail on collection
+      until `phase-6b` (the `generate_lines` / `app.schemas.grocery` imports) —
+      that is the lock. Accepted cases are locked under
       [`plan.md` §Independent contract-test gate](../plan.md#independent-contract-test-gate).
 
 ## Specification
