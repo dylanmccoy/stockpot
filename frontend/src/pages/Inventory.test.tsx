@@ -139,8 +139,8 @@ describe("bucketForUnit", () => {
     expect(bucketForUnit("   ")).toBe("count");
   });
 
-  it("returns null for an unknown token (server decides)", () => {
-    expect(bucketForUnit("blorp")).toBeNull();
+  it("brackets any unknown token the same way as the backend", () => {
+    expect(bucketForUnit("blorp")).toBe("opaque:blorp");
   });
 });
 
@@ -273,6 +273,25 @@ describe("buildInventoryPatch", () => {
         matchName: "flour",
       }),
     ).toEqual({ unit: "kg" });
+  });
+
+  it("does not treat its rounded prefill as a quantity edit", () => {
+    const preciseRow = mk({
+      match_name: "milk",
+      unit_bucket: "volume",
+      display_unit: "ml",
+      display_quantity: 266.1616,
+    });
+    const seededDraft = editDraftFrom(preciseRow);
+
+    expect(seededDraft.quantity).toBe("266.162");
+    expect(buildInventoryPatch(preciseRow, seededDraft)).toEqual({});
+    expect(
+      buildInventoryPatch(preciseRow, {
+        ...seededDraft,
+        matchName: "oat milk",
+      }),
+    ).toEqual({ match_name: "oat milk" });
   });
 
   it("rides `unit` along with any `quantity` change (decision S2)", () => {

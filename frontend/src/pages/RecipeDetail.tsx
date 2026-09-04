@@ -131,9 +131,9 @@ interface AvailabilityRow {
   statusLabel: string;
 }
 
-/** Collapse the per-member availability lines into one row per `group_key`
- *  (spec §10.4 — ingredients sharing a match name + unit bucket are one row).
- *  Insertion order is preserved so the table reads like the recipe. */
+/** Collapse matching quantified lines into one row per `group_key` (spec §10.4).
+ *  A mixed quantified/to-taste group keeps one row for each state so neither is
+ *  hidden. Insertion order is preserved so the table reads like the recipe. */
 export function groupAvailabilityLines(
   lines: AvailabilityLine[],
 ): AvailabilityRow[] {
@@ -148,25 +148,43 @@ export function groupAvailabilityLines(
       order.push(line.group_key);
     }
   }
-  return order.map((key) => {
+  return order.flatMap((key) => {
     const members = byKey.get(key)!;
-    const first = members[0];
-    const item = [...new Set(members.map((m) => m.item))].join(", ");
-    const needLabel =
-      first.status === "to_taste"
-        ? "—"
-        : amountLabel(first.group_need, first.group_unit) || "—";
-    const statusLabel =
-      first.status === "short"
-        ? `Short ${amountLabel(first.group_short, first.group_unit)}`.trimEnd()
-        : STATUS_META[first.status].label;
-    return {
-      groupKey: key,
-      item,
+    const toTaste = members.filter((member) => member.status === "to_taste");
+    const quantified = members.filter(
+      (member) => member.status !== "to_taste",
+    );
+
+    const buildRow = (
+      rowMembers: AvailabilityLine[],
+      first: AvailabilityLine,
+      rowKey: string,
+    ): AvailabilityRow => ({
+      groupKey: rowKey,
+      item: [...new Set(rowMembers.map((member) => member.item))].join(", "),
       status: first.status,
-      needLabel,
-      statusLabel,
-    };
+      needLabel:
+        first.status === "to_taste"
+          ? "—"
+          : amountLabel(first.group_need, first.group_unit) || "—",
+      statusLabel:
+        first.status === "short"
+          ? `Short ${amountLabel(first.group_short, first.group_unit)}`.trimEnd()
+          : STATUS_META[first.status].label,
+    });
+
+    if (toTaste.length > 0 && quantified.length > 0) {
+      // The backend deliberately emits a group's to-taste members before its
+      // quantified members. Keep both states visible instead of letting that
+      // first vacuous line hide the group's real need/status.
+      return [
+        buildRow(toTaste, toTaste[0], `${key}|to-taste`),
+        buildRow(quantified, quantified[0], `${key}|quantified`),
+      ];
+    }
+
+    const first = members[0];
+    return [buildRow(members, first, key)];
   });
 }
 

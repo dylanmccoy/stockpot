@@ -165,28 +165,6 @@ const SYNONYM_BUCKET: Record<string, "mass" | "volume" | "count"> = {
   pair: "count",
 };
 
-const OPAQUE_UNIT_TOKENS = new Set([
-  "clove",
-  "slice",
-  "piece",
-  "stick",
-  "can",
-  "package",
-  "pkg",
-  "jar",
-  "bottle",
-  "box",
-  "bag",
-  "head",
-  "bulb",
-  "bunch",
-  "sprig",
-  "pinch",
-  "handful",
-  "dash",
-  "splash",
-]);
-
 /** Light mirror of `normalize_unit_token`: lower, trim, drop one trailing ".",
  *  singularize the whole string ("Cups." → "cup", "boxes" → "box"). The
  *  singularize rule matches `singularize` in `lib/parseIngredientLine.ts`. */
@@ -200,14 +178,14 @@ function normalizeUnitToken(raw: string): string {
 }
 
 /** The `unit_bucket` a typed unit resolves to — `"mass" | "volume" | "count" |
- *  "opaque:<token>"` — or `null` when the token is unknown (let the server
- *  decide). A blank unit is the COUNT bucket (a null `display_unit`). */
-export function bucketForUnit(raw: string): string | null {
+ *  "opaque:<token>"`. The backend puts every non-empty unknown token in its own
+ *  opaque bucket, so doing the same here lets the edit form reject guaranteed
+ *  cross-bucket changes before sending. A blank unit is the COUNT bucket. */
+export function bucketForUnit(raw: string): string {
   const t = normalizeUnitToken(raw);
   if (!t) return "count";
   if (t in SYNONYM_BUCKET) return SYNONYM_BUCKET[t];
-  if (OPAQUE_UNIT_TOKENS.has(t)) return `opaque:${t}`;
-  return null;
+  return `opaque:${t}`;
 }
 
 /** The plain noun for a `unit_bucket` in error/hint copy — the `opaque:` prefix
@@ -246,6 +224,10 @@ export function editDraftFrom(item: InventoryItemRead): InventoryEditDraft {
   };
 }
 
+function seededDisplayQuantity(item: InventoryItemRead): number {
+  return Number(item.display_quantity.toPrecision(6));
+}
+
 export interface EditDraftErrors {
   quantity?: string;
   unit?: string;
@@ -272,7 +254,10 @@ function diffEditDraft(
   return {
     matchChanged: draft.matchName.trim() !== item.match_name,
     qtyValid,
-    qtyChanged: qtyValid && qty !== item.display_quantity,
+    // Compare with the value the user actually received in the input. Comparing
+    // with the raw response would make an untouched rounded draft look dirty and
+    // silently PATCH the displayed approximation back over the precise stock.
+    qtyChanged: qtyValid && qty !== seededDisplayQuantity(item),
     unitChanged:
       normalizeUnitToken(draft.unit) !==
       normalizeUnitToken(item.display_unit ?? ""),
@@ -280,8 +265,8 @@ function diffEditDraft(
 }
 
 /** Guards that block a PATCH which `docs/spec.md` §5.5 is certain to reject.
- *  Everything else (a real collision, an unknown unit) still goes to the
- *  server. Returns `null` when the draft is safe to send. */
+ *  Real match-name collisions still go to the server. Returns `null` when the
+ *  draft is safe to send. */
 export function validateEditDraft(
   item: InventoryItemRead,
   draft: InventoryEditDraft,
@@ -301,7 +286,7 @@ export function validateEditDraft(
     errors.unit = "Confirm the unit for the new quantity.";
   } else if (unitChanged || (!nextUnit && !isCountRow)) {
     const bucket = bucketForUnit(nextUnit);
-    if (bucket !== null && bucket !== item.unit_bucket) {
+    if (bucket !== item.unit_bucket) {
       errors.unit = nextUnit
         ? `“${nextUnit}” is not a ${bucketNoun(item.unit_bucket)} unit — remove the item and re-add it to change bucket.`
         : `A ${bucketNoun(item.unit_bucket)} item needs a unit — clearing it would change the bucket.`;
