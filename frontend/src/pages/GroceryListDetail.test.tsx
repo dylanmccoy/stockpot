@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { server } from "../test/server";
+import { errorHandlers } from "../test/errorHandlers";
 import { makeQueryClient } from "../test/helpers";
 import { sampleGroceryItem, sampleGroceryList } from "../test/handlers";
 import { GENERIC_ERROR_MESSAGE } from "../lib/apiError";
@@ -17,9 +18,7 @@ function makeList(items: GroceryListItemRead[]): GroceryListRead {
 }
 
 function useGroceryList(list: GroceryListRead) {
-  server.use(
-    http.get("/api/grocery/:id", () => HttpResponse.json(list)),
-  );
+  server.use(http.get("/api/grocery/:id", () => HttpResponse.json(list)));
 }
 
 function renderPage(path = "/groceries/1") {
@@ -107,7 +106,9 @@ describe("GroceryListDetail", () => {
 
   it("tapping a line checks it off immediately, and a 409 rolls it back", async () => {
     useGroceryList(
-      makeList([{ ...sampleGroceryItem, id: 1, item: "flour", checked: false }]),
+      makeList([
+        { ...sampleGroceryItem, id: 1, item: "flour", checked: false },
+      ]),
     );
     let resolvePatch!: () => void;
     server.use(
@@ -116,7 +117,9 @@ describe("GroceryListDetail", () => {
         () =>
           new Promise((resolve) => {
             resolvePatch = () =>
-              resolve(HttpResponse.json({ detail: "conflict" }, { status: 409 }));
+              resolve(
+                HttpResponse.json({ detail: "conflict" }, { status: 409 }),
+              );
           }),
       ),
     );
@@ -135,7 +138,9 @@ describe("GroceryListDetail", () => {
 
   it("tapping a line checks it off and keeps it checked on success", async () => {
     useGroceryList(
-      makeList([{ ...sampleGroceryItem, id: 1, item: "flour", checked: false }]),
+      makeList([
+        { ...sampleGroceryItem, id: 1, item: "flour", checked: false },
+      ]),
     );
     server.use(
       http.patch("/api/grocery/:id/items/:itemId", () => {
@@ -236,10 +241,7 @@ describe("GroceryListDetail", () => {
           unit: "roll",
         };
         useGroceryList(
-          makeList([
-            { ...sampleGroceryItem, id: 1, item: "flour" },
-            created,
-          ]),
+          makeList([{ ...sampleGroceryItem, id: 1, item: "flour" }, created]),
         );
         return HttpResponse.json(created, { status: 201 });
       }),
@@ -253,7 +255,11 @@ describe("GroceryListDetail", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add item" }));
 
     await waitFor(() =>
-      expect(postedBody).toEqual({ item: "duct tape", quantity: 2, unit: "roll" }),
+      expect(postedBody).toEqual({
+        item: "duct tape",
+        quantity: 2,
+        unit: "roll",
+      }),
     );
     expect(await screen.findByText("Added manually")).toBeInTheDocument();
     expect(screen.getByText("duct tape")).toBeInTheDocument();
@@ -318,7 +324,9 @@ describe("GroceryListDetail", () => {
     const quantityField = within(editForm).getByLabelText("Quantity");
     await userEvent.clear(quantityField);
     await userEvent.type(quantityField, "500");
-    await userEvent.click(within(editForm).getByRole("button", { name: "Save" }));
+    await userEvent.click(
+      within(editForm).getByRole("button", { name: "Save" }),
+    );
 
     await waitFor(() =>
       expect(patchedBody).toEqual({ quantity: 500, unit: "g" }),
@@ -333,7 +341,12 @@ describe("GroceryListDetail", () => {
   it("does not show an edit affordance on a frozen line", async () => {
     useGroceryList(
       makeList([
-        { ...sampleGroceryItem, id: 1, item: "flour", added_to_inventory: true },
+        {
+          ...sampleGroceryItem,
+          id: 1,
+          item: "flour",
+          added_to_inventory: true,
+        },
       ]),
     );
     renderPage();
@@ -354,5 +367,246 @@ describe("GroceryListDetail", () => {
     expect(
       screen.queryByRole("button", { name: "Edit flour" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows a frozen line as read-only with the applied amount, not the original quantity", async () => {
+    useGroceryList(
+      makeList([
+        {
+          ...sampleGroceryItem,
+          id: 1,
+          item: "flour",
+          quantity: 250,
+          unit: "g",
+          added_to_inventory: true,
+          applied_quantity: 500,
+          applied_unit: "g",
+        },
+      ]),
+    );
+    renderPage();
+
+    expect(await screen.findByText("Added to inventory")).toBeInTheDocument();
+    expect(screen.getByText("500 g")).toBeInTheDocument();
+    expect(screen.queryByText("250 g")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Edit flour" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens a submit dialog explaining the change; confirming submits, freezes the line, and invalidates inventory", async () => {
+    useGroceryList(
+      makeList([
+        {
+          ...sampleGroceryItem,
+          id: 1,
+          item: "flour",
+          checked: true,
+          quantity: 250,
+          unit: "g",
+        },
+      ]),
+    );
+    let submitted = false;
+    server.use(
+      http.post("/api/grocery/:id/submit", () => {
+        submitted = true;
+        useGroceryList(
+          makeList([
+            {
+              ...sampleGroceryItem,
+              id: 1,
+              item: "flour",
+              checked: true,
+              quantity: 250,
+              unit: "g",
+              added_to_inventory: true,
+              applied_quantity: 250,
+              applied_unit: "g",
+            },
+          ]),
+        );
+        return HttpResponse.json(sampleGroceryList);
+      }),
+    );
+    const queryClient = renderPage();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    await screen.findByText("flour");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Submit checked items to inventory" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Add checked items to inventory?",
+    });
+    expect(within(dialog).getByText(/can’t be undone/)).toBeInTheDocument();
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Add to inventory" }),
+    );
+
+    await waitFor(() => expect(submitted).toBe(true));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByText("Added to inventory")).toBeInTheDocument();
+    const keys = invalidate.mock.calls.map(
+      (c) => (c[0] as { queryKey?: unknown[] } | undefined)?.queryKey,
+    );
+    expect(keys).toContainEqual(["grocery", 1]);
+    expect(keys).toContainEqual(["inventory"]);
+  });
+
+  it("canceling the submit dialog does not submit", async () => {
+    useGroceryList(
+      makeList([{ ...sampleGroceryItem, id: 1, item: "flour", checked: true }]),
+    );
+    let submitted = false;
+    server.use(
+      http.post("/api/grocery/:id/submit", () => {
+        submitted = true;
+        return HttpResponse.json(sampleGroceryList);
+      }),
+    );
+    renderPage();
+    await screen.findByText("flour");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Submit checked items to inventory" }),
+    );
+    await screen.findByRole("dialog");
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(submitted).toBe(false);
+  });
+
+  it("re-running submit after checking more is allowed — the button stays available", async () => {
+    useGroceryList(
+      makeList([
+        {
+          ...sampleGroceryItem,
+          id: 1,
+          item: "flour",
+          checked: true,
+          added_to_inventory: true,
+          applied_quantity: 250,
+          applied_unit: "g",
+        },
+      ]),
+    );
+    renderPage();
+    await screen.findByText("Added to inventory");
+
+    expect(
+      screen.getByRole("button", { name: "Submit checked items to inventory" }),
+    ).toBeEnabled();
+  });
+
+  it("a stale edit that races a freeze closes the editor with the frozen-line message", async () => {
+    useGroceryList(
+      makeList([
+        {
+          ...sampleGroceryItem,
+          id: 1,
+          item: "flour",
+          source: "generated",
+          quantity: 250,
+          unit: "g",
+        },
+      ]),
+    );
+    server.use(
+      errorHandlers.frozenLine("patch", "/api/grocery/:id/items/:itemId"),
+    );
+    renderPage();
+    await screen.findByText("flour");
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit flour" }));
+    const editForm = screen.getByRole("form", { name: "Edit flour" });
+    const quantityField = within(editForm).getByLabelText("Quantity");
+    await userEvent.clear(quantityField);
+    await userEvent.type(quantityField, "500");
+    await userEvent.click(
+      within(editForm).getByRole("button", { name: "Save" }),
+    );
+
+    expect(
+      await screen.findByText("This item was already added to inventory."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("form", { name: "Edit flour" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("a stale edit on an archived list closes the editor with the archived-list message", async () => {
+    useGroceryList(makeList([{ ...sampleGroceryItem, id: 1, item: "flour" }]));
+    server.use(
+      errorHandlers.listNotActive("patch", "/api/grocery/:id/items/:itemId"),
+    );
+    renderPage();
+    await screen.findByText("flour");
+
+    await userEvent.click(screen.getByRole("button", { name: "Edit flour" }));
+    const editForm = screen.getByRole("form", { name: "Edit flour" });
+    await userEvent.click(within(editForm).getByLabelText("Item"));
+    await userEvent.type(within(editForm).getByLabelText("Item"), "!");
+    await userEvent.click(
+      within(editForm).getByRole("button", { name: "Save" }),
+    );
+
+    expect(
+      await screen.findByText("This list is archived."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("form", { name: "Edit flour" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("opens an archive dialog; confirming archives the list", async () => {
+    useGroceryList(makeList([{ ...sampleGroceryItem, id: 1, item: "flour" }]));
+    server.use(
+      http.post("/api/grocery/:id/archive", () => {
+        useGroceryList({
+          ...makeList([{ ...sampleGroceryItem, id: 1, item: "flour" }]),
+          status: "archived",
+        });
+        return HttpResponse.json({ ...sampleGroceryList, status: "archived" });
+      }),
+    );
+    renderPage();
+    await screen.findByText("flour");
+
+    await userEvent.click(screen.getByRole("button", { name: "Archive list" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Archive this list?",
+    });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Archive" }),
+    );
+
+    expect(await screen.findByText("Archived")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Archive list" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("a 409 on archive (archived by someone else) shows a refetch message", async () => {
+    useGroceryList(makeList([{ ...sampleGroceryItem, id: 1, item: "flour" }]));
+    server.use(errorHandlers.listNotActive("post", "/api/grocery/:id/archive"));
+    renderPage();
+    await screen.findByText("flour");
+
+    await userEvent.click(screen.getByRole("button", { name: "Archive list" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Archive this list?",
+    });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Archive" }),
+    );
+
+    expect(
+      await screen.findByText("This list is archived."),
+    ).toBeInTheDocument();
   });
 });

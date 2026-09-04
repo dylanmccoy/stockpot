@@ -94,6 +94,18 @@
   background: var(--color-surface-alt);
 }
 
+.frozenMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.appliedQty {
+  color: var(--color-muted);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
 .uncertain {
   display: flex;
   flex-direction: column;
@@ -165,6 +177,14 @@
 .addActions {
   display: flex;
   justify-content: flex-end;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
 }
 
 .empty {
