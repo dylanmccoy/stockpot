@@ -1,6 +1,7 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { onlineManager } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { AuthContext, type AuthContextValue } from "../auth/context";
 import { ThemeProvider } from "./theme";
@@ -105,5 +106,27 @@ describe("AppShell", () => {
     await userEvent.keyboard("{Escape}");
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(trigger).toHaveFocus();
+  });
+
+  // Spec §11 O-5: a visible "reconnecting" hint for the store-walk case.
+  describe("connectivity hint", () => {
+    afterEach(() => {
+      onlineManager.setOnline(true);
+    });
+
+    it("shows a live 'Reconnecting…' status while offline, and hides it back online", async () => {
+      renderShell();
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+
+      act(() => onlineManager.setOnline(false));
+      expect(await screen.findByRole("status")).toHaveTextContent(
+        "Reconnecting…",
+      );
+
+      act(() => onlineManager.setOnline(true));
+      await waitFor(() =>
+        expect(screen.queryByRole("status")).not.toBeInTheDocument(),
+      );
+    });
   });
 });

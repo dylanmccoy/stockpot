@@ -8,7 +8,7 @@ import { server } from "../test/server";
 import { errorHandlers } from "../test/errorHandlers";
 import { makeQueryClient } from "../test/helpers";
 import { sampleGroceryItem, sampleGroceryList } from "../test/handlers";
-import { GENERIC_ERROR_MESSAGE } from "../lib/apiError";
+import { GENERIC_ERROR_MESSAGE, STOCK_CONFLICT_MESSAGE } from "../lib/apiError";
 import type { GroceryListItemRead, GroceryListRead } from "../types";
 import { ToastProvider } from "../components";
 import GroceryListDetail from "./GroceryListDetail";
@@ -483,6 +483,35 @@ describe("GroceryListDetail", () => {
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(submitted).toBe(false);
+  });
+
+  // §6 catalog: 409 "conflict" (IntegrityError / lock timeout) on `submit` →
+  // toast + refetch, same generic-conflict surface as the cook/inventory rows.
+  it("on a 409 stock collision from submit, toasts a retry message and refetches", async () => {
+    useGroceryList(
+      makeList([{ ...sampleGroceryItem, id: 1, item: "flour", checked: true }]),
+    );
+    server.use(errorHandlers.conflict("post", "/api/grocery/:id/submit"));
+    const queryClient = renderPage();
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    await screen.findByText("flour");
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Submit checked items to inventory" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Add to inventory" }),
+    );
+
+    expect(await screen.findByText(STOCK_CONFLICT_MESSAGE)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    const keys = invalidate.mock.calls.map(
+      (c) => (c[0] as { queryKey?: unknown[] } | undefined)?.queryKey,
+    );
+    expect(keys).toContainEqual(["grocery", 1]);
   });
 
   it("re-running submit after checking more is allowed — the button stays available", async () => {

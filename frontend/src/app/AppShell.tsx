@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { UserMenu } from "./UserMenu";
+import { useIsOffline } from "./connectivity";
 import styles from "./AppShell.module.css";
 
 const DESTINATIONS = [
@@ -25,8 +26,15 @@ export function AppShell() {
     mainRef.current?.focus();
   }, [location.pathname]);
 
+  const offline = useIsOffline();
+
   return (
     <div className={styles.shell}>
+      {offline && (
+        <div className={styles.reconnecting} role="status" aria-live="polite">
+          Reconnecting…
+        </div>
+      )}
       <header className={styles.topbar}>
         <NavLink to="/" className={styles.brand} end>
           Recipes
