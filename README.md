@@ -1,12 +1,13 @@
 # Recipe App
 
-Barebones full-stack scaffold: FastAPI + SQLAlchemy + SQLite backend, React + TypeScript (Vite) frontend.
+Household recipe manager: structured recipes, unit-aware food inventory, cook
+logging with optional stock deduction, and netted grocery lists — served by a
+FastAPI + SQLAlchemy + SQLite backend, with a React + TypeScript (Vite)
+frontend as its client.
 
 > **Direction:** `docs/plan.md` is the backend-v1 delivery roadmap and
-> `docs/spec.md` is its technical contract. v1 covers token auth, structured
-> recipes, unit-aware inventory, cook/deduct history, and grocery lists. The
-> scaffold below is the starting point; deferred work lives in
-> `docs/features.md`.
+> `docs/spec.md` is its technical contract. Deferred work (v2 and beyond) lives
+> in `docs/features.md`.
 
 ## Layout
 
@@ -31,13 +32,14 @@ The per-app commands below still work directly if you prefer them.
 
 ```bash
 cd backend
-uv sync                        # install deps into .venv
-uv run uvicorn app.main:app --reload   # http://localhost:8000  (docs at /docs)
-uv run pytest                  # run tests
+uv sync                                 # install deps into .venv
+uv run uvicorn app.main:app --reload    # http://localhost:8000  (interactive docs at /docs)
+uv run pytest                           # run tests
 ```
 
-Tables are auto-created on startup. Config is read from environment variables
-prefixed with `RECIPE_` (see `backend/.env.example`).
+Tables are auto-created on startup — there are no migrations. Config is read
+from environment variables prefixed with `RECIPE_` (see `backend/.env.example`
+and "Operating the server" below).
 
 ## Frontend
 
@@ -50,13 +52,148 @@ npm run typecheck
 npm test           # vitest (watch);  npm run test:run for one-shot
 ```
 
-Run the backend and frontend in separate terminals during development.
+Run the backend and frontend in separate terminals during development. The
+frontend is wired against the real backend at runtime (no mock layer; MSW is
+test-only, per `frontend/CLAUDE.md`) for auth, recipes, inventory,
+availability, cook + history, and grocery lists.
+
+**Current frontend limitation:** there is no screen for
+`POST /api/auth/change-password` — password rotation is API-only for now
+(`frontend/src/types.ts` carries the type, unused). Registration is gated
+behind a build-time flag (`VITE_ENABLE_REGISTER`) and only renders when set,
+matching the backend defaulting to registration-closed.
 
 ## CI
 
-`.github/workflows/ci.yml` runs on every push to `main` and every pull request:
-the backend `pytest` suite and the frontend `vitest` suite + production build.
+`.github/workflows/ci.yml` runs on every push to `main` and every pull
+request: the backend `pytest` suite and the frontend `vitest` suite +
+production build.
 
-## API
+## Authentication
 
-`/api/health` and CRUD under `/api/recipes` (`GET`, `POST`, `GET/{id}`, `PUT/{id}`, `DELETE/{id}`).
+Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
+`register`/`login` and checked by every other endpoint via
+`Depends(get_current_user)`.
+
+- **Registration is disabled by default** (`RECIPE_ALLOW_REGISTRATION=false`).
+  This is a single-shared-household app: once the first account exists, leave
+  registration off. See "First-user bootstrap" below.
+- **No self-service password reset.** `POST /api/auth/change-password` covers
+  rotation by someone who already knows the current password (and signs out
+  every other device on success). A forgotten password is an operator task
+  against the database file — there is no recovery flow.
+- Sessions expire on a fixed window from creation
+  (`RECIPE_SESSION_TTL_DAYS`, `expires_at = created_at + TTL`); `0` is legal
+  and means a token that is already expired the moment it's issued.
+- Accepted security posture (deliberate, not oversights, for a trusted LAN
+  deployment): session tokens are stored in plaintext, there is no HTTPS
+  in-app, no login rate-limiting, `/docs` is unauthenticated, and every
+  authenticated user has full read/write on all data. See `docs/spec.md`
+  "Accepted security posture" for the complete list.
+
+## Operating the server
+
+Three runbooks, in the order you'll actually need them. All three are the same
+shape — a human at a terminal, server stopped, doing something irreversible —
+so they're kept together here rather than scattered across documents.
+
+### 1. First-user bootstrap
+
+```bash
+cd backend
+RECIPE_ALLOW_REGISTRATION=true RECIPE_REGISTRATION_CODE=<code> \
+  uv run uvicorn app.main:app --reload
+```
+
+1. `POST /api/auth/register` with `{"username", "password", "code": "<code>"}`
+   (via `/docs` or `curl`) — copy the returned `token`.
+2. **Stop the server.** Restart it with neither `RECIPE_ALLOW_REGISTRATION` nor
+   `RECIPE_REGISTRATION_CODE` set (i.e. the defaults in `backend/.env.example`).
+3. Confirm registration is now closed: a second `POST /api/auth/register`
+   returns `403 {"detail": "registration disabled"}`.
+
+### 2. Backup
+
+Run from the repo root, server can stay up:
+
+```bash
+sqlite3 backend/recipe.db ".backup 'backend/recipe-$(date +%F).db'"
+```
+
+Use `.backup`, not `cp` — it's safe to run against a live database (SQLite's
+online backup API), where a raw file copy of a database mid-write can capture
+a torn, corrupt snapshot. There are no migrations in v1, so this is the only
+thing standing between a `models.py` schema change and total data loss. Take a
+backup before every schema change and on whatever cadence your deployment
+needs.
+
+### 3. Schema reset / restore
+
+```bash
+# reset (after a models.py change, or to start clean):
+#   1. take a backup (above)
+#   2. stop the server
+rm backend/recipe.db
+#   3. restart from backend/ — the lifespan's Base.metadata.create_all()
+#      recreates the schema
+(cd backend && uv run uvicorn app.main:app --reload)
+
+# restore from a snapshot:
+#   1. stop the server
+cp backend/recipe-2026-09-04.db backend/recipe.db
+#   2. restart
+```
+
+## v1 workflows
+
+The full contract lives in `docs/spec.md`; this is the shape of it.
+
+- **Recipes** — structured ingredients (each either a parsed line or a
+  pasted-string line the parser resolves), steps, tags. Full CRUD.
+- **Inventory** — food items with a canonical quantity + unit; `POST` is
+  additive (adds into an existing `(match_name, unit_bucket)` row), `PATCH`
+  sets an absolute quantity.
+- **Availability** — `GET /api/recipes/{id}/availability?multiplier=` checks a
+  recipe's ingredients against current stock, unit-aware, flagging
+  `have_uncertain` stock sitting in an incompatible unit.
+- **Cook** — `POST /api/recipes/{id}/cook` logs a cook and, unless
+  `deduct:false`, deducts stock. Deduction is **forward-only**: there is no
+  undo endpoint for a cook or its stock changes.
+- **Grocery lists** — generated from selected recipes' shortfalls (netted
+  against stock), with manual line add/edit, checking off lines, and
+  **forward-only** submit (checked lines get added back into inventory) and
+  archive. A submitted or archived list's lines are frozen (`409` on further
+  edits).
+
+## API surface
+
+Full request/response contract, including every status code and validation
+rule, is the live OpenAPI UI at `/docs` (unauthenticated — see "Accepted
+security posture" above) once the server is running. Routers:
+
+| Prefix | Covers |
+| --- | --- |
+| `/api/auth` | register, login, logout, `me`, change-password |
+| `/api/recipes` | recipe CRUD, availability, cook, per-recipe cook-logs |
+| `/api/inventory` | inventory CRUD |
+| `/api/grocery` | grocery list CRUD, lines, submit, archive |
+| `/api/cook-logs` | global (cross-recipe) cook-log reads |
+| `/api/health` | unauthenticated liveness check |
+
+## LAN serving
+
+This is a single-shared-household app meant for a trusted LAN, not the public
+internet (see "Accepted security posture"). To serve the frontend from another
+device on the LAN, add its origin to `RECIPE_CORS_ORIGINS` (a JSON list, e.g.
+`["http://192.168.1.50:5173"]`), or set it to `["*"]` — acceptable only for a
+trusted, non-credentialed LAN deployment, since a wildcard origin combined
+with real sessions is otherwise a CSRF-shaped risk.
+
+## Deferred work
+
+Anything not listed above — meal planning, staples/low-stock alerts, photo
+upload, URL import, recipe research, per-cook reviews, receipt OCR, migrations
+support, multi-user ownership, and more — is intentionally out of v1 scope.
+See `docs/features.md` for the complete deferred/excluded list and rationale.
+The pre-trim, full planning record (nine phases, wider v1 scope) is preserved
+at `git show 5144c25:docs/plan.md`.
