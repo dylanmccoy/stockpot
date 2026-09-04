@@ -1,7 +1,8 @@
 """Grocery lists (spec.md §5.6), prefix ``/api/grocery``.
 
-`phase-6b` builds generation + list read/delete only: manual item add, line
-edit, submit, and archive land in `phase-6c`-`6e` (spec.md §5.6, later routes).
+`phase-6b` builds generation + list read/delete. `phase-6c` adds manual item
+add + line edit + line delete (the N6 atomic `quantity`+`unit` pair and
+reclassification). Submit and archive land in `phase-6d`-`6e`.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -10,7 +11,14 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.database import SessionDep, TransactionRoute
 from app.models import GroceryList, GroceryListItem, InventoryItem, Recipe, _utcnow
-from app.schemas import GroceryListCreate, GroceryListRead
+from app.normalize import normalize_name
+from app.schemas import (
+    GroceryListCreate,
+    GroceryListItemIn,
+    GroceryListItemRead,
+    GroceryListItemUpdate,
+    GroceryListRead,
+)
 from app.security import CurrentUser, get_current_user
 from app.services.inventory_math import ReqLine, StockRow, generate_lines
 
@@ -31,6 +39,28 @@ def _get_or_404(db: Session, list_id: int) -> GroceryList:
             status_code=status.HTTP_404_NOT_FOUND, detail="Grocery list not found"
         )
     return row
+
+
+def _get_item_or_404(
+    db: Session, list_id: int, item_id: int
+) -> tuple[GroceryList, GroceryListItem]:
+    grocery_list = _get_or_404(db, list_id)
+    item = next((it for it in grocery_list.items if it.id == item_id), None)
+    if item is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Grocery list item not found"
+        )
+    return grocery_list, item
+
+
+def _check_line_mutable(grocery_list: GroceryList, item: GroceryListItem) -> None:
+    """`409` if the line is frozen (`added_to_inventory`) or the list is
+    archived — shared PATCH/DELETE guard (spec.md §5.6)."""
+    if item.added_to_inventory or grocery_list.status == "archived":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="line is frozen or list is archived",
+        )
 
 
 def _stock_rows(db: Session) -> list[StockRow]:
@@ -144,4 +174,93 @@ def delete_grocery_list(list_id: int, db: SessionDep) -> None:
     """Any status. Cascades items (spec.md §5.6)."""
     grocery_list = _get_or_404(db, list_id)
     db.delete(grocery_list)
+    db.flush()  # TransactionRoute owns the commit
+
+
+@router.post(
+    "/{list_id}/items",
+    response_model=GroceryListItemRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_grocery_item(
+    list_id: int, payload: GroceryListItemIn, db: SessionDep
+) -> GroceryListItem:
+    """Hand-add a manual line (spec.md §5.6). `404` list missing, `409` archived.
+    Amounts are stored exactly as typed — no conversion."""
+    grocery_list = _get_or_404(db, list_id)
+    if grocery_list.status == "archived":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="list is archived"
+        )
+
+    item = GroceryListItem(
+        grocery_list_id=list_id,
+        item=payload.item,
+        normalized_name=normalize_name(payload.item),
+        quantity=payload.quantity,
+        unit=payload.unit,
+        source="manual",
+        nettable=True,
+        checked=False,
+        added_to_inventory=False,
+    )
+    db.add(item)
+    db.flush()  # TransactionRoute owns the commit
+    return item
+
+
+@router.patch("/{list_id}/items/{item_id}", response_model=GroceryListItemRead)
+def update_grocery_item(
+    list_id: int, item_id: int, payload: GroceryListItemUpdate, db: SessionDep
+) -> GroceryListItem:
+    """Edit a line's substance or checked state (spec.md §5.6, N6). `404` list
+    or line missing; `409` if the line is frozen (`added_to_inventory`) or the
+    list is archived; `422` if exactly one of `quantity`/`unit` is set —
+    they're an atomic pair. Any `item`/`quantity`/`unit` edit reclassifies the
+    line `source -> "manual"`, `nettable -> true`; a `checked`-only PATCH does
+    not."""
+    grocery_list, item = _get_item_or_404(db, list_id, item_id)
+    _check_line_mutable(grocery_list, item)
+
+    fields_set = payload.model_fields_set
+    quantity_set = "quantity" in fields_set
+    unit_set = "unit" in fields_set
+    if quantity_set != unit_set:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="quantity and unit must be set together",
+        )
+    if "item" in fields_set and payload.item is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="item cannot be null",
+        )
+
+    reclassify = False
+    if quantity_set and unit_set:
+        item.quantity = payload.quantity  # as-is, no conversion (N6)
+        item.unit = payload.unit
+        reclassify = True
+    if "item" in fields_set:
+        item.item = payload.item
+        item.normalized_name = normalize_name(payload.item)
+        reclassify = True
+    if "checked" in fields_set:
+        item.checked = bool(payload.checked)
+        item.checked_at = _utcnow() if payload.checked else None
+    if reclassify:
+        item.source = "manual"
+        item.nettable = True
+
+    db.flush()  # TransactionRoute owns the commit
+    return item
+
+
+@router.delete("/{list_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_grocery_item(list_id: int, item_id: int, db: SessionDep) -> None:
+    """`404` list or line missing; `409` if the line is frozen or the list is
+    archived (decision S5, spec.md §5.6)."""
+    grocery_list, item = _get_item_or_404(db, list_id, item_id)
+    _check_line_mutable(grocery_list, item)
+    db.delete(item)
     db.flush()  # TransactionRoute owns the commit

@@ -40,7 +40,7 @@ checked lines into inventory.
       so a to-taste line never hits `None * multiplier` (R-1).
 - [x] Add `schemas/grocery.py`, re-export its public schemas, and implement
       list/create/read/delete routes.
-- [ ] Add manual-item create, item edit, and item delete behavior. On PATCH:
+- [x] Add manual-item create, item edit, and item delete behavior. On PATCH:
       reject a body with exactly one of `quantity` / `unit` (`model_fields_set`)
       → `422 "quantity and unit must be set together"`; any `item` / `quantity` /
       `unit` edit sets `source="manual"`, `nettable=true` (a `checked`-only PATCH
