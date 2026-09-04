@@ -4,7 +4,7 @@
 
 **Blocked by:** 11a.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/pages/History.tsx` (+ `.module.css`), `frontend/src/components/CookLogRow.tsx` (+ `.module.css`, `.test.tsx` — add the recipe-title `<Link>`); create `frontend/src/pages/History.test.tsx`. Reuse `CookLogRow`/`DeductionDetail` from 11a. (`frontend/src/api/cookLogs.ts` was listed but needed no change — `cookLogsApi.list` from 11a already suffices.)
 
