@@ -7,7 +7,7 @@ nothing reaches stock until `submit` (`phase-6d`).
 
 **Blocked by:** `phase-6b`.
 
-**Status:** ready-for-agent
+**Status:** in-review
 
 **Files:** edit `backend/app/routers/grocery.py` (add `/items` `POST`/`PATCH`/`DELETE`), `backend/app/schemas/grocery.py`, `backend/tests/test_grocery.py`.
 
@@ -15,12 +15,12 @@ nothing reaches stock until `submit` (`phase-6d`).
 
 **Tests:** `cd backend && uv run pytest tests/test_grocery.py`, then full `uv run pytest`.
 
-- [ ] `POST /api/grocery/{id}/items` -> `201 GroceryListItemRead`: `404` if the
+- [x] `POST /api/grocery/{id}/items` -> `201 GroceryListItemRead`: `404` if the
       list is absent; `409` if the list is `archived`; creates
       `GroceryListItem(source="manual", nettable=true, checked=false,
       added_to_inventory=false, normalized_name=normalize_name(item))`; manual
       amounts stored exactly as typed.
-- [ ] `PATCH /api/grocery/{id}/items/{item_id}` -> `200`: `404` if the list or
+- [x] `PATCH /api/grocery/{id}/items/{item_id}` -> `200`: `404` if the list or
       line is absent; `409` if `line.added_to_inventory` (frozen) or the list is
       `archived`; `422 "quantity and unit must be set together"` if exactly one
       of `quantity` / `unit` is present in `model_fields_set` (values may be
@@ -29,11 +29,11 @@ nothing reaches stock until `submit` (`phase-6d`).
       with `checked_at = _utcnow()` on `true` / `null` on `false`; **any `item` /
       `quantity` / `unit` edit reclassifies** the line `source -> "manual"`,
       `nettable -> true`; a `checked`-only PATCH does not reclassify.
-- [ ] `DELETE /api/grocery/{id}/items/{item_id}` -> `204` (decision S5): `404`
+- [x] `DELETE /api/grocery/{id}/items/{item_id}` -> `204` (decision S5): `404`
       if the list or line is absent; `409` if `line.added_to_inventory` or the
       list is `archived`.
-- [ ] Grocery-mutation (N6) oracle cases from `phase-6a` pass unchanged.
-- [ ] `test_grocery.py`: manual item add (amounts as typed); check off ->
+- [x] Grocery-mutation (N6) oracle cases from `phase-6a` pass unchanged.
+- [x] `test_grocery.py`: manual item add (amounts as typed); check off ->
       inventory unchanged; on a generated `500 g` line, `PATCH {unit:"kg"}` alone
       -> `422`, `PATCH {quantity:200}` alone -> `422`,
       `PATCH {quantity:0.5, unit:"kg"}` -> `200` with `source="manual"`,
@@ -41,6 +41,19 @@ nothing reaches stock until `submit` (`phase-6d`).
       `nettable=false` line -> `source="manual"`, `nettable=true`,
       `normalized_name` recomputed; `PATCH {checked:true}` alone leaves `source`
       / `nettable` unchanged; `DELETE` an unfrozen line -> `204`.
-- [ ] `cd backend && uv run pytest` green.
-- [ ] `docs/phases/phase-6.md` manual-item / item-edit / item-delete checkboxes
+- [ ] `cd backend && uv run pytest` green. 11 pre-existing failures remain in
+      `test_grocery_contract.py` (submit/submit-race/archive-freeze cases) —
+      that file's own docstring documents these as not green until `phase-6d`
+      (submit) / `phase-6e` (archive) land; this ticket's N6/item cases in that
+      file now pass (were 20 failing before this ticket, now 11, all
+      submit-dependent). Not a regression from this diff.
+- [x] `docs/phases/phase-6.md` manual-item / item-edit / item-delete checkboxes
       ticked.
+
+## Comments
+
+- Implemented on `feat/backend-v1-phase-6c` in worktree
+  `.claude/worktrees/backend-v1-phase-6c`. Reviewed via `/code-review since
+  main` (Standards + Spec axes, both clean); actioned two low-severity
+  findings: extracted the frozen/archived PATCH+DELETE guard into
+  `_check_line_mutable`, and added a test for `PATCH {item: null}` -> `422`.

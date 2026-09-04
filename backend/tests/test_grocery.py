@@ -1,11 +1,11 @@
-"""Grocery generation + list read/delete (spec.md §5.6, `phase-6b`).
+"""Grocery generation + list read/delete/mutation (spec.md §5.6, `phase-6b`-`6c`).
 
-Manual item add, line editing, submit, and archive are `phase-6c`-`6e`'s; the
-locked N6/submit/race contract oracle lives in `test_grocery_contract.py`
-(`phase-6a`) and stays partially failing until those land — see that file's
-module docstring. This file covers the HTTP wiring phase-6b actually ships:
-`POST` generation (consolidation, netting, canonical units), `GET` (list +
-single, `?status`), and `DELETE` (cascade).
+Submit and archive are `phase-6d`-`6e`'s; the locked N6/submit/race contract
+oracle lives in `test_grocery_contract.py` (`phase-6a`) and stays partially
+failing until those land — see that file's module docstring. This file covers
+the HTTP wiring phase-6b/6c actually ship: `POST` generation (consolidation,
+netting, canonical units), `GET` (list + single, `?status`), `DELETE`
+(cascade), and manual item add / line edit (N6) / line delete.
 
 The consolidated-shortfall arithmetic itself is locked as a pure-service oracle
 in `test_inventory_math.py::test_generate_lines_oracle` — this file does not
@@ -227,3 +227,167 @@ def test_delete_grocery_list_cascades_items(
 
 def test_delete_unknown_grocery_list_is_404(auth_client: TestClient) -> None:
     assert auth_client.delete("/api/grocery/999999").status_code == 404
+
+
+# ===========================================================================
+# Manual item add + line editing (N6) + line delete (phase-6c)
+# ===========================================================================
+
+
+def _add_item(client: TestClient, gid: int, **body: object) -> dict:
+    resp = client.post(f"/api/grocery/{gid}/items", json=body)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def _patch_item(client: TestClient, gid: int, item_id: int, **body: object):
+    return client.patch(f"/api/grocery/{gid}/items/{item_id}", json=body)
+
+
+def test_manual_item_add_stores_amounts_as_typed(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 1, "unit": "kg"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+
+    item = _add_item(auth_client, gid, item="Bay leaf", quantity=3, unit="leaf")
+    assert item["item"] == "Bay leaf"
+    assert item["normalized_name"] == "bay leaf"
+    assert item["quantity"] == pytest.approx(3.0)
+    assert item["unit"] == "leaf"
+    assert item["source"] == "manual"
+    assert item["nettable"] is True
+    assert item["checked"] is False
+    assert item["added_to_inventory"] is False
+
+
+def test_manual_item_add_to_unknown_list_is_404(auth_client: TestClient) -> None:
+    resp = auth_client.post(
+        "/api/grocery/999999/items", json={"item": "Salt", "quantity": None, "unit": None}
+    )
+    assert resp.status_code == 404
+
+
+def test_checking_off_a_line_does_not_touch_inventory(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+
+    resp = _patch_item(auth_client, gid, line["id"], checked=True)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["checked"] is True
+    assert body["checked_at"] is not None
+    assert body["added_to_inventory"] is False
+
+    assert auth_client.get("/api/inventory").json() == []
+
+
+def test_n6_unit_only_patch_on_generated_line_is_422(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+    assert line["quantity"] == pytest.approx(500.0)
+    assert line["unit"] == "g"
+
+    resp = _patch_item(auth_client, gid, line["id"], unit="kg")
+    assert resp.status_code == 422
+    assert "quantity and unit must be set together" in resp.text
+
+
+def test_n6_quantity_only_patch_on_generated_line_is_422(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+
+    resp = _patch_item(auth_client, gid, line["id"], quantity=200)
+    assert resp.status_code == 422
+    assert "quantity and unit must be set together" in resp.text
+
+
+def test_n6_quantity_and_unit_patch_reclassifies_to_manual(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+
+    resp = _patch_item(auth_client, gid, line["id"], quantity=0.5, unit="kg")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["quantity"] == pytest.approx(0.5)  # stored as typed, no conversion
+    assert body["unit"] == "kg"
+    assert body["source"] == "manual"
+    assert body["nettable"] is True
+
+
+def test_n6_item_edit_on_non_nettable_generated_line_reclassifies_to_manual(
+    auth_client: TestClient,
+) -> None:
+    """#N3-style non-nettable generated line: an `item` edit still reclassifies
+    and recomputes `normalized_name` (N6)."""
+    _add_inventory(auth_client, "Tomatoes", 1, "can")
+    _add_inventory(auth_client, "Tomatoes", 1, "jar")
+    rid = _mk_recipe(auth_client, [{"item": "Tomatoes", "quantity": 3, "unit": "can"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "tomato")
+    assert line["nettable"] is False
+
+    resp = _patch_item(auth_client, gid, line["id"], item="almond flour")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["item"] == "almond flour"
+    assert body["normalized_name"] == "almond flour"
+    assert body["source"] == "manual"
+    assert body["nettable"] is True
+
+
+def test_n6_checked_only_patch_does_not_reclassify(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+
+    resp = _patch_item(auth_client, gid, line["id"], checked=True)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source"] == "generated"
+    assert body["nettable"] is True
+    assert body["quantity"] == pytest.approx(500.0)
+    assert body["unit"] == "g"
+
+
+def test_patch_item_to_null_is_422(auth_client: TestClient) -> None:
+    """`item` is typed nullable in `GroceryListItemUpdate` (spec.md §5.6), but a
+    line's substance can't sensibly go null -- explicit `{"item": null}` is
+    rejected rather than violating the non-nullable `item` column."""
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+
+    resp = _patch_item(auth_client, gid, line["id"], item=None)
+    assert resp.status_code == 422
+    assert "item cannot be null" in resp.text
+
+
+def test_patch_unknown_list_or_line_is_404(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+
+    assert _patch_item(auth_client, 999999, line["id"], checked=True).status_code == 404
+    assert _patch_item(auth_client, gid, 999999, checked=True).status_code == 404
+
+
+def test_delete_unfrozen_line_is_204(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+
+    resp = auth_client.delete(f"/api/grocery/{gid}/items/{line['id']}")
+    assert resp.status_code == 204, resp.text
+    assert auth_client.get(f"/api/grocery/{gid}").json()["items"] == []
+
+
+def test_delete_unknown_list_or_line_is_404(auth_client: TestClient) -> None:
+    rid = _mk_recipe(auth_client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
+    gid = _mk_grocery(auth_client, [rid])["id"]
+    line = _line_by_norm(auth_client.get(f"/api/grocery/{gid}").json()["items"], "flour")
+
+    assert auth_client.delete(f"/api/grocery/999999/items/{line['id']}").status_code == 404
+    assert auth_client.delete(f"/api/grocery/{gid}/items/999999").status_code == 404
