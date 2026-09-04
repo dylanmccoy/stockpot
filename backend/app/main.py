@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.config import Settings, settings
 from app.database import Base, engine, make_session_factory
-from app.routers import auth, inventory, recipes
+from app.routers import auth, cook_logs, inventory, recipes
 
 
 def get_settings(request: Request) -> Settings:
@@ -85,8 +85,8 @@ def create_app(settings: Settings, engine: Engine) -> FastAPI:
     app.add_exception_handler(IntegrityError, _to_409)
     app.add_exception_handler(OperationalError, _to_409_if_locked_else_500)
 
-    # Include routers. cook_logs and grocery routers arrive in Phases 5–6.
-    for r in (auth.router, recipes.router, inventory.router):
+    # Include routers. The grocery router arrives in Phase 6.
+    for r in (auth.router, recipes.router, inventory.router, cook_logs.router):
         app.include_router(r)
 
     @app.get("/api/health")

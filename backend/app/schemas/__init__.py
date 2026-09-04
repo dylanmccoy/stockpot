@@ -9,7 +9,12 @@ from app.schemas.auth import (
     UserRead,
 )
 from app.schemas.common import ORMModel
-from app.schemas.cook_logs import CookDeductionRead, CookLogRead, CookRequest
+from app.schemas.cook_logs import (
+    CookDeductionRead,
+    CookLogList,
+    CookLogRead,
+    CookRequest,
+)
 from app.schemas.inventory import (
     InventoryItemCreate,
     InventoryItemRead,
@@ -49,6 +54,7 @@ __all__ = [
     "CookRequest",
     "CookDeductionRead",
     "CookLogRead",
+    "CookLogList",
     # Inventory
     "InventoryItemCreate",
     "InventoryItemUpdate",

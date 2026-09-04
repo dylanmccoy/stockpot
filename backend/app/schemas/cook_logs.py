@@ -59,3 +59,12 @@ class CookLogRead(ORMModel):
     cooked_at: datetime
     cooked_by: UserMini | None
     deductions: list[CookDeductionRead]  # [] when deducted=false
+
+
+class CookLogList(BaseModel):
+    """One page of the global cook-log feed (`GET /api/cook-logs`, spec.md §5.4)."""
+
+    items: list[CookLogRead]
+    total: int  # full count of all cook logs, ignoring pagination
+    limit: int
+    offset: int
