@@ -142,6 +142,14 @@
   padding-left: var(--space-5);
 }
 
+/* Made-history panel */
+.history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--color-border);
+}
+
 .notes {
   margin: 0;
   white-space: pre-wrap;

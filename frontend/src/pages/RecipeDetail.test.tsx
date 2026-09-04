@@ -9,7 +9,13 @@ import { errorHandlers } from "../test/errorHandlers";
 import { makeQueryClient } from "../test/helpers";
 import { sampleCookLog, sampleRecipe } from "../test/handlers";
 import { ToastProvider } from "../components";
-import type { AvailabilityReport, RecipeRead } from "../types";
+import type {
+  AvailabilityReport,
+  CookDeductionRead,
+  CookDeductionReason,
+  CookLogRead,
+  RecipeRead,
+} from "../types";
 import RecipeDetail, {
   amountLabel,
   asOpenableUrl,
@@ -68,6 +74,46 @@ const detailRecipe: RecipeRead = {
 
 function useRecipe(recipe: RecipeRead) {
   server.use(http.get("/api/recipes/:id", () => HttpResponse.json(recipe)));
+}
+
+function useCookLogs(logs: CookLogRead[]) {
+  server.use(
+    http.get("/api/recipes/:id/cook-logs", () => HttpResponse.json(logs)),
+  );
+}
+
+const AT = "2026-08-30T09:00:00+00:00";
+
+function dedFixture(
+  reason: CookDeductionReason,
+  item: string,
+): CookDeductionRead {
+  return {
+    item,
+    normalized_name: item,
+    requested: 50,
+    requested_unit: "g",
+    deducted: 40,
+    deducted_unit: "g",
+    inventory_unit: "g",
+    before: 100,
+    after: 60,
+    applied: reason === "ok" || reason === "clamped to 0",
+    reason,
+  };
+}
+
+function cookLogFixture(overrides: Partial<CookLogRead> = {}): CookLogRead {
+  return {
+    ...sampleCookLog,
+    id: 100,
+    recipe_id: 1,
+    multiplier: 1,
+    deducted: false,
+    cooked_at: AT,
+    deductions: [],
+    ...overrides,
+  };
 }
 
 function renderDetail(path = "/recipes/1") {
@@ -329,16 +375,127 @@ describe("RecipeDetail body", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("keeps an empty made-history placeholder panel", async () => {
+  it("shows an empty made-history panel before the first cook", async () => {
     useRecipe(detailRecipe);
+    useCookLogs([]);
     renderDetail();
     await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
 
     const panel = screen.getByRole("region", { name: "Made history" });
     expect(
-      within(panel).getByRole("heading", { name: "Made history" }),
+      await within(panel).findByText("Cook this recipe to start its history."),
     ).toBeInTheDocument();
     expect(within(panel).queryByRole("listitem")).not.toBeInTheDocument();
+  });
+});
+
+// ── made history (per-recipe panel, spec §10.8) ──────────────────────────────
+
+const historyRegion = () => screen.getByRole("region", { name: "Made history" });
+
+describe("RecipeDetail made history", () => {
+  it("lists cooks from `[recipe-cook-logs, id]`, newest first, with a count header", async () => {
+    useRecipe(detailRecipe);
+    // Deliberately handed to the panel oldest-first; the multiplier tags which
+    // cook is which without depending on the test machine's timezone.
+    useCookLogs([
+      cookLogFixture({
+        id: 1,
+        multiplier: 3,
+        cooked_at: "2026-08-01T00:00:00+00:00",
+      }),
+      cookLogFixture({
+        id: 2,
+        multiplier: 7,
+        cooked_at: "2026-08-20T00:00:00+00:00",
+      }),
+    ]);
+    const queryClient = renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    const panel = historyRegion();
+    expect(
+      await within(panel).findByText(/Cooked 2 times · last/),
+    ).toBeInTheDocument();
+
+    const rows = within(panel).getAllByRole("listitem");
+    expect(rows).toHaveLength(2);
+    // id 2 is the newer cook — it must render first.
+    expect(rows[0]).toHaveTextContent("×7");
+    expect(rows[1]).toHaveTextContent("×3");
+
+    expect(
+      queryClient.getQueryData(["recipe-cook-logs", 1]),
+    ).toHaveLength(2);
+  });
+
+  it("a no-deduction cook shows 'stock not changed' and no detail table", async () => {
+    useRecipe(detailRecipe);
+    useCookLogs([cookLogFixture({ deducted: false, deductions: [] })]);
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    const panel = historyRegion();
+    expect(
+      await within(panel).findByText("logged — stock not changed"),
+    ).toBeInTheDocument();
+    expect(within(panel).queryByRole("table")).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("expands a deducted cook to a chip for each of the five reasons (flow vs MSW)", async () => {
+    const user = userEvent.setup();
+    useRecipe(detailRecipe);
+    useCookLogs([
+      cookLogFixture({
+        id: 5,
+        deducted: true,
+        deductions: [
+          dedFixture("ok", "flour"),
+          dedFixture("clamped to 0", "butter"),
+          dedFixture("not in inventory", "vanilla"),
+          dedFixture("have uncertain (incompatible unit)", "milk"),
+          dedFixture("to taste", "salt"),
+        ],
+      }),
+    ]);
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    const panel = historyRegion();
+    await user.click(
+      await within(panel).findByRole("button", { name: /5 ingredients/ }),
+    );
+
+    const table = within(panel).getByRole("table", {
+      name: /per-ingredient stock change/i,
+    });
+    for (const chip of [
+      "deducted",
+      "ran out",
+      "not tracked",
+      "check what you have",
+      "to taste",
+    ]) {
+      expect(within(table).getByText(chip)).toBeInTheDocument();
+    }
+  });
+
+  it("offers a retry when the history call fails", async () => {
+    useRecipe(detailRecipe);
+    server.use(
+      errorHandlers.serverError("get", "/api/recipes/:id/cook-logs"),
+    );
+    renderDetail();
+    await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
+
+    const panel = historyRegion();
+    expect(
+      await within(panel).findByText("Couldn’t load this recipe’s history."),
+    ).toBeInTheDocument();
+    expect(
+      within(panel).getByRole("button", { name: "Retry" }),
+    ).toBeInTheDocument();
   });
 });
 

@@ -7,6 +7,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { recipesApi } from "../api/recipes";
+import { cookLogsApi } from "../api/cookLogs";
 import type {
   AvailabilityLine,
   AvailabilityReport,
@@ -20,11 +21,12 @@ import {
   STOCK_CONFLICT_MESSAGE,
   isStockConflict,
 } from "../lib/apiError";
-import { formatQuantity } from "../lib/format";
+import { formatDateTime, formatQuantity } from "../lib/format";
 import { cx } from "../lib/cx";
 import {
   Badge,
   Button,
+  CookLogRow,
   DataTable,
   Dialog,
   Stepper,
@@ -34,8 +36,8 @@ import type { BadgeTone, Column } from "../components";
 import styles from "./RecipeDetail.module.css";
 
 // RecipeDetail — body + multiplier (spec §10.4, body Phase 3), the availability
-// table (Phase 4), and the cook action (Phase 5). The made-history panel is
-// still a placeholder (ticket 11). Availability and cook are built against the
+// table (Phase 4), the cook action (Phase 5), and the per-recipe made-history
+// panel (spec §10.8, ticket 11a). Availability and cook are built against the
 // spec DTO through the recipes adapter (R-2) and wired to real calls in tickets
 // 16 / 17.
 
@@ -326,6 +328,67 @@ function CookPanel({ id, multiplier }: { id: number; multiplier: number }) {
   );
 }
 
+/** Per-recipe made-history panel (spec §10.8) — lives inside RecipeDetail, not
+ *  its own route. Lists every cook of this recipe, newest first, unpaginated,
+ *  with no recipe-title column. Shares `CookLogRow` with the global `/history`
+ *  feed (ticket 11b). The `["recipe-cook-logs", id]` key is invalidated by a
+ *  cook in `CookPanel` above. */
+function HistoryPanel({ id }: { id: number }) {
+  const query = useQuery({
+    queryKey: ["recipe-cook-logs", id],
+    queryFn: () => cookLogsApi.byRecipe(id),
+  });
+
+  // Server order is `cooked_at DESC, id DESC`; sort defensively so "newest
+  // first" holds even if that ever slips (matches the ingredient sort above).
+  const logs = query.data
+    ? [...query.data].sort(
+        (a, b) =>
+          Date.parse(b.cooked_at) - Date.parse(a.cooked_at) || b.id - a.id,
+      )
+    : [];
+
+  return (
+    <section className={styles.section} aria-labelledby="history-heading">
+      <h2 id="history-heading">Made history</h2>
+
+      {query.isPending && (
+        <p role="status" className={styles.muted}>
+          Loading history…
+        </p>
+      )}
+
+      {query.isError && (
+        <div className={styles.availError} role="alert">
+          <p className={styles.muted}>Couldn’t load this recipe’s history.</p>
+          <Button variant="secondary" onClick={() => query.refetch()}>
+            Retry
+          </Button>
+        </div>
+      )}
+
+      {query.data &&
+        (logs.length === 0 ? (
+          <p className={styles.muted}>
+            Cook this recipe to start its history.
+          </p>
+        ) : (
+          <>
+            <p className={styles.muted}>
+              Cooked {logs.length} {logs.length === 1 ? "time" : "times"} · last{" "}
+              {formatDateTime(logs[0].cooked_at)}
+            </p>
+            <ul className={styles.history}>
+              {logs.map((log) => (
+                <CookLogRow key={log.id} log={log} />
+              ))}
+            </ul>
+          </>
+        ))}
+    </section>
+  );
+}
+
 function NotFoundPanel() {
   return (
     <section className={styles.panel} role="alert">
@@ -500,11 +563,7 @@ function RecipeDetailView({ id }: { id: number }) {
         </section>
       )}
 
-      {/* Per-recipe made-history panel — filled in ticket 11 (spec §10.8). */}
-      <section className={styles.section} aria-labelledby="history-heading">
-        <h2 id="history-heading">Made history</h2>
-        <p className={styles.muted}>Cook this recipe to start its history.</p>
-      </section>
+      <HistoryPanel id={id} />
 
       <Dialog
         open={confirmOpen}
