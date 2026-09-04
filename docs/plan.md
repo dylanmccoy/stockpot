@@ -169,7 +169,10 @@ Phase 8 in the current v1 plan.
 | [4 — inventory and availability](phases/phase-4.md) | Inventory CRUD and availability math | Phase 3 (gate N5 ✅) | Complete |
 | [5 — cooking and history](phases/phase-5.md) | Stock deduction and durable cook logs | Phase 4 (gate N7 ✅) | Complete |
 | [6 — grocery lists](phases/phase-6.md) | Netted lists, submit, archive, and concurrency behavior | Phase 5 (gate N6 ✅) | Complete |
-| [7 — documentation](phases/phase-7.md) | User and developer documentation matches the shipped backend | Phase 6 | Not started |
+| [7 — documentation](phases/phase-7.md) | User and developer documentation matches the shipped backend | Phase 6 | Complete |
+
+**v1 is complete.** All eight phases (0–7) have shipped; see "Planning history"
+below for the close-out note.
 
 Schema-expanding phases 3–6 require deleting `backend/recipe.db` before their
 first local run. This is acceptable only because v1 has not accumulated data;
@@ -231,3 +234,8 @@ the first post-v1 schema change triggers the Alembic work described in
   reproduces FastAPI's default body verbatim except that non-finite floats are
   replaced by their `repr`, so the §Mechanical defaults shape is unchanged.
   `spec.md` §3.3 was amended to list it (2026-09-02).
+- Phase 6 is complete, closing with `phase-6f`'s concurrency/transaction
+  contract suite (PR #73). Phase 7 (documentation) followed and closes v1:
+  `README.md`, `CLAUDE.md`, and `backend/.env.example` now describe the shipped
+  backend, and the three "Operating the server" runbooks were executed and
+  verified end to end.

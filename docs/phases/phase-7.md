@@ -17,9 +17,9 @@ or describe one as part of the shipped v1 surface.
 
 ## Work
 
-- [ ] Update `README.md` with setup, authentication, v1 workflows, API surface,
+- [x] Update `README.md` with setup, authentication, v1 workflows, API surface,
       LAN serving, and the current frontend limitation.
-- [ ] Add a single **"Operating the server"** section to `README.md` holding
+- [x] Add a single **"Operating the server"** section to `README.md` holding
       three ordered runbooks. All three are the same activity — a human at a
       terminal, server stopped, doing something irreversible — and the ordering
       is exactly what gets lost when they are scattered across three documents:
@@ -33,43 +33,59 @@ or describe one as part of the shipped v1 surface.
   - **Schema reset / restore** — take a backup, stop the server,
     `rm backend/recipe.db`, restart (the lifespan recreates the schema). To
     restore, stop the server and copy a snapshot back over `recipe.db`.
-- [ ] Update `CLAUDE.md` with the final architecture, transaction ownership
+- [x] Update `CLAUDE.md` with the final architecture, transaction ownership
       (`TransactionRoute` owns the commit; `get_db` owns session lifetime),
       app-factory test seam, commands, and schema-reset procedure.
-- [ ] Update `backend/.env.example` with `RECIPE_SESSION_TTL_DAYS` (note `0`
+- [x] Update `backend/.env.example` with `RECIPE_SESSION_TTL_DAYS` (note `0`
       is legal and means instantly-expired), `RECIPE_ALLOW_REGISTRATION`, and
       `RECIPE_REGISTRATION_CODE`.
-- [ ] Point the registration-window and schema-reset references at the
+- [x] Point the registration-window and schema-reset references at the
       "Operating the server" section rather than describing a fragment of each
       in place.
-- [ ] Document that there is no password reset: `POST /api/auth/change-password`
+- [x] Document that there is no password reset: `POST /api/auth/change-password`
       covers rotation by someone who knows the current password; a forgotten
       password is an operator task against the database file.
-- [ ] Document that cook deduction and grocery submit are forward-only.
-- [ ] Document LAN CORS: add the serving frontend's origin to
+- [x] Document that cook deduction and grocery submit are forward-only.
+- [x] Document LAN CORS: add the serving frontend's origin to
       `RECIPE_CORS_ORIGINS`, or use `["*"]` only for the trusted,
       non-credentialed LAN deployment.
-- [ ] Link deferred work to `docs/features.md`; do not restate it.
-- [ ] Preserve the archive pointer `git show 5144c25:docs/plan.md` for the
+- [x] Link deferred work to `docs/features.md`; do not restate it.
+- [x] Preserve the archive pointer `git show 5144c25:docs/plan.md` for the
       complete pre-trim planning record.
-- [ ] Remove obsolete references to photo upload, URL import, or nine v1 phases.
+- [x] Remove obsolete references to photo upload, URL import, or nine v1 phases.
+      (None found in `README.md`/`CLAUDE.md`/`backend/.env.example` — the only
+      hits repo-wide are the legitimate ones in `features.md`, `spec.md`, and
+      `decisions.md`.)
 
 ## Verification
 
-- [ ] `cd backend && uv run pytest` passes.
-- [ ] The end-to-end `/docs` verification in `spec.md` passes.
-- [ ] Every command and environment variable in the updated docs is accurate.
-- [ ] The three "Operating the server" runbooks were executed end to end,
-      including a `.backup` and a restore from that snapshot.
-- [ ] All v1 issues are closed.
+- [x] `cd backend && uv run pytest` passes.
+- [x] The end-to-end `/docs` verification in `spec.md` passes.
+- [x] Every command and environment variable in the updated docs is accurate.
+- [x] The three "Operating the server" runbooks were executed end to end,
+      including a `.backup` and a restore from that snapshot. (`sqlite3` CLI
+      was unavailable in the execution sandbox; the backup step used Python's
+      `sqlite3` module `Connection.backup()`, the same SQLite online-backup API
+      the CLI's `.backup` wraps, and the restored snapshot was verified to
+      contain the bootstrapped user.)
+- [x] All v1 issues are closed. `docs/issues.md` already reads "No open
+      issues" — no diff needed there. (Several `.scratch/backend-v1/issues/
+      phase-*.md` tracker files carry a stale `Status:` despite being merged;
+      out of this ticket's **Files:** list, so left alone rather than
+      corrected here — a separate tracker-hygiene pass, not a phase-7
+      documentation change.)
 
 ## Exit criteria
 
-- [ ] All requirements in [`../plan.md`](../plan.md) are complete.
-- [ ] Scope fence passed (R-10, [`../plan.md` §Phase scope fence](../plan.md#phase-scope-fence-and-handoff-contract)):
+- [x] All requirements in [`../plan.md`](../plan.md) are complete.
+- [x] Scope fence passed (R-10, [`../plan.md` §Phase scope fence](../plan.md#phase-scope-fence-and-handoff-contract)):
       every shipped-behavior statement traces to the backend or normative spec;
       `features.md` was used only to link deferrals and verify exclusions.
-- [ ] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
+- [x] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
       a non-author reviewer confirmed every command, env var, and behavior
       statement in the updated docs against the shipped backend and `spec.md`.
-- [ ] Phase complete; mark v1 complete in the master status table.
+      (Two-axis Standards + Spec review via `/code-review` since `main`. Spec
+      review caught the frontend-limitation gap fixed above and the
+      out-of-scope tracker edits, now reverted. Standards review's other notes
+      were judgment calls, not actioned — see ticket Comments.)
+- [x] Phase complete; mark v1 complete in the master status table.

@@ -56,9 +56,14 @@ before opening spec files, and let each ticket's **Files:** / **Spec:** / **Test
 header point you at the exact sections.
 
 - **Backend** (`backend/app/`) — layered FastAPI, one-way imports
-  `config → database → models → schemas/routers → main`. No migrations: schema is
-  a lifespan `Base.metadata.create_all()`, so a `models.py` change means deleting
-  `backend/recipe.db`.
+  `config → database → models → schemas/routers → main`. Mutating routers use
+  `route_class=TransactionRoute`, which owns the commit; `get_db` only owns
+  session lifetime — handlers commit nothing themselves. Tests wire the app
+  via `create_app(test_settings, test_engine)`, the only test-database seam
+  (real HTTP through `TestClient`, no dependency overrides). No migrations:
+  schema is a lifespan `Base.metadata.create_all()`, so a `models.py` change
+  means deleting `backend/recipe.db` — see root `README.md` "Operating the
+  server" for the full backup/reset/restore procedure.
 - **Frontend** (`frontend/src/`) — Vite + React 18 + TS strict, `react-router-dom`
   v6, TanStack Query for all server state, CSS Modules + a token layer, MSW for
   tests. Built mock-first against MSW, wired to real endpoints as each backend
