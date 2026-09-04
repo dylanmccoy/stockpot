@@ -194,3 +194,50 @@ def test_availability_multiplier_rejects_non_positive_and_non_finite(
         f"/api/recipes/{recipe_id}/availability", params={"multiplier": multiplier}
     )
     assert response.status_code == 422, response.text
+
+
+# `POST /api/grocery` — `recipe_ids` non-empty + unique, `multipliers` keys
+# ⊆ `recipe_ids` and values `> 0` finite (spec.md §5.6, §7).
+
+
+def test_grocery_empty_recipe_ids_is_422(auth_client: TestClient) -> None:
+    response = auth_client.post("/api/grocery", json={"recipe_ids": []})
+    assert response.status_code == 422, response.text
+
+
+def test_grocery_duplicate_recipe_ids_is_422(auth_client: TestClient) -> None:
+    recipe_id = auth_client.post("/api/recipes", json={"title": "Dup me"}).json()["id"]
+    response = auth_client.post(
+        "/api/grocery", json={"recipe_ids": [recipe_id, recipe_id]}
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_grocery_multiplier_key_not_in_recipe_ids_is_422(auth_client: TestClient) -> None:
+    recipe_id = auth_client.post("/api/recipes", json={"title": "In list"}).json()["id"]
+    other_id = auth_client.post("/api/recipes", json={"title": "Not in list"}).json()["id"]
+    response = auth_client.post(
+        "/api/grocery",
+        json={"recipe_ids": [recipe_id], "multipliers": {str(other_id): 2}},
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.parametrize("multiplier", ["0", "-1", "Infinity", "-Infinity", "NaN"])
+def test_grocery_multiplier_value_rejects_non_positive_and_non_finite(
+    auth_client: TestClient, multiplier: str
+) -> None:
+    recipe_id = auth_client.post("/api/recipes", json={"title": "Scale me"}).json()["id"]
+    response = _send_raw(
+        auth_client,
+        "POST",
+        "/api/grocery",
+        '{"recipe_ids": [%d], "multipliers": {"%d": %s}}'
+        % (recipe_id, recipe_id, multiplier),
+    )
+    assert response.status_code == 422, response.text
+
+
+def test_grocery_unknown_recipe_id_is_422(auth_client: TestClient) -> None:
+    response = auth_client.post("/api/grocery", json={"recipe_ids": [999999]})
+    assert response.status_code == 422, response.text

@@ -33,12 +33,12 @@ checked lines into inventory.
 
 ## Work
 
-- [ ] Delete `backend/recipe.db` before running the expanded schema.
-- [ ] Add grocery-list and grocery-list-item models with applied snapshots.
-- [ ] Implement pure consolidated shortfall generation. Build each `ReqLine` with
+- [x] Delete `backend/recipe.db` before running the expanded schema.
+- [x] Add grocery-list and grocery-list-item models with applied snapshots.
+- [x] Implement pure consolidated shortfall generation. Build each `ReqLine` with
       `quantity = None if ing.quantity is None else ing.quantity * multipliers.get(rid, 1)`
       so a to-taste line never hits `None * multiplier` (R-1).
-- [ ] Add `schemas/grocery.py`, re-export its public schemas, and implement
+- [x] Add `schemas/grocery.py`, re-export its public schemas, and implement
       list/create/read/delete routes.
 - [ ] Add manual-item create, item edit, and item delete behavior. On PATCH:
       reject a body with exactly one of `quantity` / `unit` (`model_fields_set`)

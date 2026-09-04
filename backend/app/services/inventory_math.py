@@ -11,10 +11,12 @@ Phase status (``docs/plan.md`` §Independent contract-test gate):
 - ``phase-4b`` — the frozen DTOs and ``add_to_inventory_calc`` (§4.4).
 - ``phase-4d`` — ``aggregate`` / ``check_availability`` (§4.1 / §4.2).
 - ``phase-4e`` — ``deduct_calc`` / ``_entry`` (§4.5).
+- ``phase-6b`` — ``generate_lines`` / ``GroceryLineDTO`` (§4.3).
 
 The §7 oracle cases in ``tests/test_inventory_math.py`` were authored and locked
 at ``phase-4a``: add-to-inventory passes from ``phase-4b`` on, availability from
-``phase-4d`` on, and deduction from ``phase-4e`` on.
+``phase-4d`` on, deduction from ``phase-4e`` on. The grocery-generation rows were
+authored and locked at ``phase-6a`` and pass from ``phase-6b`` on.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.normalize import normalize_name
-from app.units import Quantity, bucket_of, canon_unit, normalize_unit_token, to_base
+from app.units import Quantity, add_quantities, bucket_of, canon_unit, normalize_unit_token, to_base
 
 # --------------------------------------------------------------------------- #
 # Frozen DTOs (spec.md §4). Every service takes / returns these.
@@ -62,6 +64,17 @@ class AvailabilityLineDTO:
     group_have: float | None
     group_short: float | None
     status: str  # ok | short | missing | to_taste | have_uncertain
+    nettable: bool
+
+
+@dataclass(frozen=True)
+class GroceryLineDTO:
+    """One consolidated grocery-generation output line (§4.3)."""
+
+    item: str
+    normalized_name: str
+    quantity: float | None  # canonical; None = no amount to claim
+    unit: str | None  # canonical unit label; None only for the entirely-to-taste line
     nettable: bool
 
 
@@ -280,6 +293,81 @@ def check_availability(
                     nettable=nettable,
                 )
             )
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# 4.3 generate_lines
+# --------------------------------------------------------------------------- #
+
+
+def generate_lines(
+    reqs_by_recipe: list[list[ReqLine]], stock: list[StockRow]
+) -> list[GroceryLineDTO]:
+    """Consolidated, canonical, netted grocery shortfalls (spec.md §4.3).
+
+    Requirements consolidate by ``normalized_name`` across every recipe (order:
+    ``recipe_ids`` order, then position within a recipe — decision S4 gives the
+    display item to the first writer). Within a name, ``add_quantities``
+    partitions by bucket and sums each partition in its canonical unit — a food
+    requested in two incompatible units (e.g. `can` and `g`) gets one line per
+    partition, in first-seen order. Each partition then nets against positive
+    stock per the §4.3 table: a covered partition emits no line; a to-taste-only
+    name (no quantified partition at all) emits one ``quantity=null, unit=null``
+    line.
+    """
+    reqs: dict[str, dict] = {}
+    for recipe_reqs in reqs_by_recipe:
+        for ing in recipe_reqs:
+            slot = reqs.setdefault(
+                ing.normalized_name,
+                {"quantities": [], "display_item": ing.item, "to_taste": False},
+            )
+            slot["display_item"] = slot["display_item"] or ing.item  # first writer wins
+            if ing.quantity is None:
+                slot["to_taste"] = True
+                continue
+            slot["quantities"].append(Quantity(ing.quantity, ing.unit))
+
+    out: list[GroceryLineDTO] = []
+    for norm, slot in reqs.items():
+        display_item = slot["display_item"]
+        emitted = False
+        for q in add_quantities(slot["quantities"]):
+            bucket = bucket_of(q.unit)
+            canon = canon_unit(bucket)
+            pos = [iv for iv in stock if iv.match_name == norm and iv.quantity_base > 0]
+            compat = [iv for iv in pos if iv.unit_bucket == bucket]
+            incomp = [iv for iv in pos if iv.unit_bucket != bucket]
+            need_base = (
+                q.amount
+                if (bucket.startswith("opaque:") or q.unit is None)
+                else to_base(q.amount, q.unit)[0]
+            )
+
+            if q.amount is None:
+                out.append(GroceryLineDTO(display_item, norm, None, canon, False))
+                emitted = True
+            elif not compat:
+                out.append(
+                    GroceryLineDTO(display_item, norm, need_base, canon, nettable=(not pos))
+                )
+                emitted = True
+            else:
+                have = sum(iv.quantity_base for iv in compat)
+                short = need_base - have
+                if short <= 0:
+                    continue  # covered -> no line
+                out.append(
+                    GroceryLineDTO(
+                        display_item, norm, short, canon, nettable=(not incomp)
+                    )
+                )
+                emitted = True
+
+        if slot["to_taste"] and not emitted:
+            out.append(GroceryLineDTO(display_item, norm, None, None, False))
+
     return out
 
 
