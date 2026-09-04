@@ -313,6 +313,12 @@ function GroceryListDetailView({ id }: { id: number }) {
         return;
       }
       if (isStockConflict(err)) {
+        // `isStockConflict` only checks `status === 409`, no `detail`
+        // narrowing — safe here because `isListNotActive` above already
+        // claimed the one other 409 this route can return (spec §5 item-PATCH
+        // row: 404, 409 frozen/archived, 422). If a third 409 reason is ever
+        // added to this endpoint, this blanket check will need a real
+        // `detail` guard alongside it.
         setEditingId(null);
         setEditDraft(null);
         setEditErrors({});
