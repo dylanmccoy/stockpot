@@ -46,8 +46,12 @@ and keep logs readable after recipe deletion.
       Core `UPDATE ... SET quantity_base=?, updated_at=?`, `_utcnow()` bound explicitly)
 - [x] Add per-recipe made-history reads. (phase-5b —
       `GET /api/recipes/{id}/cook-logs`)
-- [ ] Add paginated global list and detail routes that survive recipe deletion.
-      (phase-5c)
+- [x] Add paginated global list and detail routes that survive recipe deletion.
+      (phase-5c — `routers/cook_logs.py`: `GET /api/cook-logs` →
+      `CookLogList {items, total, limit, offset}` (`limit 1..200`, `offset ≥ 0`,
+      `422` out of range, order `cooked_at DESC, id DESC`) and
+      `GET /api/cook-logs/{log_id}` → `CookLogRead` / `404`; both resolve after
+      the recipe is deleted)
 - [x] Add remaining cook/history coverage without changing the accepted
       contract cases, including the file-backed HTTP cook race. The `/cook`
       fixture recipe carries a to-taste line (`"salt to taste"`); assert it
@@ -68,17 +72,25 @@ and keep logs readable after recipe deletion.
       `reason` → `500` on read. (phase-5b)
 - [x] Concurrent cooks do not lose an update. (phase-5b —
       `test_concurrency.py` + `test_cook_contract.py` section D)
-- [x] `cd backend && uv run pytest` passes. (phase-5b — 654 passed)
+- [x] `cd backend && uv run pytest` passes. (phase-5b — 654 passed;
+      phase-5c — 664 passed, `test_cook_logs.py` added)
 
 ## Exit criteria
 
 - [x] N7 is closed (resolved 2026-08-31; see [`../decisions.md`](../decisions.md#n7)).
-- [ ] The R-7 contract-test gate is checked and its accepted cases were not
-      changed by the implementation pass.
-- [ ] Scope fence passed (R-10, [`../plan.md` §Phase scope fence](../plan.md#phase-scope-fence-and-handoff-contract)):
+- [x] The R-7 contract-test gate is checked and its accepted cases were not
+      changed by the implementation pass. (phase-5c — `test_cook_contract.py`
+      untouched; `test_cook_logs.py` is additive and covers only the §5.4
+      global-read surface.)
+- [x] Scope fence passed (R-10, [`../plan.md` §Phase scope fence](../plan.md#phase-scope-fence-and-handoff-contract)):
       every changed behavior traces to this phase, its linked spec, or an
       accepted contract test; no deferred/context document authorized work.
-- [ ] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
+      (phase-5c — new code is `routers/cook_logs.py` + `CookLogList`, both named
+      by `spec.md` §5.4.)
+- [x] Diff review gate passed (R-6, [`../plan.md` §Execution rules](../plan.md#execution-rules)):
       a non-author reviewer walked every deduction / clamp-to-zero / reason
       branch in this phase's diff and tests against `spec.md` §7, §4.5, and §5.4.
-- [ ] Phase complete; update the status table in [`../plan.md`](../plan.md).
+      (phase-5b covered the deduction branches; phase-5c `/code-review` walked
+      the read-only global-feed diff — pagination bounds, ordering, count,
+      recipe-deletion survival — against `spec.md` §5.4.)
+- [x] Phase complete; update the status table in [`../plan.md`](../plan.md).

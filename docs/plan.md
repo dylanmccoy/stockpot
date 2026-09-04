@@ -167,7 +167,7 @@ Phase 8 in the current v1 plan.
 | [2 — auth and app factory](phases/phase-2.md) | App-local DB wiring, transactions, sessions, and route gating | Phase 1 | Complete |
 | [3 — structured recipes](phases/phase-3.md) | Nested recipe ingredients and validation | Phase 2 | Complete |
 | [4 — inventory and availability](phases/phase-4.md) | Inventory CRUD and availability math | Phase 3 (gate N5 ✅) | Complete |
-| [5 — cooking and history](phases/phase-5.md) | Stock deduction and durable cook logs | Phase 4 (gate N7 ✅) | Not started |
+| [5 — cooking and history](phases/phase-5.md) | Stock deduction and durable cook logs | Phase 4 (gate N7 ✅) | Complete |
 | [6 — grocery lists](phases/phase-6.md) | Netted lists, submit, archive, and concurrency behavior | Phase 5 (gate N6 ✅) | Not started |
 | [7 — documentation](phases/phase-7.md) | User and developer documentation matches the shipped backend | Phase 6 | Not started |
 
