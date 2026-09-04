@@ -25,6 +25,12 @@ export function createQueryClient(): QueryClient {
           isNetworkFailure(error) && failureCount < 5,
         retryDelay: (failureCount) =>
           Math.min(1000 * 2 ** failureCount, 30_000),
+        // Explicitly 0, not left to default: on the store walk, stock/list
+        // state can change from another device between screens, and nothing
+        // here polls in the background — a query only refetches on mount,
+        // reconnect, or an explicit invalidate — so staying "stale" buys no
+        // fewer requests, only a chance of showing a walker last screen's
+        // numbers on this one.
         staleTime: 0,
         refetchOnWindowFocus: false,
         refetchOnReconnect: true,

@@ -47,6 +47,10 @@ describe("createQueryClient defaults", () => {
     expect(retryDelay(10)).toBe(30_000);
   });
 
+  it("treats every query as immediately stale (nothing here polls, so 0 costs no extra requests)", () => {
+    expect(queries!.staleTime).toBe(0);
+  });
+
   it("refetches on reconnect but not on window focus", () => {
     expect(queries!.refetchOnReconnect).toBe(true);
     expect(queries!.refetchOnWindowFocus).toBe(false);
