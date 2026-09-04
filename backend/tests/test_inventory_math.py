@@ -2,23 +2,29 @@
 
 R-7 independent contract-test gate (``docs/plan.md`` §Independent contract-test
 gate). These oracles are translated from the normative spec — §4 (service
-signatures / algorithms) and §7 (the locked availability, deduction,
-add-to-inventory, and interpretation-independent tables) — **not** from an
-implementation. No Phase 4 production code existed when this file was authored.
-The implementation passes (`phase-4b`/`-4c`/`-4d`/`-4e`) may *add* cases but must
-not edit or delete an expected value here; a case later found wrong changes only
-via a paired ``spec.md`` + test edit recorded per the gate.
+signatures / algorithms) and §7 (the locked availability, grocery-generation,
+deduction, add-to-inventory, and interpretation-independent tables) — **not**
+from an implementation. Each section was authored black-box in a fresh context
+before its owning production pass. An implementation pass may *add* cases but
+must not edit or delete an expected value here; a case later found wrong changes
+only via a paired ``spec.md`` + test edit recorded per the gate.
 
-Scope of this file at `phase-4a`: the Phase 4 pure-service surface only —
-``check_availability``, ``add_to_inventory_calc``, ``deduct_calc``, ``_entry``.
-The §7 **grocery-generation** rows are authored later by `phase-6a` (they need
-``generate_lines``, built in `phase-6b`); the ``CookDeductionRead`` JSON
-round-trip is authored by `phase-5a` (it needs ``app.schemas.cook_logs``, built
-in `phase-5b`). Adding them here would make `phase-4e`'s "full file green" gate
-unreachable, since neither module exists at Phase 4 close.
+Scope by authoring ticket:
 
-Until ``phase-4b``/``-4d``/``-4e`` land this file is expected to error on
-collection / fail — that is the whole point of a locked oracle.
+* `phase-4a` — the Phase 4 pure surface: ``check_availability``,
+  ``add_to_inventory_calc``, ``deduct_calc``, ``_entry``. The §7
+  grocery-generation rows were deferred (``generate_lines`` did not exist at
+  Phase 4 close, and its rows would have made `phase-4e`'s "full file green"
+  gate unreachable); the ``CookDeductionRead`` JSON round-trip lives in
+  ``test_cook_contract.py`` (`phase-5a`), not here.
+* `phase-6a` — the §7 **Grocery generation** section below. It needs
+  ``generate_lines`` / ``GroceryLineDTO``, built in `phase-6b`, so the import
+  of those names is unresolved and this module fails on collection from
+  `phase-6a` until `phase-6b` lands. That failure is the lock.
+
+Before `phase-4b`/`-4d`/`-4e` this file errored on collection / failed; from
+`phase-6a` it does so again on the ``generate_lines`` import — that is the whole
+point of a locked oracle.
 
 All numeric field comparisons use ``pytest.approx(expected, rel=1e-9, abs=1e-9)``
 per the §2 floating-tolerance rule; conversion results are never compared by
@@ -32,6 +38,7 @@ import pytest
 from app.services.inventory_math import (
     AvailabilityLineDTO,
     DeductProposal,
+    GroceryLineDTO,
     InventoryDelta,
     ReqLine,
     RowDeduction,
@@ -40,6 +47,7 @@ from app.services.inventory_math import (
     add_to_inventory_calc,
     check_availability,
     deduct_calc,
+    generate_lines,
 )
 from app.units import Quantity, bucket_of
 
@@ -420,6 +428,198 @@ def test_check_availability_input_reorder_is_stable() -> None:
         check_availability(reqs, list(reversed(stock))),
         check_availability(reqs, stock),
     )
+
+
+# ===========================================================================
+# §7 — Grocery generation   (authored by `phase-6a`)
+# ===========================================================================
+#
+# ``generate_lines(reqs_by_recipe, stock) -> list[GroceryLineDTO]`` (§4.3).
+# ``G(item, norm, quantity, unit, nettable)`` is the §7 table shorthand for one
+# ``GroceryLineDTO``; ``quantity`` / ``unit`` are canonical. Output order is
+# exact: first-seen normalized-name, then first-seen ``add_quantities`` partition
+# order within a name (§2.2 / §7).
+
+
+def G(
+    item: str,
+    norm: str,
+    quantity: float | None,
+    unit: str | None,
+    nettable: bool,
+) -> GroceryLineDTO:
+    return GroceryLineDTO(
+        item=item,
+        normalized_name=norm,
+        quantity=quantity,
+        unit=unit,
+        nettable=nettable,
+    )
+
+
+def assert_grocery_eq(actual: GroceryLineDTO, expected: GroceryLineDTO) -> None:
+    assert isinstance(actual, GroceryLineDTO)
+    assert actual.item == expected.item
+    assert actual.normalized_name == expected.normalized_name
+    assert actual.unit == expected.unit
+    assert actual.nettable is expected.nettable
+    assert actual.quantity == _approx_or_none(expected.quantity)
+
+
+def assert_grocery_list_eq(
+    actual: list[GroceryLineDTO], expected: list[GroceryLineDTO]
+) -> None:
+    assert [type(x) for x in actual] == [GroceryLineDTO] * len(expected)
+    assert len(actual) == len(expected)
+    for a, e in zip(actual, expected):
+        assert_grocery_eq(a, e)
+
+
+# Each row is `(reqs_by_recipe, stock, expected_output)`. The outer requirements
+# list preserves `recipe_ids` order; each inner list is `position` order.
+GROCERY_GENERATION_CASES = [
+    # compatible-bucket stock absent -> full need, canonical, nettable.
+    pytest.param(
+        [[R(1, "Tomatoes", "tomato", 2, "can")]],
+        [],
+        [G("Tomatoes", "tomato", 2, "can", True)],
+        id="missing-opaque",
+    ),
+    # compatible stock short, no incompatible -> shortfall, nettable.
+    pytest.param(
+        [[R(1, "Tomatoes", "tomato", 2, "can")]],
+        [S(10, "tomato", "opaque:can", 1)],
+        [G("Tomatoes", "tomato", 1, "can", True)],
+        id="compatible-partial",
+    ),
+    # compatible short + incompatible present -> compatible-bucket remainder,
+    # NOT nettable (the shortfall claim is uncertain).
+    pytest.param(
+        [[R(1, "Tomatoes", "tomato", 3, "can")]],
+        [S(10, "tomato", "opaque:can", 1), S(11, "tomato", "opaque:jar", 1)],
+        [G("Tomatoes", "tomato", 2, "can", False)],
+        id="mixed-bucket-partial",
+    ),
+    # no compatible stock, incompatible present -> full need, NOT nettable.
+    pytest.param(
+        [[R(1, "Tomatoes", "tomato", 2, "can")]],
+        [S(11, "tomato", "opaque:jar", 1)],
+        [G("Tomatoes", "tomato", 2, "can", False)],
+        id="only-incompatible",
+    ),
+    # compatible stock covers the need despite an other-bucket row -> no line.
+    pytest.param(
+        [[R(1, "Tomatoes", "tomato", 2, "can")]],
+        [S(10, "tomato", "opaque:can", 3), S(11, "tomato", "opaque:jar", 1)],
+        [],
+        id="fully-covered",
+    ),
+    # cross-recipe consolidation of a known dimension: 1 kg + 500 g = 1500 g of
+    # need, minus 200 g compatible stock -> 1300 g; display_item is the FIRST
+    # writer's ("Flour", not recipe 2's "Plain flour") per decision S4.
+    pytest.param(
+        [
+            [R(1, "Flour", "flour", 1, "kg")],
+            [R(2, "Plain flour", "flour", 500, "g")],
+        ],
+        [S(10, "flour", "mass", 200)],
+        [G("Flour", "flour", 1300, "g", True)],
+        id="cross-recipe-known-consolidation",
+    ),
+    # one food, two incompatible partitions (opaque `can` vs known `mass`) -> one
+    # line each, in first-seen partition order.
+    pytest.param(
+        [
+            [
+                R(1, "Tomatoes", "tomato", 2, "can"),
+                R(2, "Tomatoes", "tomato", 500, "g"),
+            ]
+        ],
+        [],
+        [
+            G("Tomatoes", "tomato", 2, "can", True),
+            G("Tomatoes", "tomato", 500, "g", True),
+        ],
+        id="first-seen-partition-order",
+    ),
+    # an entirely-to-taste ingredient -> one `quantity=null, unit=null` line.
+    pytest.param(
+        [[R(1, "Salt", "salt", None, None)]],
+        [],
+        [G("Salt", "salt", None, None, False)],
+        id="only-to-taste",
+    ),
+    # first-seen normalized-name order across recipes. The §7 table has no
+    # multi-food row, but the `phase-6a` ticket requires locking "first-seen
+    # normalized-name then first-seen add_quantities partition" order; this row
+    # derives directly from §4.3 (`reqs.setdefault` insertion order) + §2.2
+    # `add_quantities`. `sugar` is first seen in recipe 1 so it keeps slot 2
+    # (ahead of `butter`) though it recurs in recipe 2, and its two
+    # requirements consolidate (50 g + 25 g -> 75 g).
+    pytest.param(
+        [
+            [R(1, "Flour", "flour", 100, "g"), R(2, "Sugar", "sugar", 50, "g")],
+            [R(3, "Sugar", "sugar", 25, "g"), R(4, "Butter", "butter", 30, "g")],
+        ],
+        [],
+        [
+            G("Flour", "flour", 100, "g", True),
+            G("Sugar", "sugar", 75, "g", True),
+            G("Butter", "butter", 30, "g", True),
+        ],
+        id="first-seen-name-order-across-recipes",
+    ),
+]
+
+
+@pytest.mark.parametrize("reqs_by_recipe,stock,expected", GROCERY_GENERATION_CASES)
+def test_generate_lines_oracle(
+    reqs_by_recipe: list[list[ReqLine]],
+    stock: list[StockRow],
+    expected: list[GroceryLineDTO],
+) -> None:
+    assert_grocery_list_eq(generate_lines(reqs_by_recipe, stock), expected)
+
+
+@pytest.mark.parametrize("reqs_by_recipe,stock,expected", GROCERY_GENERATION_CASES)
+def test_generate_lines_never_emits_a_negative_quantity(
+    reqs_by_recipe: list[list[ReqLine]],
+    stock: list[StockRow],
+    expected: list[GroceryLineDTO],
+) -> None:
+    """§7 interpretation-independent: grocery output never has a negative
+    quantity."""
+    for line in generate_lines(reqs_by_recipe, stock):
+        if line.quantity is not None:
+            assert line.quantity >= 0
+
+
+def test_generate_lines_fully_covered_requirement_emits_no_line() -> None:
+    """§7 interpretation-independent: compatible positive stock that fully covers
+    a requirement emits no line at all — not a zero-quantity one."""
+    assert (
+        generate_lines(
+            [[R(1, "Tomatoes", "tomato", 2, "can")]],
+            [S(10, "tomato", "opaque:can", 3), S(11, "tomato", "opaque:jar", 1)],
+        )
+        == []
+    )
+
+
+def test_generate_lines_inventory_reorder_does_not_change_output() -> None:
+    """§7 interpretation-independent: reordering inventory input does not change
+    grocery values."""
+    reqs = [[R(1, "Tomatoes", "tomato", 3, "can")]]
+    stock = [S(10, "tomato", "opaque:can", 1), S(11, "tomato", "opaque:jar", 1)]
+    assert_grocery_list_eq(
+        generate_lines(reqs, list(reversed(stock))),
+        generate_lines(reqs, stock),
+    )
+
+
+def test_generate_lines_empty_input_is_empty() -> None:
+    assert generate_lines([], []) == []
+    assert generate_lines([[]], []) == []
 
 
 # ===========================================================================
