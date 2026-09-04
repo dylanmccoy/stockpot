@@ -6,12 +6,15 @@ orphaned ingredient children after a PUT or a DELETE.
 """
 
 import inspect
+import json
 from datetime import datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
+from app.main import create_app
 from app.routers import recipes as recipes_router
 
 
@@ -586,3 +589,243 @@ def test_availability_of_a_title_only_recipe_is_empty_and_all_available(
 
 def test_availability_of_a_missing_recipe_is_404(auth_client: TestClient) -> None:
     assert auth_client.get("/api/recipes/999999/availability").status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Cook + per-recipe made-history — POST /api/recipes/{id}/cook,
+# GET /api/recipes/{id}/cook-logs (spec.md §5.4, §4.5, §7).
+#
+# The locked R-7 oracle for this surface is `tests/test_cook_contract.py`; these
+# cases add coverage through the primary `auth_client` fixture and guard the
+# invariants this phase must not regress.
+# --------------------------------------------------------------------------- #
+
+_DEDUCTION_KEYS = {
+    "item",
+    "normalized_name",
+    "requested",
+    "requested_unit",
+    "deducted",
+    "deducted_unit",
+    "inventory_unit",
+    "before",
+    "after",
+    "applied",
+    "reason",
+}
+_DEDUCTION_REASONS = {
+    "ok",
+    "clamped to 0",
+    "to taste",
+    "not in inventory",
+    "have uncertain (incompatible unit)",
+}
+
+
+def _inventory_base(auth_client: TestClient, match_name: str, unit_bucket: str) -> float:
+    for row in auth_client.get("/api/inventory").json():
+        if row["match_name"] == match_name and row["unit_bucket"] == unit_bucket:
+            return row["quantity_base"]
+    raise AssertionError(f"no {match_name!r}/{unit_bucket!r} inventory row")
+
+
+def test_cook_writes_a_log_and_deducts_the_compatible_bucket(
+    auth_client: TestClient,
+) -> None:
+    rid = auth_client.post(
+        "/api/recipes",
+        json={"title": "Sauce", "ingredients": [{"item": "Tomatoes", "quantity": 3, "unit": "can"}]},
+    ).json()["id"]
+    auth_client.post("/api/inventory", json={"item": "Tomatoes", "quantity": 5, "unit": "can"})
+
+    resp = auth_client.post(f"/api/recipes/{rid}/cook", json={"multiplier": 1})
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+
+    assert body["recipe_id"] == rid
+    assert body["recipe_title"] == "Sauce"
+    assert body["deducted"] is True
+    assert body["cooked_by"]["username"] == "tester"
+    assert body["cooked_at"].endswith("+00:00") or body["cooked_at"].endswith("Z")
+
+    (entry,) = body["deductions"]
+    assert set(entry) == _DEDUCTION_KEYS
+    assert entry["reason"] == "ok"
+    assert entry["applied"] is True
+    assert (entry["before"], entry["deducted"], entry["after"]) == (5.0, 3.0, 2.0)
+
+    assert _inventory_base(auth_client, "tomato", "opaque:can") == 2.0
+
+
+def test_cook_clamps_and_leaves_the_incompatible_bucket_untouched(
+    auth_client: TestClient,
+) -> None:
+    rid = auth_client.post(
+        "/api/recipes",
+        json={"title": "Sauce", "ingredients": [{"item": "Tomatoes", "quantity": 3, "unit": "can"}]},
+    ).json()["id"]
+    auth_client.post("/api/inventory", json={"item": "Tomatoes", "quantity": 2, "unit": "can"})
+    auth_client.post("/api/inventory", json={"item": "Tomatoes", "quantity": 9, "unit": "jar"})
+
+    (entry,) = auth_client.post(f"/api/recipes/{rid}/cook", json={}).json()["deductions"]
+    assert entry["reason"] == "clamped to 0"
+    assert (entry["before"], entry["deducted"], entry["after"]) == (2.0, 2.0, 0.0)
+
+    assert _inventory_base(auth_client, "tomato", "opaque:can") == 0.0
+    assert _inventory_base(auth_client, "tomato", "opaque:jar") == 9.0  # never spent
+
+
+def test_cook_multiplier_scales_need_and_to_taste_line_never_hits_typeerror(
+    auth_client: TestClient,
+) -> None:
+    """R-1 regression guard: a `salt to taste` line survives `* multiplier` and
+    yields a vacuous, never-applied `"to taste"` deduction entry."""
+    rid = auth_client.post(
+        "/api/recipes",
+        json={
+            "title": "Sauce",
+            "ingredients": [{"item": "Tomatoes", "quantity": 3, "unit": "can"}, "salt to taste"],
+        },
+    ).json()["id"]
+    auth_client.post("/api/inventory", json={"item": "Tomatoes", "quantity": 10, "unit": "can"})
+
+    resp = auth_client.post(f"/api/recipes/{rid}/cook", json={"multiplier": 2})
+    assert resp.status_code == 201, resp.text
+    tomato, salt = resp.json()["deductions"]
+
+    assert (tomato["requested"], tomato["deducted"], tomato["after"]) == (6.0, 6.0, 4.0)
+    assert salt["item"] == "salt"
+    assert salt["reason"] == "to taste"
+    assert salt["applied"] is False
+    for key in _DEDUCTION_KEYS - {"item", "applied", "reason"}:
+        assert salt[key] is None, key
+
+    assert _inventory_base(auth_client, "tomato", "opaque:can") == 4.0
+
+
+def test_cook_deduct_false_logs_without_touching_stock(auth_client: TestClient) -> None:
+    rid = auth_client.post(
+        "/api/recipes",
+        json={"title": "Sauce", "ingredients": [{"item": "Tomatoes", "quantity": 3, "unit": "can"}]},
+    ).json()["id"]
+    auth_client.post("/api/inventory", json={"item": "Tomatoes", "quantity": 5, "unit": "can"})
+
+    body = auth_client.post(f"/api/recipes/{rid}/cook", json={"deduct": False}).json()
+    assert body["deducted"] is False
+    assert body["deductions"] == []
+    assert _inventory_base(auth_client, "tomato", "opaque:can") == 5.0  # untouched
+
+    logs = auth_client.get(f"/api/recipes/{rid}/cook-logs").json()
+    assert len(logs) == 1 and logs[0]["deducted"] is False
+
+
+def test_cook_logs_are_newest_first_across_both_modes(auth_client: TestClient) -> None:
+    rid = auth_client.post(
+        "/api/recipes",
+        json={"title": "Sauce", "ingredients": [{"item": "Tomatoes", "quantity": 1, "unit": "can"}]},
+    ).json()["id"]
+    auth_client.post("/api/inventory", json={"item": "Tomatoes", "quantity": 10, "unit": "can"})
+
+    assert auth_client.post(f"/api/recipes/{rid}/cook", json={"deduct": False}).status_code == 201
+    assert auth_client.post(f"/api/recipes/{rid}/cook", json={"multiplier": 2}).status_code == 201
+    assert auth_client.post(f"/api/recipes/{rid}/cook", json={"multiplier": 3}).status_code == 201
+
+    rows = auth_client.get(f"/api/recipes/{rid}/cook-logs").json()
+    assert [r["id"] for r in rows] == sorted((r["id"] for r in rows), reverse=True)
+    assert [r["multiplier"] for r in rows] == [3.0, 2.0, 1.0]
+    for row in rows:
+        for entry in row["deductions"]:
+            assert set(entry) == _DEDUCTION_KEYS
+
+
+def test_cook_and_cook_logs_on_a_missing_recipe_are_404(auth_client: TestClient) -> None:
+    assert auth_client.post("/api/recipes/999999/cook", json={}).status_code == 404
+    assert auth_client.get("/api/recipes/999999/cook-logs").status_code == 404
+
+
+def test_cook_requires_auth(client: TestClient) -> None:
+    assert client.post("/api/recipes/1/cook", json={}).status_code == 401
+    assert client.get("/api/recipes/1/cook-logs").status_code == 401
+
+
+def test_cook_rejects_a_non_positive_or_non_finite_multiplier(auth_client: TestClient) -> None:
+    rid = auth_client.post("/api/recipes", json={"title": "Sauce"}).json()["id"]
+    for bad in (0, -1, "Infinity", "NaN"):
+        assert auth_client.post(
+            f"/api/recipes/{rid}/cook", json={"multiplier": bad}
+        ).status_code == 422
+
+
+def test_every_stored_deduction_entry_validates_against_the_read_model(
+    auth_client: TestClient,
+) -> None:
+    """All five `reason` branches over one recipe; every entry the API returns
+    has all 11 keys and a `reason` in the allowed set."""
+    rid = auth_client.post(
+        "/api/recipes",
+        json={
+            "title": "Everything",
+            "ingredients": [
+                {"item": "Tomatoes", "quantity": 3, "unit": "can"},   # not in inventory
+                {"item": "Beans", "quantity": 2, "unit": "can"},      # incompatible bucket
+                {"item": "Flour", "quantity": 100, "unit": "g"},      # ok
+                {"item": "Sugar", "quantity": 500, "unit": "g"},      # clamped to 0
+                "pepper to taste",                                    # to taste
+            ],
+        },
+    ).json()["id"]
+    auth_client.post("/api/inventory", json={"item": "Beans", "quantity": 2, "unit": "jar"})
+    auth_client.post("/api/inventory", json={"item": "Flour", "quantity": 1000, "unit": "g"})
+    auth_client.post("/api/inventory", json={"item": "Sugar", "quantity": 100, "unit": "g"})
+
+    entries = auth_client.post(f"/api/recipes/{rid}/cook", json={}).json()["deductions"]
+    seen = set()
+    for entry in entries:
+        assert set(entry) == _DEDUCTION_KEYS
+        assert entry["reason"] in _DEDUCTION_REASONS
+        seen.add(entry["reason"])
+    assert seen == _DEDUCTION_REASONS
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(lambda e: e.__setitem__("surprise", 1), id="stray-key"),
+        pytest.param(lambda e: e.__setitem__("reason", "made up"), id="unlisted-reason"),
+    ],
+)
+def test_a_drifted_stored_deduction_entry_is_a_500_on_read(
+    test_settings, test_engine, mutate
+) -> None:
+    """N7: a stored entry with a stray key *or* an unlisted `reason` fails the
+    `CookLogRead` validation on read — a loud 500, never a silent shape change."""
+    app = create_app(test_settings, test_engine)
+    with TestClient(app, raise_server_exceptions=False) as c:
+        reg = c.post(
+            "/api/auth/register",
+            json={"username": "n7user", "password": "correct horse battery", "code": test_settings.registration_code},
+        )
+        assert reg.status_code == 201, reg.text
+        c.headers["Authorization"] = f"Bearer {reg.json()['token']}"
+
+        rid = c.post(
+            "/api/recipes",
+            json={"title": "N7", "ingredients": [{"item": "Tomatoes", "quantity": 3, "unit": "can"}]},
+        ).json()["id"]
+        c.post("/api/inventory", json={"item": "Tomatoes", "quantity": 5, "unit": "can"})
+        assert c.post(f"/api/recipes/{rid}/cook", json={}).status_code == 201
+        assert c.get(f"/api/recipes/{rid}/cook-logs").status_code == 200  # clean first
+
+        with test_engine.begin() as conn:
+            row = conn.execute(
+                text("SELECT id, deductions FROM cook_logs ORDER BY id LIMIT 1")
+            ).one()
+            raw = row.deductions
+            entries = json.loads(raw) if isinstance(raw, str) else list(raw)
+            mutate(entries[0])
+            conn.execute(
+                text("UPDATE cook_logs SET deductions = :d WHERE id = :i"),
+                {"d": json.dumps(entries), "i": row.id},
+            )
+
+        assert c.get(f"/api/recipes/{rid}/cook-logs").status_code == 500
