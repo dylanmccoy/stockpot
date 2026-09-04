@@ -15,6 +15,6 @@ export { Badge } from "./Badge";
 export type { BadgeProps, BadgeTone } from "./Badge";
 export { Stepper } from "./Stepper";
 export type { StepperProps } from "./Stepper";
-export { CookLogRow, deductionSummary } from "./CookLogRow";
+export { CookLogRow } from "./CookLogRow";
 export type { CookLogRowProps } from "./CookLogRow";
 export { DeductionDetail } from "./DeductionDetail";

@@ -236,7 +236,7 @@ function AvailabilityPanel({
       )}
 
       {query.isError && (
-        <div className={styles.availError} role="alert">
+        <div className={styles.panelError} role="alert">
           <p className={styles.muted}>Couldn’t check availability.</p>
           <Button variant="secondary" onClick={() => query.refetch()}>
             Retry
@@ -359,7 +359,7 @@ function HistoryPanel({ id }: { id: number }) {
       )}
 
       {query.isError && (
-        <div className={styles.availError} role="alert">
+        <div className={styles.panelError} role="alert">
           <p className={styles.muted}>Couldn’t load this recipe’s history.</p>
           <Button variant="secondary" onClick={() => query.refetch()}>
             Retry

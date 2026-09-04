@@ -67,7 +67,18 @@ export function CookLogRow({ log, showRecipeTitle = false }: CookLogRowProps) {
         </span>
         <span className={styles.times}>{times}</span>
 
-        {expandable ? (
+        {/* Explicit deduct on/off token (spec §10.8 shared-row line). */}
+        {log.deducted ? (
+          <Badge tone="ok" icon="✓">
+            stock updated
+          </Badge>
+        ) : (
+          <Badge tone="neutral" icon="•">
+            logged — stock not changed
+          </Badge>
+        )}
+
+        {expandable && (
           <button
             type="button"
             className={styles.toggle}
@@ -78,10 +89,6 @@ export function CookLogRow({ log, showRecipeTitle = false }: CookLogRowProps) {
             <span aria-hidden="true">{open ? "▾" : "▸"}</span>
             {deductionSummary(log.deductions)}
           </button>
-        ) : (
-          <Badge tone="neutral" icon="•">
-            logged — stock not changed
-          </Badge>
         )}
       </div>
 

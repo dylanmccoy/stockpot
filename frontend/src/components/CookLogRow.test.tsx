@@ -2,48 +2,23 @@ import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CookLogRow, deductionSummary } from "./CookLogRow";
+import { makeCookLog, makeDeduction as ded } from "../test/handlers";
 import { formatDateTime } from "../lib/format";
-import type {
-  CookDeductionRead,
-  CookDeductionReason,
-  CookLogRead,
-} from "../types";
+import type { CookLogRead } from "../types";
 
 const AT = "2026-09-01T12:00:00+00:00";
 
-function ded(
-  reason: CookDeductionReason,
-  item: string,
-  extra: Partial<CookDeductionRead> = {},
-): CookDeductionRead {
-  return {
-    item,
-    normalized_name: item,
-    requested: 100,
-    requested_unit: "g",
-    deducted: 80,
-    deducted_unit: "g",
-    inventory_unit: "g",
-    before: 200,
-    after: 120,
-    applied: reason === "ok" || reason === "clamped to 0",
-    reason,
-    ...extra,
-  };
-}
-
+/** A deducted cook by "sam" at `AT` — the shape most row tests want. */
 function log(overrides: Partial<CookLogRead> = {}): CookLogRead {
-  return {
+  return makeCookLog({
     id: 7,
-    recipe_id: 1,
-    recipe_title: "Buttermilk Pancakes",
     multiplier: 2,
     deducted: true,
     cooked_at: AT,
     cooked_by: { id: 1, username: "sam" },
     deductions: [ded("ok", "flour")],
     ...overrides,
-  };
+  });
 }
 
 function renderRow(l: CookLogRead, showRecipeTitle = false) {
@@ -61,6 +36,7 @@ describe("CookLogRow — collapsed line", () => {
     expect(within(row).getByText(formatDateTime(AT))).toBeInTheDocument();
     expect(within(row).getByText("sam")).toBeInTheDocument();
     expect(within(row).getByText("×1½")).toBeInTheDocument();
+    expect(within(row).getByText("stock updated")).toBeInTheDocument();
   });
 
   it("falls back to a placeholder when `cooked_by` is null", () => {
@@ -123,15 +99,17 @@ describe("CookLogRow — deduction accordion", () => {
       expect(within(table).getByText(chip)).toBeInTheDocument();
     }
     // requested → deducted, before → after, in the inventory unit
-    expect(within(table).getAllByText("100 → 80 g").length).toBeGreaterThan(0);
-    expect(within(table).getAllByText("200 → 120 g").length).toBeGreaterThan(0);
+    expect(within(table).getAllByText("50 → 40 g").length).toBeGreaterThan(0);
+    expect(within(table).getAllByText("100 → 60 g").length).toBeGreaterThan(0);
   });
 
   it("guards a deducted flag that arrives with an empty deductions list", () => {
     renderRow(log({ deducted: true, deductions: [] }));
-    expect(
-      screen.getByText("logged — stock not changed"),
-    ).toBeInTheDocument();
+    // The on/off token still reads "stock updated", but with nothing to show
+    // there is no accordion toggle and no table.
+    expect(screen.getByText("stock updated")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 });
 

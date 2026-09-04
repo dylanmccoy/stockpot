@@ -7,15 +7,14 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { server } from "../test/server";
 import { errorHandlers } from "../test/errorHandlers";
 import { makeQueryClient } from "../test/helpers";
-import { sampleCookLog, sampleRecipe } from "../test/handlers";
+import {
+  makeCookLog,
+  makeDeduction,
+  sampleCookLog,
+  sampleRecipe,
+} from "../test/handlers";
 import { ToastProvider } from "../components";
-import type {
-  AvailabilityReport,
-  CookDeductionRead,
-  CookDeductionReason,
-  CookLogRead,
-  RecipeRead,
-} from "../types";
+import type { AvailabilityReport, CookLogRead, RecipeRead } from "../types";
 import RecipeDetail, {
   amountLabel,
   asOpenableUrl,
@@ -84,37 +83,10 @@ function useCookLogs(logs: CookLogRead[]) {
 
 const AT = "2026-08-30T09:00:00+00:00";
 
-function dedFixture(
-  reason: CookDeductionReason,
-  item: string,
-): CookDeductionRead {
-  return {
-    item,
-    normalized_name: item,
-    requested: 50,
-    requested_unit: "g",
-    deducted: 40,
-    deducted_unit: "g",
-    inventory_unit: "g",
-    before: 100,
-    after: 60,
-    applied: reason === "ok" || reason === "clamped to 0",
-    reason,
-  };
-}
+const dedFixture = makeDeduction;
 
-function cookLogFixture(overrides: Partial<CookLogRead> = {}): CookLogRead {
-  return {
-    ...sampleCookLog,
-    id: 100,
-    recipe_id: 1,
-    multiplier: 1,
-    deducted: false,
-    cooked_at: AT,
-    deductions: [],
-    ...overrides,
-  };
-}
+const cookLogFixture = (overrides: Partial<CookLogRead> = {}): CookLogRead =>
+  makeCookLog({ id: 100, cooked_at: AT, ...overrides });
 
 function renderDetail(path = "/recipes/1") {
   const queryClient = makeQueryClient();

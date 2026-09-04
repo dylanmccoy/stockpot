@@ -36,7 +36,11 @@ const CHIP: Record<CookDeductionReason, ChipMeta> = {
 type Row = CookDeductionRead & { key: number };
 
 /** `a → b` with the unit word appended once; a `null` side shows as `—`. */
-function span(a: number | null, b: number | null, unit: string | null): string {
+function rangeLabel(
+  a: number | null,
+  b: number | null,
+  unit: string | null,
+): string {
   const left = formatQuantity(a, unit) || "—";
   const right = formatQuantity(b, unit) || "—";
   const tail = unit ? ` ${unit}` : "";
@@ -49,13 +53,13 @@ const columns: Column<Row>[] = [
     key: "amount",
     header: "Requested → deducted",
     align: "end",
-    render: (d) => span(d.requested, d.deducted, d.inventory_unit),
+    render: (d) => rangeLabel(d.requested, d.deducted, d.inventory_unit),
   },
   {
     key: "stock",
     header: "Before → after",
     align: "end",
-    render: (d) => span(d.before, d.after, d.inventory_unit),
+    render: (d) => rangeLabel(d.before, d.after, d.inventory_unit),
   },
   {
     key: "reason",
