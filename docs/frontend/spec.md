@@ -442,8 +442,8 @@ interface GroceryListCreate {
 
 interface GroceryListItemIn {           // POST .../items (manual)
   item: string;                        // 1..200
-  quantity?: number | null;            // > 0 when set, finite
-  unit?: string | null;                // <= 30
+  quantity: number | null;             // required key (may be null); > 0 when set, finite
+  unit: string | null;                 // required key (may be null); <= 30
 }
 
 interface GroceryListItemUpdate {       // PATCH .../items/{id}

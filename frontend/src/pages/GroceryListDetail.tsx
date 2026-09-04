@@ -104,16 +104,19 @@ function validateLineDraft(draft: GroceryLineDraft): LineDraftErrors | null {
   return Object.keys(errors).length ? errors : null;
 }
 
-/** Draft → `POST .../items` body (spec §5 "Grocery"). Unlike the PATCH below,
- *  `quantity` and `unit` are each independently optional here — no atomic
- *  pair on add. */
+/** Draft → `POST .../items` body (spec §5 "Grocery"). `quantity` and `unit`
+ *  are each independently settable — no atomic pair on add — but unlike the
+ *  PATCH below, the backend schema requires both keys present (possibly
+ *  `null`): an amount-less manual line sends `quantity: null, unit: null`
+ *  explicitly rather than omitting the keys (ticket 18 re-diff). */
 export function buildAddLine(draft: GroceryLineDraft): GroceryListItemIn {
-  const body: GroceryListItemIn = { item: draft.item.trim() };
   const raw = draft.quantity.trim();
-  if (raw) body.quantity = Number(raw);
   const unit = draft.unit.trim();
-  if (unit) body.unit = unit;
-  return body;
+  return {
+    item: draft.item.trim(),
+    quantity: raw ? Number(raw) : null,
+    unit: unit ? unit : null,
+  };
 }
 
 /** Which fields the edit draft actually moves off the line — the single place
