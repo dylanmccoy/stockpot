@@ -6,7 +6,7 @@ newest-first global feed and a by-id detail read, both surviving recipe deletion
 
 **Blocked by:** `phase-5b`.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** create `backend/app/routers/cook_logs.py`, `backend/tests/test_cook_logs.py`; edit `backend/app/schemas/cook_logs.py` (add `CookLogList`), `backend/app/main.py`, `docs/phases/phase-5.md`, `docs/plan.md`.
 
