@@ -4,7 +4,7 @@
 
 **Blocked by:** None (the real-backend integration suite already exists).
 
-**Status:** in-review
+**Status:** done
 
 - [x] Add `npm run test:integration` to GitHub CI with the existing locked backend and frontend dependency installs and a headless Chromium installation.
 
@@ -25,7 +25,8 @@
 ## Comments
 
 - Branch `ci/private-household-deployment-01c`, worktree
-  `.claude/worktrees/private-household-deployment-01c`.
+  `.claude/worktrees/private-household-deployment-01c`. Merged to `main` via
+  PR #85 (squash `06c1647`); all four CI jobs green, new `integration` job 57s.
 - Added an `integration` job to `.github/workflows/ci.yml`: `uv sync --frozen`
   + `npm ci` + `npx playwright install --with-deps chromium` + `npm run
   test:integration`. The existing `playwright.integration.config.ts` is
