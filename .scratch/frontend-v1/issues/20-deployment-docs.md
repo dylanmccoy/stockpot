@@ -4,7 +4,7 @@
 
 **Blocked by:** 19a, 19b. External gate: backend Phase 7 (docs) merged.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** create / edit `frontend/README.md` (or `docs/frontend/deployment.md`). No `frontend/src/` changes. External gate: backend Phase 7 merged.
 
