@@ -1,12 +1,14 @@
 import math
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -61,6 +63,34 @@ def _to_409_if_locked_else_500(request: Request, exc: OperationalError) -> JSONR
     raise exc
 
 
+def _mount_frontend(app: FastAPI, frontend_dist: str) -> None:
+    """Serve the built frontend's entry document and public assets.
+
+    Private-household-deployment ticket 01a. Registered after every API route,
+    so `/api/*` always wins on a path collision. Scope is deliberately narrow:
+    only `dist/index.html` (at `/`) and `dist/assets/*` (Vite's build output) are
+    served — never the checkout, config, or database. Direct navigation/reload
+    of a client-side route (e.g. `/recipes/5`) is out of scope here (ticket 01b);
+    an unbuilt path like that falls through to a plain 404, not the SPA document.
+    """
+    dist_dir = Path(frontend_dist)
+    index_path = dist_dir / "index.html"
+    if not index_path.is_file():
+        raise RuntimeError(
+            f"RECIPE_FRONTEND_DIST={frontend_dist!r} has no index.html "
+            f"(looked for {index_path}). Build the frontend first: "
+            "`cd frontend && npm run build`."
+        )
+
+    assets_dir = dist_dir / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+
+    @app.get("/", include_in_schema=False)
+    def frontend_entry() -> FileResponse:
+        return FileResponse(index_path)
+
+
 def create_app(settings: Settings, engine: Engine) -> FastAPI:
     """Factory to create the FastAPI app with given settings and engine."""
 
@@ -91,6 +121,9 @@ def create_app(settings: Settings, engine: Engine) -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    if settings.frontend_dist:
+        _mount_frontend(app, settings.frontend_dist)
 
     return app
 

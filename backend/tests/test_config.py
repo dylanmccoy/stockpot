@@ -28,3 +28,8 @@ def test_session_ttl_days_negative_raises_validation_error() -> None:
     with pytest.raises(ValidationError) as excinfo:
         Settings(database_url="sqlite://", session_ttl_days=-1)
     assert "session_ttl_days" in str(excinfo.value)
+
+
+def test_frontend_dist_defaults_to_unset() -> None:
+    """Unset preserves API-only operation (private-household-deployment 01a)."""
+    assert Settings(database_url="sqlite://").frontend_dist is None

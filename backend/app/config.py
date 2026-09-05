@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     session_ttl_days: int = Field(30, ge=0)
     allow_registration: bool = False
     registration_code: str | None = None
+    # Opt-in built-frontend serving (private-household-deployment ticket 01a).
+    # Unset (default) preserves API-only operation for existing tests/dev. When
+    # set, it must be the frontend's built `dist/` directory (contains
+    # `index.html` + an `assets/` subdirectory) — `create_app` fails clearly at
+    # startup if that directory doesn't look like a real build.
+    frontend_dist: str | None = None
 
 
 settings = Settings()

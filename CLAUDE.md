@@ -39,6 +39,7 @@ All backend commands run from `backend/`; all frontend commands from `frontend/`
 | Run frontend tests | `npm run test:run` (Vitest + MSW) |
 | Run browser E2E / visual tests | `npm run test:e2e` (Playwright; boots the dev server itself — Vite only, no backend) |
 | Run auth integration E2E vs real backend | `npm run test:integration` (needs `uv` on PATH; `playwright.integration.config.ts` boots an isolated throwaway-DB backend + Vite on dedicated ports) |
+| Run production-serving smoke E2E | `npm run build && npm run test:e2e:production` (needs `uv` on PATH; boots the *built* frontend behind a real backend, one origin, no dev proxy — see root `README.md` "Operating the server" #4) |
 | Update visual baselines | `npm run test:e2e:update` (regenerate on the same OS CI uses) |
 | One-time Playwright browser setup | `npx playwright install --with-deps chromium` (the `--with-deps` half needs root) |
 
