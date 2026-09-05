@@ -53,18 +53,23 @@ and unscheduled — not rejected.
 - Keep forward-only actions explicit and snapshot what was actually applied.
 - Do not introduce an LLM or hosted AI dependency.
 
-## Deferred to v2
+## Larger deferred capabilities
 
-| Feature | Hook already present in v1 | Why deferred |
-|---|---|---|
-| Photo upload | Nullable `recipes.photo_path` | Adds multipart handling, file lifecycle, and a static mount without strengthening the core loop |
-| URL import | Active `recipe_ingredients.raw_text` and structured recipe creation | Adds runtime HTTP, scraping, and an SSRF-sensitive fetch boundary |
-| Recipe research | URL-import preview DTOs can be reused | Depends on URL import and is exploratory rather than transactional |
-| Per-cook reviews | Durable `cook_logs` provide the attachment point | Useful history, but not required to complete the cook/inventory loop |
-| Grocery-receipt OCR | Inventory additive upsert is the apply target | Highest operational cost: native OCR, private files, image limits, and concurrency controls |
+These five were once grouped as "v2". They no longer share a fate, so the
+grouping is retained only as a size band — each has its own position on the
+[post-v1 route](#post-v1-route-2026-09-05), and "v2" is not used as a release
+label anywhere below.
+
+| Feature | Hook already present in v1 | Route position | Why it was deferred |
+|---|---|---|---|
+| URL import | Active `recipe_ingredients.raw_text` and structured recipe creation | **Track 3** | Adds runtime HTTP, scraping, and an SSRF-sensitive fetch boundary |
+| Grocery-receipt OCR | Inventory additive upsert is the apply target | Candidate for **track 4** — ticket 07 decides | Highest operational cost: native OCR, private files, image limits, and concurrency controls |
+| Per-cook reviews | Durable `cook_logs` provide the attachment point | Unscheduled | Useful history, but not required to complete the cook/inventory loop |
+| Recipe research | URL-import preview DTOs can be reused | Unscheduled | Depends on URL import and is exploratory rather than transactional |
+| Photo upload | Nullable `recipes.photo_path` | **Off the route** — owner's decision, photos are not needed | Adds multipart handling, file lifecycle, and a static mount without strengthening the core loop |
 
 The specifications below are execution-ready except for the explicit
-**Before v2** decisions attached to individual features. The archived pre-trim
+**Before implementation** decisions attached to individual features. The archived pre-trim
 plan remains the source for still-earlier exploration, not for missing current
 requirements.
 
@@ -165,7 +170,7 @@ and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-s
   ingredients on 87.7%, byte-identical ingredients on 75.9%. Supported hosts do
   better, because they use their dedicated scraper. Known failure population:
   newsletter/prose sources with no recipe markup, and bot-protected sites.
-- **Before v2 (#R-def):** "stream to a byte cap" must be an actual streaming
+- **Before implementation (#R-def):** "stream to a byte cap" must be an actual streaming
   read that aborts once a running byte counter exceeds the cap — **not**
   `resp.content[:N]` after a full download. Also: `httpx.Client(trust_env=False)`
   (ignore ambient `HTTP(S)_PROXY`), and connect to the **pre-resolved, already
@@ -190,7 +195,7 @@ and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-s
   `query` / web-search mode** — Google Custom Search JSON API is closed to new
   customers and ends 2027-01-01 (#1); revisit with Vertex AI Search / Brave /
   Bing.
-- **Before v2 (#R-def):** the *URL list itself* must be bounded, not only the
+- **Before implementation (#R-def):** the *URL list itself* must be bounded, not only the
   optional `limit` param — after dedupe, `len(urls) > research_max_urls` → 422,
   and the batch runs under a single total deadline so a pile of slow hosts can't
   hang the request.
@@ -223,7 +228,7 @@ and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-s
 - **Deps:** none.
 - **Data-model impact:** additive table; `cook_logs` already carries the FK
   target.
-- **Before v2 (#R-def):** all review-read routes are recipe-scoped, so a review
+- **Before implementation (#R-def):** all review-read routes are recipe-scoped, so a review
   becomes unreachable once its recipe is deleted (its `recipe_id` goes null) —
   the same gap #H5 fixed for cook logs. Add `GET /api/cook-logs/{log_id}/reviews`
   or nest `reviews` in the global cook-log detail so the record stays readable.
@@ -268,7 +273,7 @@ and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-s
   one non-mocked smoke test** — Pillow renders text to PNG, real `_ocr_image`
   reads it back, `skipif` tesseract missing (#12).
 - **Data-model impact:** additive tables only.
-- **Before v2 (#R-def):** (1) the non-mocked smoke test's `skipif` is
+- **Before implementation (#R-def):** (1) the non-mocked smoke test's `skipif` is
   **local-only** — under `CI` a missing `tesseract` binary is a hard failure, so
   a broken install can't ship green. (2) Upload/OCR failure cleanup is explicit:
   stage the image in a temp file, and on any OCR timeout or DB error either
@@ -277,11 +282,11 @@ and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-s
 - *full spec: git 5144c25 §"apply a receipt", §"Grocery receipt → stock"
   done-criterion, findings #5 #11 #12 #17.*
 
-### Recipe research — free-text `query` mode (v2+, after URL-batch research lands)
+### Recipe research — free-text `query` mode (after URL-batch research lands)
 
-- **v1 status:** excluded (whole research feature is v2).
-- **v2 status (planned):** `/api/research/compare` ships URL-batch only.
-- **Hook (arrives with URL import in v2):** `fetch_bytes(url, ...)` —
+- **v1 status:** excluded; the whole research feature is unscheduled.
+- **Planned shape:** `/api/research/compare` ships URL-batch only.
+- **Hook (arrives with URL import, route track 3):** `fetch_bytes(url, ...)` —
   SSRF-guarded, scheme + resolved-IP blocklist, byte cap, content-type check, no
   redirects; `scrape_preview(html, url)` parses HTML → `RecipeImportPreview`.
 - **Work to add on top:**
@@ -304,7 +309,7 @@ and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-s
 | Preparation-descriptor ingredient matching | Limited; leading descriptors match, trailing descriptors do not | `normalize_name`, editable inventory `match_name`, and shared inventory-math consumers | Define safe preparation-word equivalence so `onion, diced` can match inventory `onion`, then apply it consistently to availability, grocery generation, and cook deductions |
 | "What can we make now" | Excluded | `check_availability` exists; runs on one recipe | `GET /api/recipes/makeable` — run it across all, filter `all_available` |
 | Staples / low-stock alerts | Excluded | `inventory_items` row structure | `is_staple: bool` + `min_quantity: float` columns; `GET /api/inventory/low` |
-| Undo for forward-only actions | Excluded | `CookLog.deductions` (requested/deducted/before/after) and `GroceryListItem.applied_quantity/unit` snapshot what was applied; `ReceiptItem.applied_quantity/unit` joins them once receipt OCR lands | One uniform reverse-apply op across cook + grocery (+ receipt in v2); no per-action `/undo` route until designed |
+| Undo for forward-only actions | Excluded | `CookLog.deductions` (requested/deducted/before/after) and `GroceryListItem.applied_quantity/unit` snapshot what was applied; `ReceiptItem.applied_quantity/unit` joins them once receipt OCR lands | One uniform reverse-apply op across cook + grocery (+ receipt, if receipt OCR lands); no per-action `/undo` route until designed |
 | Frontend support for deferred features | Core v1 frontend shipped | Working React SPA, authenticated API adapters, routing, and hand-maintained API types | Add UI for photo and URL import, reviews, receipt OCR, and recipe research as their backend features land; see below |
 | Multi-line ingredient paste | Excluded; caller pre-splits | §5.2 per-line ingredient build; `parse_ingredient` per line | Server-side split of a pasted block on `\n` (blank/header/bullet handling) before the existing per-line build; `issues.md` §Deferred item D2 |
 | Availability / grocery uncertainty naming | v1 ships `AvailabilityStatus="have_uncertain"` and a negated `nettable` bool | `check_availability` / `generate_lines` set both; locked oracle tables in §7 | Investigate renaming to a positively-phrased `units_comparable` / `incomparable_units`, and a status enum on grocery lines for parity; raised by the frontend track (`frontend/decisions.md` §Q19 follow-up) — no user-facing effect, frontend copy already covers it |
@@ -390,12 +395,13 @@ and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-s
 ### Undo for forward-only actions
 
 - **v1 status:** cook and grocery `submit` are one-shot and forward-only (no
-  uncheck-reversal, no unsubmit, no uncook). Receipt `apply` joins them in v2.
+  uncheck-reversal, no unsubmit, no uncook). Receipt `apply` joins them if
+  receipt OCR lands.
 - **Hook in v1:** Each already snapshots the actual applied state:
   - `CookLog.deductions[]` → each item records `{requested, deducted, before,
     after, reason}`.
   - `GroceryListItem.applied_quantity`, `applied_unit`, `submitted_at`.
-  - (v2) `ReceiptItem.applied_quantity`, `applied_unit`.
+  - (with receipt OCR) `ReceiptItem.applied_quantity`, `applied_unit`.
 - **Work to add:** One uniform reverse operation across all of them. Data is
   present to undo: add back the `deducted`/`applied_quantity` to the respective
   inventory row. Design as a single feature, not separate routes. Consider a
@@ -410,12 +416,16 @@ and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-s
 - **Contract constraint:** backend Pydantic schema changes must be hand-mirrored
   in `frontend/src/types.ts`; do not introduce generated client types.
 - **Work to add as the corresponding backend features land:**
-  - import-from-URL and photo upload controls in RecipeForm;
+  - an import screen for URL import (**track 3**) — a preview the person
+    corrects, then saves through the existing recipe-create adapter; see
+    § URL import above and ticket 09 for the screen itself;
   - a review form and nested past reviews in RecipeDetail;
   - ReceiptUpload (photo → OCR preview → edit → apply);
-  - Research (URL batch → ingredient-frequency table);
-  - `/receipts` and `/research` routes; and
-  - a Vite `/uploads` proxy for read-only recipe photos.
+  - Research (URL batch → ingredient-frequency table); and
+  - `/receipts` and `/research` routes.
+
+  Photo-upload controls and a Vite `/uploads` proxy were previously listed here
+  and are removed: photo upload is off the route.
 - **Tests:** cover each new API adapter and user workflow with the existing
   Vitest/MSW patterns, plus focused browser integration coverage where needed.
 
@@ -519,6 +529,8 @@ These are high-level findings and options, **not decisions, committed scope,
 or an implementation schedule**. No hosting provider, session redesign, or
 ordering relative to v2 has been selected. Provider prices and free-tier limits
 below were checked on 2026-09-04 and should be rechecked before choosing a host.
+This is a dated snapshot, so its "v2" references are preserved as written even
+though the label is no longer used elsewhere in this file.
 
 #### Scope and likely effort
 
@@ -658,9 +670,10 @@ This is comparison information only; no provider is selected.
 
 - **v1 approach:** LAN-only. Token auth via `Authorization: Bearer <token>`
   header (not cookies, so no CSRF protection needed for LAN). No in-app HTTPS;
-  docs at `/docs` (no auth). v1 serves no files at all. When photo upload lands
-  in v2, recipe photos are public at `/uploads` (LAN-safe, not sensitive) and
-  receipt images stay private behind an auth'd route.
+  docs at `/docs` (no auth). v1 serves no files at all. Photo upload is off
+  the route, so nothing is served at `/uploads`; were it ever built, recipe
+  photos would be public there (LAN-safe, not sensitive) while receipt images
+  stay private behind an auth'd route.
 - **Upgrade path (for remote hosting):** Put a reverse proxy (nginx, Caddy,
   Cloudflare Tunnel, …) in front of the app; it handles HTTPS + TLS termination
   + redirects HTTP → HTTPS. The app sees `X-Forwarded-Proto: https` and can
@@ -738,7 +751,7 @@ annoyance. No v1 change.
   is_staple, min_quantity, …}`.
 - **Add:** nullable `food_item_id` FKs on `recipe_ingredients`,
   `inventory_items`, `grocery_list_items` (and `receipt_items` once receipt OCR
-  lands in v2).
+  lands).
 - **Backfill:** from `match_name` clusters (all inventory rows with the same
   `match_name` → one `FoodItem`; point all rows to it).
 - **Normalization:** `normalize.py` output → lookup in `FoodItem` table; if
@@ -765,13 +778,13 @@ Extensions must not break these architectural choices:
    owns the single transaction. On `IntegrityError` or lock timeout, the
    endpoint returns **409, not 500**.
 
-3. **No LLM / AI services.** When research and receipt parsing land in v2 they
+3. **No LLM / AI services.** When research and receipt parsing land, they
    stay pure heuristics. If a future feature wants an LLM (e.g., "suggest recipes
    based on inventory"), it is out of scope for this app's ethos; discuss with
    the household before considering it.
 
 4. **No live network in tests.** v1 has no outbound calls. When `fetch_bytes`
-   (URL import + research) and `_ocr_image` (receipt OCR) arrive in v2 they are
+   (URL import + research) and `_ocr_image` (receipt OCR) arrive, they are
    the only network/subprocess seams, and both must be mocked offline. New
    network calls follow the same pattern.
 
@@ -780,7 +793,7 @@ Extensions must not break these architectural choices:
    `types.ts` manually — it keeps the frontend author aware of contract changes.
 
 6. **Forward-only writes stay forward-only.** Cook and grocery `submit` (v1),
-   and receipt `apply` (v2), do not unwind. Until undo is designed as one
+   and receipt `apply` (if built), do not unwind. Until undo is designed as one
    uniform feature (see Deferred), no `POST /{resource}/:id/undo` route.
 
 ## Rejected outright (not deferred)
@@ -796,4 +809,4 @@ flipped).
 | `python-jose` / `pyjwt` (JWT) | v1 uses opaque session tokens (`secrets.token_urlsafe(32)`) stored in the database. No signing secret to manage; clean revocation (delete the row). JWTs are justified for stateless, multi-service auth; single service + LAN + token revocation = sessions are simpler. |
 | `inflect` (singularize library) | v1 uses a naive hand-tuned singularize (irregular map + suffix rules). `inflect` is overkill for this bounded domain; edge cases are fixed manually or via `FoodItem` aliases. |
 | Any LLM/AI service (OpenAI API, Anthropic, etc.) | v1's no-LLM constraint (research and receipt parsing are pure heuristics). If a future feature genuinely needs an LLM, it is a separate system; do not bundle it into this app. The household has explicitly opted for on-device / pure-heuristic approaches. |
-| Any web-search SDK bundled into the app | Research ships URL-batch only; `query` mode is deferred (v2+). If a web-search service is added later (e.g., Brave Search SDK), add it as a *new* feature, not a bundled dependency. |
+| Any web-search SDK bundled into the app | Research ships URL-batch only; `query` mode is deferred and unscheduled. If a web-search service is added later (e.g., Brave Search SDK), add it as a *new* feature, not a bundled dependency. |
