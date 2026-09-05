@@ -44,6 +44,7 @@ close: `docs/phases/phase-N.md`. Ticket dependency order and the R-7 rules:
 | `normalize.py` | Pure: food-name normalization. |
 | `units.py` | Pure: `normalize_unit_token`, `bucket_of`, `to_base`/`from_base`, `Quantity`. |
 | `security.py` | Password hashing, session-token mint/verify, `get_current_user`. |
+| `backup.py` | `create_backup()` — live SQLite snapshot via the online backup API (private-household-deployment ticket 02a). CLI wrapper: `scripts/backup.py`. |
 | `schemas/` | Pydantic request/response models, one module per resource, re-exported from `schemas/__init__.py`. `*Read` uses `from_attributes=True`. |
 | `routers/` | One `APIRouter` per resource, each with its own `/api/<x>` prefix. Register in `main.py` via `app.include_router(...)`. |
 | `services/ingredient_parse.py` | Pure: pasted-line → structured ingredient. |

@@ -114,18 +114,39 @@ RECIPE_ALLOW_REGISTRATION=true RECIPE_REGISTRATION_CODE=<code> \
 
 ### 2. Backup
 
-Run from the repo root, server can stay up:
+Server can stay up — run from `backend/` (private-household-deployment ticket
+02a):
 
 ```bash
-sqlite3 backend/recipe.db ".backup 'backend/recipe-$(date +%F).db'"
+uv run python scripts/backup.py --dest-dir /path/outside/the/checkout
 ```
 
-Use `.backup`, not `cp` — it's safe to run against a live database (SQLite's
-online backup API), where a raw file copy of a database mid-write can capture
-a torn, corrupt snapshot. There are no migrations in v1, so this is the only
-thing standing between a `models.py` schema change and total data loss. Take a
-backup before every schema change and on whatever cadence your deployment
-needs.
+`--dest-dir` should be a directory outside the checkout and outside
+`frontend/dist` (never inside anything the server serves as static assets),
+readable only by the operator — the script `chmod`s a freshly-created
+destination directory and every snapshot file to `0700`/`0600`. `--source`
+defaults to the configured `RECIPE_DATABASE_URL`; pass it explicitly to back
+up a different database file.
+
+Uses SQLite's online backup API, not a raw file copy — a raw copy of a
+database mid-write can capture a torn, corrupt snapshot, and `.backup()` is
+safe to run against a live, in-use database. A snapshot is written under a
+temp name and renamed to its final `recipe-<UTC timestamp>.db` name only after
+it completes successfully:
+
+- **Success** — prints `backup ok: <path>` and exits 0. The new file is the
+  only observable change; nothing about it is announced elsewhere yet
+  (freshness/retention reporting is ticket 07b).
+- **Failure** — a missing source database, an unwritable `--dest-dir`, or a
+  copy interrupted partway prints `backup failed: <reason>` to stderr, exits
+  1, creates no new file, and leaves every earlier snapshot in `--dest-dir`
+  untouched.
+
+There are no migrations in v1, so this is the only thing standing between a
+`models.py` schema change (or any other data-affecting maintenance) and total
+data loss. Take a backup before every schema change and on whatever cadence
+your deployment needs — ticket 07a covers running it unattended on a
+schedule.
 
 ### 3. Schema reset / restore
 
@@ -140,7 +161,7 @@ rm backend/recipe.db
 
 # restore from a snapshot:
 #   1. stop the server
-cp backend/recipe-2026-09-04.db backend/recipe.db
+cp /path/outside/the/checkout/recipe-20260904T153000Z.db backend/recipe.db
 #   2. restart
 ```
 
