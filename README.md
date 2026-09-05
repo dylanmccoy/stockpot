@@ -93,7 +93,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Four runbooks, in the order you'll actually need them. All four are the same
+Five runbooks, in the order you'll actually need them. All five are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -159,7 +159,7 @@ rm backend/recipe.db
 #      recreates the schema
 (cd backend && uv run uvicorn app.main:app --reload)
 
-# restore from a snapshot:
+# restore from a snapshot (rehearse it in isolation first — runbook 5):
 #   1. stop the server
 cp /path/outside/the/checkout/recipe-20260904T153000Z.db backend/recipe.db
 #   2. restart
@@ -204,6 +204,48 @@ cd frontend && npm run build && npm run test:e2e:production
 This runs in CI as the `production-smoke` job. See
 `frontend/playwright.production.config.ts` and `frontend/e2e/production-server.mjs`
 for how the two-boot seed sequence works.
+
+### 5. Restore rehearsal (isolated database)
+
+Recover a snapshot into a **throwaway** database and inspect it with a
+separate app instance, without touching live data (private-household-deployment
+ticket 02b; replacing the live database in place, with writers stopped, is
+ticket 02c):
+
+```bash
+cd backend
+uv run python scripts/restore.py \
+  --snapshot /path/outside/the/checkout/recipe-20260904T153000Z.db \
+  --target /tmp/recipe-rehearsal.db
+```
+
+- `--snapshot` is a file produced by `scripts/backup.py` (runbook 2). It is
+  validated — real SQLite, passes `integrity_check`, has the application's
+  tables — and only ever read.
+- `--target` must **not** already exist: this step never overwrites a
+  database. Recovering onto a live database in place is out of scope here.
+- Before the recovered database is published, every row in `sessions` is
+  deleted. A session token captured from the snapshot is refused (`401`); you
+  sign in afresh to inspect the recovered household, and any session revoked
+  before the snapshot stays revoked. The recovered file is `chmod`ed to
+  `0600`.
+- **Success** prints `restore ok: <target>` and exits 0. Point an isolated
+  app instance at it on its own port:
+
+  ```bash
+  RECIPE_DATABASE_URL=sqlite:////tmp/recipe-rehearsal.db \
+    uv run uvicorn app.main:app --port 8001
+  ```
+
+- **Failure** — a missing or invalid snapshot, or a target that already
+  exists — prints `restore failed: <reason>` to stderr, exits 1, and creates
+  no target database. Delete the rehearsal file when you're done.
+
+The `test_restore.py` / `test_restore_cli.py` suites run this whole path
+against disposable data in the `backend` CI job: seed a live database,
+snapshot it, diverge it, recover into a fresh target, and confirm a factory
+app on the target sees the snapshot's records, not the later change, and
+refuses the snapshot's tokens.
 
 ## v1 workflows
 
