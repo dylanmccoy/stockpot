@@ -159,16 +159,22 @@ RECIPE_FRONTEND_DIST=$(pwd)/../frontend/dist uv run uvicorn app.main:app
 
 `RECIPE_FRONTEND_DIST` must be the built `dist/` directory (`index.html` +
 `assets/`) — `create_app` refuses to start with a clear error if it doesn't
-look like a real build. Only `/` (the entry document) and `dist/assets/*` are
-served this way; direct navigation to a bookmarked/reloaded client-side route
-(e.g. reloading `/recipes/5`) isn't wired up yet (ticket 01b) — everything
-reached by clicking through the app from `/` works today.
+look like a real build. `dist/assets/*` is served as static files; every other
+GET that isn't `/api/*` falls back to the entry document (ticket 01b), so a
+household member can open or reload a bookmarked client-side route directly —
+`/recipes/5`, `/login`, `/inventory`, ... — and `react-router` takes over from
+there, including redirecting an anonymous or expired session back to
+`/login?next=...`. An unmatched `/api/*` path stays a plain JSON 404 and a
+missing `dist/assets/*` file stays a plain 404 — neither ever falls back to
+the entry document.
 
 A deterministic smoke test exercises this end to end — build, boot with
 registration briefly open to seed one account (the shipped build has no
 sign-up UI), boot again with registration closed, then drive login, a wrong
-password, logout, a recipe write/read, an unauthenticated API request, and the
-closed-registration checks through a real browser:
+password, logout, a recipe write/read, direct-link/reload of a nested route,
+session hydration and invalid-session redirection on reload, an unauthenticated
+API request, an unknown API path, a missing asset, and the closed-registration
+checks through a real browser:
 
 ```bash
 cd frontend && npm run build && npm run test:e2e:production

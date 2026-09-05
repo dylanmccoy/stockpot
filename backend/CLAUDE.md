@@ -48,7 +48,7 @@ close: `docs/phases/phase-N.md`. Ticket dependency order and the R-7 rules:
 | `routers/` | One `APIRouter` per resource, each with its own `/api/<x>` prefix. Register in `main.py` via `app.include_router(...)`. |
 | `services/ingredient_parse.py` | Pure: pasted-line → structured ingredient. |
 | `services/inventory_math.py` | Pure calc layer for inventory / availability / grocery / cook (spec §4). |
-| `main.py` | Builds the `FastAPI` app, CORS, `include_router`; opt-in built-frontend serving when `Settings.frontend_dist` is set (`_mount_frontend`, ticket 01a). Schema = a lifespan `Base.metadata.create_all()` — no migrations. |
+| `main.py` | Builds the `FastAPI` app, CORS, `include_router`; opt-in built-frontend serving when `Settings.frontend_dist` is set (`_mount_frontend`: entry doc + assets in ticket 01a, client-side-route fallback in 01b). Schema = a lifespan `Base.metadata.create_all()` — no migrations. |
 
 ## Invariants agents keep re-deriving
 
