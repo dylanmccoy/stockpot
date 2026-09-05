@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** in-review
+**Status:** done
 
 - [x] Provide a controlled local provisioning procedure using existing registration behavior and an explicit target configuration; close the registration window afterward.
   - `backend/app/provision.py` + `backend/scripts/provision.py`: `provision_accounts(database_url, [(username, password), ...])` applies `RegisterRequest` validation and `app.security.hash_password`, with a case-insensitive username check that mirrors `routers/auth.py::register`'s (kept inline — a boundary change, not a domain-service refactor). Explicit target: `--database-url` (defaults to `RECIPE_DATABASE_URL`, echoed). The window is never opened — the script writes to the stopped deployment's database — so "closed afterward" holds by construction and is verified as a real open-then-closed transition by `test_registration_open_then_refused_after_closure`, plus the runbook's `register` -> 403 check.
