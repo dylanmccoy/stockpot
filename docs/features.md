@@ -208,6 +208,8 @@ requirements.
 
 | Feature | v1 status | Hook already in place | Work to add |
 | --- | --- | --- | --- |
+| Edit recipes | Partially shipped; edit form exists but has no discoverable entry point | `/recipes/:id/edit`, the pre-filled `RecipeForm`, and PUT full-replace behavior already work | Add an "Edit recipe" action to Recipe Detail and cover navigation, responsive layout, and accessibility |
+| Preparation-descriptor ingredient matching | Limited; leading descriptors match, trailing descriptors do not | `normalize_name`, editable inventory `match_name`, and shared inventory-math consumers | Define safe preparation-word equivalence so `onion, diced` can match inventory `onion`, then apply it consistently to availability, grocery generation, and cook deductions |
 | "What can we make now" | Excluded | `check_availability` exists; runs on one recipe | `GET /api/recipes/makeable` — run it across all, filter `all_available` |
 | Staples / low-stock alerts | Excluded | `inventory_items` row structure | `is_staple: bool` + `min_quantity: float` columns; `GET /api/inventory/low` |
 | Undo for forward-only actions | Excluded | `CookLog.deductions` (requested/deducted/before/after) and `GroceryListItem.applied_quantity/unit` snapshot what was applied; `ReceiptItem.applied_quantity/unit` joins them once receipt OCR lands | One uniform reverse-apply op across cook + grocery (+ receipt in v2); no per-action `/undo` route until designed |
@@ -215,6 +217,43 @@ requirements.
 | Multi-line ingredient paste | Excluded; caller pre-splits | §5.2 per-line ingredient build; `parse_ingredient` per line | Server-side split of a pasted block on `\n` (blank/header/bullet handling) before the existing per-line build; `issues.md` §Deferred item D2 |
 | Availability / grocery uncertainty naming | v1 ships `AvailabilityStatus="have_uncertain"` and a negated `nettable` bool | `check_availability` / `generate_lines` set both; locked oracle tables in §7 | Investigate renaming to a positively-phrased `units_comparable` / `incomparable_units`, and a status enum on grocery lines for parity; raised by the frontend track (`frontend/decisions.md` §Q19 follow-up) — no user-facing effect, frontend copy already covers it |
 | Display-unit conversion on output | Excluded; every response is canonical-unit | `inventory_items.display_unit` already stores a per-row preference; `units.from_base` already converts | Apply a display preference when serializing availability / grocery / cook-log quantities, or accept a `?units=` request parameter; see below |
+
+### Edit recipes
+
+- **Current behavior:** the frontend already has a pre-filled edit form at
+  `/recipes/:id/edit`. Saving uses the backend's `PUT /api/recipes/{id}`
+  full-replace contract, including removal and reordering of ingredients and
+  steps.
+- **User-facing gap:** Recipe Detail exposes "Delete recipe" but no visible
+  "Edit recipe" action. Editing is therefore implemented but not discoverable
+  through the normal interface.
+- **Work to add:** put a clearly labelled, keyboard-accessible edit action in the
+  Recipe Detail header that navigates with client-side routing. Keep it usable
+  beside the destructive action at mobile and desktop widths. Add a focused
+  Recipe Detail test; no backend, API-adapter, or RecipeForm behavior change is
+  needed.
+- **When to revisit:** the next frontend usability pass.
+
+### Preparation-descriptor ingredient matching
+
+- **Current behavior:** recipe `normalized_name` must exactly equal inventory
+  `match_name` within a compatible unit bucket. `normalize_name` strips known
+  descriptors only when they lead the name, so `diced onion` matches `onion`,
+  while `onion, diced` becomes `onion diced` and does not.
+- **Desired behavior:** preparation wording should not prevent safe matches to
+  the underlying food. The motivating case is a recipe ingredient such as
+  `onion, diced` matching an inventory item whose `match_name` is `onion`.
+- **Before implementation:** decide which comma suffixes, parentheticals, and
+  plain trailing words are equivalent; distinguish preparation descriptors from
+  identity-bearing words such as `ground`, `dried`, `smoked`, and `canned`; and
+  choose whether to extend normalization, produce candidate keys, or introduce
+  aliases through the deferred `FoodItem` model.
+- **Work to add:** lock both match and deliberate non-match examples in the
+  normalization and inventory-math tests first. Apply the chosen semantics
+  consistently to availability checks, grocery generation, and cook deductions,
+  while preserving the ingredient's original display text.
+- **When to revisit:** when real recipes need repeated manual `match_name`
+  corrections, or as part of the `FoodItem` canonical-identity upgrade below.
 
 ### "What can we make now"
 
