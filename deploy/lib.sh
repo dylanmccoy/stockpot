@@ -188,26 +188,77 @@ deploy_retained_builds() {
   find "$RECIPE_DEPLOY_BUILD_ARCHIVE" -mindepth 1 -maxdepth 1 -type d | sort -r
 }
 
-# Copy the built frontend at $1 into the retention area as <UTC timestamp>/,
+# Copy the built frontend at $1 into the retention area as <UTC timestamp>[-NN]/,
 # prune to the newest RECIPE_DEPLOY_BUILD_KEEP, and echo the archived path.
-# Used by update.sh (retain the build being replaced) and rollback.sh (retain
-# the build being switched away from, so a roll-forward is still possible).
+# update.sh calls this with the build it just replaced, so deploy/rollback.sh
+# can return to it. The -NN suffix (zero-padded, lexically after the bare stamp
+# and before the next second) disambiguates a same-second collision without
+# breaking the chronological sort deploy_retained_builds relies on.
 deploy_archive_build() {
-  local src="$1" stamp dest tmp all drop i
+  local src="$1" stamp dest tmp all i
   [ -f "$src/index.html" ] || { echo "deploy: nothing to archive at $src" >&2; return 1; }
   mkdir -p "$RECIPE_DEPLOY_BUILD_ARCHIVE" || return 1
-  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  dest="$RECIPE_DEPLOY_BUILD_ARCHIVE/$stamp"
-  # An update immediately followed by a rollback can land in the same second.
-  [ -e "$dest" ] && dest="$dest-$$"
+  stamp="$RECIPE_DEPLOY_BUILD_ARCHIVE/$(date -u +%Y%m%dT%H%M%SZ)"
+  dest="$stamp"
+  i=1
+  while [ -e "$dest" ]; do
+    dest="$stamp-$(printf '%02d' "$i")"
+    i=$((i + 1))
+  done
   tmp="$dest.tmp"
   rm -rf "$tmp"
   cp -a "$src" "$tmp" || { rm -rf "$tmp"; return 1; }
   mv "$tmp" "$dest" || { rm -rf "$tmp"; return 1; }
-  mapfile -t all < <(find "$RECIPE_DEPLOY_BUILD_ARCHIVE" -mindepth 1 -maxdepth 1 -type d | sort)
-  drop=$(( ${#all[@]} - RECIPE_DEPLOY_BUILD_KEEP ))
-  for (( i = 0; i < drop; i++ )); do
+  # Prune oldest first. deploy_retained_builds is newest-first, so everything
+  # from index RECIPE_DEPLOY_BUILD_KEEP onward is surplus.
+  mapfile -t all < <(deploy_retained_builds)
+  for (( i = RECIPE_DEPLOY_BUILD_KEEP; i < ${#all[@]}; i++ )); do
     rm -rf "${all[i]}"
   done
   printf '%s\n' "$dest"
+}
+
+# Switch the served frontend build to the one at $1 and (re)start the deployment
+# against the one explicit database.
+#
+# If $1 is already <dist>.staging (update.sh built it there for an atomic swap)
+# it is used in place; otherwise it is copied there first, leaving $1 untouched
+# (rollback.sh's source is a retained archive build it must keep). Only two
+# atomic renames then switch it in, so a failure while materialising it (bad
+# copy, or $1 IS the live dir) leaves the running deployment untouched. On a
+# failed start the build that was running is put back and restarted, and this
+# returns non-zero. On success the build it replaced is left at <dist>.prev for
+# the caller to archive or drop.
+deploy_switch_build() {
+  local src="$1"
+  local prev="$RECIPE_DEPLOY_FRONTEND_DIST.prev"
+  local staged="$RECIPE_DEPLOY_FRONTEND_DIST.staging"
+
+  if [ "$src" != "$staged" ]; then
+    rm -rf "$staged"
+    cp -a "$src" "$staged" \
+      || { rm -rf "$staged"; echo "deploy: could not stage the new build from $src" >&2; return 1; }
+  fi
+  [ -f "$staged/index.html" ] \
+    || { rm -rf "$staged"; echo "deploy: staged build has no index.html — nothing switched" >&2; return 1; }
+
+  if deploy_pid_if_running >/dev/null; then
+    echo "-- stopping the running deployment"
+    bash "$_DEPLOY_DIR/control.sh" stop
+  fi
+  echo "-- switching the served build"
+  rm -rf "$prev"
+  [ -e "$RECIPE_DEPLOY_FRONTEND_DIST" ] && mv "$RECIPE_DEPLOY_FRONTEND_DIST" "$prev"
+  mv "$staged" "$RECIPE_DEPLOY_FRONTEND_DIST"
+
+  echo "-- starting the deployment"
+  bash "$_DEPLOY_DIR/control.sh" start && return 0
+
+  echo "deploy: the new build did not start — restoring the build that was running" >&2
+  rm -rf "$RECIPE_DEPLOY_FRONTEND_DIST"
+  if [ -e "$prev" ]; then
+    mv "$prev" "$RECIPE_DEPLOY_FRONTEND_DIST"
+    bash "$_DEPLOY_DIR/control.sh" start || true
+  fi
+  return 1
 }

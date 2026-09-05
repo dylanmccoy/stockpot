@@ -326,11 +326,12 @@ def test_rollback_returns_to_the_retained_previous_build_and_preserves_data(
     assert _wait_health()
     assert _recipe_titles(deployment_db) == ["KEPT ACROSS ROLLBACK"]
 
-    # The build rolled away from (BUILD-2) is itself retained for a roll-forward.
+    # rollback.sh does not archive; the update's retained BUILD-1 is unchanged
+    # (moving forward again is a deploy/update.sh build, not a rollback).
     markers = sorted(
         p.read_text() for p in (tmp_path / "data" / "builds").glob("*/assets/build-marker.txt")
     )
-    assert markers == ["BUILD-1", "BUILD-2"]
+    assert markers == ["BUILD-1"]
 
     assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
 

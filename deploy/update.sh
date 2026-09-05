@@ -99,20 +99,12 @@ else
 fi
 
 # --- 3. switch + restart against the explicit persistent database -------
-if deploy_pid_if_running >/dev/null; then
-  echo "-- stopping the running deployment"
-  bash "$_DEPLOY_DIR/control.sh" stop
-fi
-
-echo "-- switching the served build"
-rm -rf "$PREV"
-if [ -e "$RECIPE_DEPLOY_FRONTEND_DIST" ]; then
-  mv "$RECIPE_DEPLOY_FRONTEND_DIST" "$PREV"
-fi
-mv "$STAGING" "$RECIPE_DEPLOY_FRONTEND_DIST"
-
-echo "-- starting the updated deployment"
-if bash "$_DEPLOY_DIR/control.sh" start; then
+# deploy_switch_build stages the new build, stops, swaps it in with two atomic
+# renames, and starts. On a failed start it restores and restarts the build
+# that was running (the ticket's "leave the current usable deployment intact"
+# guarantee applied to a failed switch — distinct from ticket 04c's deliberate
+# return to an older build) and returns non-zero.
+if deploy_switch_build "$STAGING"; then
   # Retain the build we just replaced so deploy/rollback.sh (ticket 04c) can
   # return to it on demand. A failure here does not fail the update — the new
   # build is already serving.
@@ -129,14 +121,4 @@ if bash "$_DEPLOY_DIR/control.sh" start; then
   exit 0
 fi
 
-# Start failed: put the previous build back so the household keeps a working
-# deployment. This is the ticket's "leave the current usable deployment intact"
-# guarantee applied to a failed switch — not ticket 04c, which is a deliberate
-# operator command to return to an older build.
-echo "deploy: updated build did not start — rolling back to the previous build" >&2
-rm -rf "$RECIPE_DEPLOY_FRONTEND_DIST"
-if [ -e "$PREV" ]; then
-  mv "$PREV" "$RECIPE_DEPLOY_FRONTEND_DIST"
-  bash "$_DEPLOY_DIR/control.sh" start || true
-fi
 _deploy_die "update failed and was rolled back to the previous build; database untouched"

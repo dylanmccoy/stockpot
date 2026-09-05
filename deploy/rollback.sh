@@ -25,10 +25,11 @@
 #      against it) BEFORE stopping anything. A missing or unusable selection
 #      aborts with the running deployment and its data completely intact.
 #   2. Pre-maintenance snapshot of the deployment database.
-#   3. Stop, archive the build being switched away from (so a roll-forward is
-#      still possible), swap the selected build in, and start against the same
-#      explicit RECIPE_DATABASE_URL. If it fails to start, the build that was
-#      running is put back and restarted.
+#   3. Stop, swap the selected build in, and start against the same explicit
+#      RECIPE_DATABASE_URL. If it fails to start, the build that was running is
+#      put back and restarted.
+#
+# To move FORWARD to a newer build, build and deploy it with deploy/update.sh.
 
 set -euo pipefail
 # shellcheck source=deploy/lib.sh
@@ -113,41 +114,15 @@ else
 fi
 
 # --- 3. switch + restart against the explicit persistent database -----
-if deploy_pid_if_running >/dev/null; then
-  echo "-- stopping the running deployment"
-  bash "$_DEPLOY_DIR/control.sh" stop
-fi
-
-echo "-- switching the served build"
-rm -rf "$PREV"
-if [ -e "$RECIPE_DEPLOY_FRONTEND_DIST" ]; then
-  mv "$RECIPE_DEPLOY_FRONTEND_DIST" "$PREV"
-fi
-# Copy (not move) so the archived build stays available to roll back to again.
-cp -a "$selected" "$RECIPE_DEPLOY_FRONTEND_DIST"
-
-echo "-- starting the deployment on the selected build"
-if bash "$_DEPLOY_DIR/control.sh" start; then
-  # Retain the build we just switched away from so a roll-forward is possible.
-  if [ -d "$PREV" ]; then
-    if archived="$(deploy_archive_build "$PREV")"; then
-      echo "-- retained the build you rolled away from: $archived"
-    else
-      echo "deploy: warning: could not archive the build being replaced" >&2
-    fi
-  fi
+# deploy_switch_build copies the selected build (it stays in the archive for a
+# future rollback), stages it next to the live build, stops, swaps with two
+# atomic renames, and starts. On a failed start it restores and restarts the
+# build that was running (the database is never touched) and returns non-zero.
+if deploy_switch_build "$selected"; then
   rm -rf "$PREV"
   echo
   echo "rollback complete. Serving $(basename "$selected") against $RECIPE_DEPLOY_DB_FILE."
   exit 0
 fi
 
-# Start failed: restore the build that was running so the household is never
-# left down. This is not a data operation — the database was never touched.
-echo "deploy: the selected build did not start — restoring the build that was running" >&2
-rm -rf "$RECIPE_DEPLOY_FRONTEND_DIST"
-if [ -e "$PREV" ]; then
-  mv "$PREV" "$RECIPE_DEPLOY_FRONTEND_DIST"
-  bash "$_DEPLOY_DIR/control.sh" start || true
-fi
 _deploy_die "rollback failed and was reverted to the previously running build; database untouched"

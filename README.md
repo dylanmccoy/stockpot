@@ -473,9 +473,10 @@ deploy/rollback.sh --to /path/to/build     # a build directory you identified yo
 ```
 
 - **Where retained builds come from.** `deploy/update.sh` copies the build it
-  replaces into `RECIPE_DEPLOY_BUILD_ARCHIVE` on every successful update. A
-  successful `rollback.sh` likewise retains the build it switched *away* from,
-  so you can roll forward again.
+  replaces into `RECIPE_DEPLOY_BUILD_ARCHIVE` (default
+  `RECIPE_DEPLOY_DATA_DIR/builds`, newest `RECIPE_DEPLOY_BUILD_KEEP` kept) on
+  every successful update. To move *forward* again, build and deploy with
+  `deploy/update.sh` — rollback is one-directional.
 - **Validate first.** `rollback.sh` checks the selected build has `index.html`
   and that the backend imports cleanly against it **before** stopping anything.
   A missing, unknown, or unusable selection aborts with the running deployment
@@ -486,16 +487,19 @@ deploy/rollback.sh --to /path/to/build     # a build directory you identified yo
 - **Switch + restart.** Stop, swap the selected build in, `deploy/control.sh
   start` on the configured absolute `RECIPE_DATABASE_URL`. If the selected build
   fails to start, the build that was running is put back and restarted.
-- **Not across a schema change.** An older build must not be run against a
-  newer, incompatible schema. Roll back a build only while the schema is
-  unchanged. This deployment ships no schema change; a future `models.py` change
-  needs the reviewed, data-preserving migration from runbook 9 first, and once
-  household data is migrated forward the older build is no longer compatible.
+- **Not across a schema change.** "Compatible" here means *same schema era* —
+  `rollback.sh` validates the build is serveable, but it cannot check the schema.
+  An older build must not be run against a newer, migrated schema. Roll back a
+  build only while the schema is unchanged. This deployment ships no schema
+  change; a future `models.py` change needs a reviewed, data-preserving
+  migration (there is none yet — runbook 3 is the dev-only reset, *not* an
+  upgrade path), and once household data is migrated forward the older build is
+  no longer compatible.
 - **Health check.** `deploy/control.sh status`, as in runbook 9.
 
-`backend/tests/test_deploy.py` covers the select/validate/snapshot/abort and
-roll-forward retention logic against disposable data; the `deployment-update` CI
-run also drives a browser through update → rollback (above).
+`backend/tests/test_deploy.py` covers the select / validate / snapshot / abort
+logic against disposable data; the `deployment-update` CI run also drives a
+browser through update → rollback (above).
 
 ## v1 workflows
 
