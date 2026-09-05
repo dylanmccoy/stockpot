@@ -47,6 +47,7 @@ close: `docs/phases/phase-N.md`. Ticket dependency order and the R-7 rules:
 | `backup.py` | `create_backup()` — live SQLite snapshot via the online backup API (private-household-deployment ticket 02a). CLI wrapper: `scripts/backup.py`. |
 | `restore.py` | `recover_snapshot()` — validate a snapshot and materialize a session-cleared copy at a new path (private-household-deployment ticket 02b; never overwrites an existing DB). CLI wrapper: `scripts/restore.py`. |
 | `provision.py` | `provision_accounts()` — create household logins directly in a stopped deployment's DB using `RegisterRequest` validation + `hash_password`, no token issued, registration never opened (private-household-deployment ticket 03a). CLI wrapper: `scripts/provision.py`. |
+| `recover.py` | `recover_password()` — reset one existing account's password (`hash_password`) directly in a stopped deployment's DB and delete all of its sessions; other users and household records untouched, never creates an account (private-household-deployment ticket 03b). CLI wrapper: `scripts/recover.py`. |
 | `schemas/` | Pydantic request/response models, one module per resource, re-exported from `schemas/__init__.py`. `*Read` uses `from_attributes=True`. |
 | `routers/` | One `APIRouter` per resource, each with its own `/api/<x>` prefix. Register in `main.py` via `app.include_router(...)`. |
 | `services/ingredient_parse.py` | Pure: pasted-line → structured ingredient. |

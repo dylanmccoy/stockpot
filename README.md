@@ -93,7 +93,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Six runbooks, in the order you'll actually need them. All six are the same
+Seven runbooks, in the order you'll actually need them. All seven are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -290,6 +290,51 @@ confirm the window is closed: `POST /api/auth/register` returns
 in the `backend` CI job: provision two accounts, then drive a factory app with
 registration closed where both members log in and read/edit the same recipe,
 and a direct `register` call is refused.
+
+### 7. Household password recovery
+
+A member forgot their password and there is no email reset. The owner resets
+that one account's password and signs every one of its devices out
+(private-household-deployment ticket 03b). Run this with the app **stopped** —
+the script writes straight to the configured database and is not an
+unauthenticated reset endpoint.
+
+```bash
+cd backend
+uv run python scripts/recover.py \
+  --username alice \
+  --password-file /path/outside/the/checkout/new-password.txt
+```
+
+- `--username` is matched case-insensitively; the stored casing is kept. The
+  account must already exist — an unknown name is refused, changing nothing
+  (this procedure never creates an account).
+- `--password-file` holds only the replacement password, or `-` to read it
+  from stdin. It is taken from the file, never the command line, so it stays
+  out of shell history, `ps`, and any log. Surrounding whitespace is trimmed.
+  Keep the file outside the checkout, `chmod 600`, and delete it afterward —
+  it is never committed. The password follows the register rule (8–128
+  chars).
+- `--database-url` defaults to `RECIPE_DATABASE_URL` and is echoed so you can
+  confirm which database is written. It must already have the app's schema.
+- The account's password hash is replaced with a fresh argon2 hash (the same
+  facility `POST /api/auth/change-password` uses) and **every** session row
+  for that account is deleted, so the old password and all previous session
+  tokens stop working at once. Other accounts, their sessions, and every
+  household record are untouched.
+- **Success** prints `recovered: <username> (<n> session(s) revoked)`
+  (never the password) and exits 0. **Failure** — an unknown account, a
+  password that breaks the register rule, or a database with no schema —
+  prints `recover failed: <reason>` to stderr, exits 1, and changes nothing.
+
+Then start the app normally (runbook 4) and have the member sign in with the
+new password; their other devices are already signed out.
+
+`test_recover.py` / `test_recover_cli.py` run this against disposable data in
+the `backend` CI job: recover one of two provisioned accounts, then confirm
+through the real auth API that the old password and old token both fail, the
+new password works and sees the same household records, and the other member
+is unaffected.
 
 ## v1 workflows
 
