@@ -41,9 +41,8 @@ def _run(
 
 
 def _login(url: str, username: str, password: str) -> int:
-    with TestClient(
-        create_app(Settings(database_url=url, allow_registration=False), make_engine(url))
-    ) as c:
+    settings = Settings(database_url=url, allow_registration=False)
+    with TestClient(create_app(settings, make_engine(url))) as c:
         return c.post(
             "/api/auth/login", json={"username": username, "password": password}
         ).status_code
@@ -59,7 +58,9 @@ def test_cli_recovers_revokes_sessions_and_never_echoes_the_password(
     pw_file = tmp_path / "new-password.txt"
     pw_file.write_text("new-secret-passphrase\n")
 
-    result = _run(["--username", "alice", "--password-file", str(pw_file), "--database-url", url])
+    result = _run(
+        ["--username", "alice", "--password-file", str(pw_file), "--database-url", url]
+    )
 
     assert result.returncode == 0, result.stderr
     assert "recovered: alice (1 session(s) revoked)" in result.stdout
@@ -104,7 +105,8 @@ def test_cli_refuses_an_unknown_account_and_writes_nothing(tmp_path: Path) -> No
     pw_file.write_text("new-secret-passphrase\n")
 
     result = _run(
-        ["--username", "mallory", "--password-file", str(pw_file), "--database-url", url]
+        ["--username", "mallory", "--password-file", str(pw_file)]
+        + ["--database-url", url]
     )
 
     assert result.returncode == 1
@@ -168,7 +170,8 @@ def test_cli_refuses_a_database_without_schema(tmp_path: Path) -> None:
     pw_file.write_text("new-secret-passphrase\n")
 
     result = _run(
-        ["--username", "alice", "--password-file", str(pw_file), "--database-url", f"sqlite:///{empty}"]
+        ["--username", "alice", "--password-file", str(pw_file)]
+        + ["--database-url", f"sqlite:///{empty}"]
     )
 
     assert result.returncode == 1

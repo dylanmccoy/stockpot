@@ -108,8 +108,6 @@ def recover_password(
                 f"writing to {database_url} failed, nothing was changed: {exc}"
             ) from exc
 
-        return RecoverResult(
-            username=stored_username, sessions_revoked=int(revoked or 0)
-        )
+        return RecoverResult(username=stored_username, sessions_revoked=revoked)
     finally:
         engine.dispose()
