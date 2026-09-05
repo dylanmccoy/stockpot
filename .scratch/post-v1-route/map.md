@@ -56,12 +56,27 @@ household isolation.
 |---|---|---|---|
 | 1 | **Deploy** | `.scratch/private-household-deployment/spec.md` — ready-for-agent | Ticket 01 |
 | 2 | **Friction pass** | Edit-recipe button · create grocery list from a recipe · "what can we make now" | — |
-| 3 | **Recipe entry** | URL import (`recipe-scrapers`, SSRF-guarded fetch) | Tickets 02, 06 |
+| 3 | **Recipe entry** | URL import (`recipe-scrapers`, SSRF-guarded fetch) | ~~02~~ · ~~10~~ · ~~06~~ · ticket 09 |
 | 4 | **Inventory upkeep** | One of receipts / staples / undo — which one is ticket 07 | Alembic (ticket 08) |
 
 ## Decisions so far
 
-<!-- one line per closed ticket; empty at charting -->
+<!-- one line per closed ticket -->
+
+- [Does `recipe-scrapers` cover the sites the household cooks from?](issues/02-recipe-scrapers-coverage.md):
+  Yes — adopt it as specced. Measured against the library's 1109 real-page
+  fixtures, the generic path finds usable ingredients on 87.7% of pages, so
+  "supported site" barely matters (half the 625 scrapers override nothing).
+  JSON-LD-only is a false economy. Three spec amendments needed; the failure
+  population is newsletters and bot-protected sites, not ordinary blogs.
+  [Full findings](research/recipe-scrapers.md).
+- [What shape should the recipe-import endpoint have?](issues/10-import-endpoint-shape.md):
+  Import is read-only and returns a create body; the person saves through the
+  existing `POST /api/recipes`. One endpoint takes a website address or a
+  pasted page. A scrape succeeds when it has ingredients and steps — title
+  optional, `yields`/`total_time` never required. `ingredient_groups()` is used
+  for clean lines; the group purpose text is a deliberate loss.
+  Supersedes the API in `features.md` § URL import.
 
 ## Not yet specified
 
@@ -70,15 +85,18 @@ household isolation.
   (WSL mirrored networking, the app running natively on Windows, Tailscale
   inside WSL, different hardware). Can't phrase the choice until we know which
   hop fails.
-- **The entry track's shipping shape** — preview-then-confirm vs save-direct,
-  and where import lives in the UI. Sharpens once ticket 02 says how reliable
-  scraping actually is.
 - **Whether multi-line ingredient paste rides with URL import** — it's the
   natural fallback for an unsupported site, so ticket 06 may pull it in.
 - **What the friction pass actually contains** — ticket 03 may add items nobody
   has written down, or retire ones that turn out not to bite.
 - **Whether a fifth track exists.** Real use may surface a problem that is in
   no document today.
+
+- [What happens when URL import can't scrape a site?](issues/06-url-import-unsupported-fallback.md):
+  Closed as absorbed, not decided. Tickets 02 and 10 answered the fallback, the
+  wild-mode question, and the partial-scrape question. Multi-line ingredient
+  paste turned out to belong to the manual form, not import, and stays
+  catalogued in `features.md` as deferred item D2.
 
 ## Out of scope
 

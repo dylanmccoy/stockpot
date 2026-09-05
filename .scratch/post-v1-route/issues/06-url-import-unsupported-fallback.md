@@ -1,8 +1,8 @@
 # What happens when URL import can't scrape a site?
 
 Type: grilling
-Status: open
-Blocked by: 02
+Status: closed — absorbed by 02 and 10
+Blocked by: —
 Parent: ../map.md
 
 ## Question
@@ -28,8 +28,40 @@ Decide:
    Save it as a stub (title-only recipes are permanently legal per decision
    Q5), or refuse?
 
-### Depends on
+### What ticket 02 settled
 
-Ticket 02's answer about wild-mode quality. If wild mode returns usable
-structure on most unsupported sites, the fallback matters much less than if it
-returns mush.
+Wild mode is good — 87.7% of real pages yield usable ingredients — so the
+fallback is **not** a routine path. But the failures it does have are sharply
+shaped, and no parser can fix either kind:
+
+- **No recipe markup at all** — newsletter and prose sources. Measured: 6/6
+  Substack posts and one bespoke CMS returned `NoSchemaFoundInWildMode`.
+- **Bot protection** — 2 of 20 live fetches hit a Cloudflare 403, and both were
+  on *supported* sites. At least as common as missing markup, and it defeats
+  `fetch_bytes` before parsing is even reached.
+
+Two consequences for this ticket:
+
+- A free implementation exists. Tandoor accepts pasted raw HTML *or* pasted
+  JSON-LD, wraps it in a synthetic `<script type="application/ld+json">`, and
+  re-scrapes with the same parser — no second parsing path to maintain.
+- Item 4 (partial scrapes) is no longer hypothetical. Every field accessor in
+  the library can raise, so partial results are the **normal** shape, not an
+  edge case. Decide what a partial save looks like, not whether one can happen.
+
+## Closed — absorbed, not decided here
+
+Tickets 02 and 10 answered three of the four items, so nothing decision-shaped
+remains:
+
+| Item | Where it went |
+|---|---|
+| 1. The fallback | [Ticket 10](10-import-endpoint-shape.md) item 2 — one endpoint takes a website address *or* a pasted page, one parser for both |
+| 3. Is wild mode a separate "try harder" step? | [Ticket 02](02-recipe-scrapers-coverage.md) — no. One `scrape_html(..., supported_only=False)` call does both, so there is no second step to show |
+| 4. What a partial scrape does | [Ticket 10](10-import-endpoint-shape.md) item 3 — a scrape succeeds with ingredients and steps; a missing `yields`/`total_time`/title is not a failure |
+
+**Item 2 (multi-line ingredient paste) survives, but not here.** It turned out
+to belong to the manual recipe form, not to import: `RecipeCreate.ingredients`
+already accepts `list[str]`, and the import paste path carries HTML rather than
+ingredient text. Server-side splitting of a pasted block on `\n` stays
+catalogued in `docs/features.md` as deferred item D2, unscheduled.
