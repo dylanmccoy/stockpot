@@ -6,13 +6,13 @@ closed. These tests drive that path against disposable file-backed databases
 and a real factory app — no mocks, no dependency overrides.
 """
 
+import sqlite3
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from app import models  # noqa: F401  — populates Base.metadata
 from app.config import Settings
 from app.database import Base, make_engine
 from app.main import create_app
@@ -95,9 +95,18 @@ def test_empty_list_is_a_noop(tmp_path: Path) -> None:
     assert provision_accounts(url, []) == ProvisionResult()
 
 
+def test_missing_database_file_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(ProvisionError, match="not found"):
+        provision_accounts(
+            f"sqlite:///{tmp_path / 'absent.db'}", [("alice", "alice-passphrase")]
+        )
+
+
 def test_database_without_schema_is_refused(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.db"
+    sqlite3.connect(empty).close()  # a real SQLite file, but with no tables
     with pytest.raises(ProvisionError, match="no schema"):
-        provision_accounts(f"sqlite:///{tmp_path / 'empty.db'}", [("alice", "alice-passphrase")])
+        provision_accounts(f"sqlite:///{empty}", [("alice", "alice-passphrase")])
 
 
 @pytest.mark.parametrize(
@@ -173,3 +182,33 @@ def test_two_provisioned_members_share_read_write_and_registration_is_closed(
         )
         assert refused.status_code == 403
         assert refused.json() == {"detail": "registration disabled"}
+
+
+def test_registration_open_then_refused_after_closure(tmp_path: Path) -> None:
+    """Ticket crit 1/2: the closure is a real transition, not a constant —
+    the same provisioned database serves `register` while the window is open
+    and refuses it once the deployment runs with it closed."""
+    url = _schema_db(tmp_path / "recipe.db")
+    provision_accounts(url, [("alice", "alice-passphrase")])
+
+    open_settings = Settings(
+        database_url=url, allow_registration=True, registration_code="transition-code"
+    )
+    with TestClient(create_app(open_settings, make_engine(url))) as c:
+        opened = c.post(
+            "/api/auth/register",
+            json={
+                "username": "late",
+                "password": "late-passphrase",
+                "code": "transition-code",
+            },
+        )
+        assert opened.status_code == 201, opened.text
+
+    with _closed_client(url) as c:
+        closed = c.post(
+            "/api/auth/register",
+            json={"username": "later", "password": "later-passphrase"},
+        )
+        assert closed.status_code == 403
+        assert closed.json() == {"detail": "registration disabled"}

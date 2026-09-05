@@ -284,8 +284,7 @@ uv run python scripts/provision.py --accounts /path/outside/the/checkout/account
 
 Then start the app normally (runbook 4, `RECIPE_ALLOW_REGISTRATION` unset) and
 confirm the window is closed: `POST /api/auth/register` returns
-`403 {"detail": "registration disabled"}`. A forgotten password afterward is
-an operator action against the database (there is no self-service reset).
+`403 {"detail": "registration disabled"}`.
 
 `test_provision.py` / `test_provision_cli.py` run this against disposable data
 in the `backend` CI job: provision two accounts, then drive a factory app with

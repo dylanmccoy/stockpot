@@ -3,13 +3,13 @@ subprocess exactly as root README.md "Household account provisioning"
 documents it."""
 
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
 
 from sqlalchemy import select
 
-from app import models  # noqa: F401  — populates Base.metadata
 from app.database import Base, make_engine
 from app.models import User
 
@@ -118,13 +118,25 @@ def test_cli_reports_already_existing_accounts_as_skipped(tmp_path: Path) -> Non
     assert _usernames(url) == ["alice", "bob"]
 
 
-def test_cli_refuses_a_database_without_schema(tmp_path: Path) -> None:
+def test_cli_refuses_a_missing_database_file(tmp_path: Path) -> None:
     accounts = tmp_path / "accounts.txt"
     accounts.write_text("alice alice-secret-passphrase\n")
 
     result = _run(
-        ["--accounts", str(accounts), "--database-url", f"sqlite:///{tmp_path / 'empty.db'}"]
+        ["--accounts", str(accounts), "--database-url", f"sqlite:///{tmp_path / 'absent.db'}"]
     )
+
+    assert result.returncode == 1
+    assert "not found" in result.stderr
+
+
+def test_cli_refuses_a_database_without_schema(tmp_path: Path) -> None:
+    empty = tmp_path / "empty.db"
+    sqlite3.connect(empty).close()
+    accounts = tmp_path / "accounts.txt"
+    accounts.write_text("alice alice-secret-passphrase\n")
+
+    result = _run(["--accounts", str(accounts), "--database-url", f"sqlite:///{empty}"])
 
     assert result.returncode == 1
     assert "no schema" in result.stderr
