@@ -306,6 +306,7 @@ and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-s
 | --- | --- | --- | --- |
 | Edit recipes | Partially shipped; edit form exists but has no discoverable entry point | `/recipes/:id/edit`, the pre-filled `RecipeForm`, and PUT full-replace behavior already work | Add an "Edit recipe" action to Recipe Detail and cover navigation, responsive layout, and accessibility |
 | Create grocery list from a recipe | Requested | Existing grocery-list generation and inventory availability | Add a "Create grocery list" button to Recipe Detail that creates a new list containing only what is still needed for that recipe |
+| Explain grocery-list contents on creation | Requested | Existing grocery-list generation and inventory availability | Show which ingredients will be added or left out, with quantities and reasons, so a partial recipe list is understandable |
 | Preparation-descriptor ingredient matching | Limited; leading descriptors match, trailing descriptors do not | `normalize_name`, editable inventory `match_name`, and shared inventory-math consumers | Define safe preparation-word equivalence so `onion, diced` can match inventory `onion`, then apply it consistently to availability, grocery generation, and cook deductions |
 | "What can we make now" | Excluded | `check_availability` exists; runs on one recipe | `GET /api/recipes/makeable` — run it across all, filter `all_available` |
 | Staples / low-stock alerts | Excluded | `inventory_items` row structure | `is_staple: bool` + `min_quantity: float` columns; `GET /api/inventory/low` |
@@ -344,6 +345,26 @@ and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-s
   are needed instead of creating an empty list.
 - **Interaction:** disable the button while creation is in progress to prevent
   duplicate lists, and show a recoverable error if creation fails.
+
+### Explain grocery-list contents on creation
+
+- **Problem:** adding a recipe can produce a grocery list with only some of its
+  ingredients, making it look as though ingredients were silently lost.
+- **Feature request:** show a clear notice or summary during grocery-list
+  creation explaining which ingredients will be added and why. Include the
+  ingredients left out and their reasons as well. Apply this to the general
+  creation flow and the recipe-page shortcut.
+- **Details:** show the amount to buy and whether an ingredient is missing or
+  only partly stocked; explain omissions when inventory already covers the
+  requirement. For example: "Flour: add 100 g — recipe needs 300 g, you have
+  200 g" and "Eggs: not added — you have enough."
+- **Uncertainty and empty results:** explain how ingredients with unknown
+  quantities or incomparable units are handled, using the actual generation
+  result without claiming they are covered by inventory. If nothing needs to
+  be added, explicitly say why. Keep the details available long enough to read
+  rather than relying only on a disappearing toast.
+- **Constraint:** derive the explanation from the same server-side calculation
+  that determines list contents so the summary and resulting list agree.
 
 ### Preparation-descriptor ingredient matching
 
