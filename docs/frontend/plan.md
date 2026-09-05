@@ -367,7 +367,7 @@ Spec: `spec.md` §6, §9, §12.
       the store-walk case (O-5). — ticket 19a.
 
 **Exit:** `spec.md` §12 checklist complete except deployment docs. Met —
-see §12 in `spec.md` (Phase 8 remains, blocked on backend Phase 7).
+see §12 in `spec.md` (Phase 8 shipped separately; see below).
 
 ---
 
@@ -375,16 +375,18 @@ see §12 in `spec.md` (Phase 8 remains, blocked on backend Phase 7).
 
 Depends on backend Phase 7.
 
-- [ ] LAN serving: build output, how to serve `dist/`, adding the serving origin
+- [x] LAN serving: build output, how to serve `dist/`, adding the serving origin
       to `RECIPE_CORS_ORIGINS` (token is a header not a cookie, so
-      `allow_credentials=False` is fine).
-- [ ] First-user bootstrap: run the backend with
+      `allow_credentials=False` is fine). — ticket 20.
+- [x] First-user bootstrap: run the backend with
       `RECIPE_ALLOW_REGISTRATION=true` + `RECIPE_REGISTRATION_CODE`, build the
       frontend with `VITE_ENABLE_REGISTER=1`, register, then rebuild/redeploy
-      without the flag.
-- [ ] Note the fixed 30-day session and no-refresh behavior for operators.
+      without the flag. — ticket 20.
+- [x] Note the fixed 30-day session and no-refresh behavior for operators. —
+      ticket 20.
 
 **Exit:** notes reviewed; a fresh reader can deploy the SPA on the LAN from them.
+Met — see `frontend/README.md` (ticket 20, merged #78).
 
 ---
 
@@ -400,4 +402,4 @@ Depends on backend Phase 7.
 | 5 — Cook & history | Complete — built vs MSW (10, 11a, 11b) and integrated against real BE Phase 5 (ticket 17) |
 | 6 — Grocery | Complete — built vs MSW (12a, 12b, 13a, 13b, 13c) and integrated against real BE Phase 6 (ticket 18) |
 | 7 — Hardening | Complete — error-catalog coverage + React Query defaults (ticket 19a) and a11y sweep + state conventions + types re-diff (ticket 19b) |
-| 8 — Deployment docs | Not started — blocked on BE Phase 7 |
+| 8 — Deployment docs | Complete — LAN serving + first-user bootstrap notes (ticket 20, merged #78) |
