@@ -110,6 +110,11 @@ jobs:
     # existing household database via a live snapshot and serving the built
     # frontend + API on one origin. Distinct from production-smoke: that seeds a
     # fresh database in place; this exercises data adoption through the scripts.
+    #
+    # Ticket 04b adds the `deployment-update` run in the same job: it drives
+    # deploy/update.sh against the started deployment (validate build →
+    # pre-maintenance snapshot → stop → switch → restart on the same explicit
+    # database) and checks records and later writes survive the replacement build.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -131,6 +136,8 @@ jobs:
       - run: npm run build
         working-directory: frontend
       - run: npm run test:e2e:deployment
+        working-directory: frontend
+      - run: npm run test:e2e:deployment-update
         working-directory: frontend
       - if: failure()
         uses: actions/upload-artifact@v4

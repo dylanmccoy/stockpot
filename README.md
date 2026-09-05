@@ -112,7 +112,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Eight runbooks, in the order you'll actually need them. Most are the same
+Nine runbooks, in the order you'll actually need them. Most are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -408,6 +408,52 @@ the `start`/`stop`/`status` lifecycle against disposable data; the
 `deployment` CI job (`npm run test:e2e:deployment`) drives the installed,
 adopted deployment through a real browser — the seeded account signs in, its
 carried-over recipe is there, and a new write persists.
+
+### 9. WSL deployment update (schema-preserving)
+
+Deploy a new application build while the household keeps using the same
+database (private-household-deployment ticket 04b). The build is prepared and
+validated *before* the running deployment is touched, a snapshot is taken
+first, and the app restarts against the same explicit database.
+
+```bash
+deploy/update.sh                     # build + validate → snapshot → switch → restart
+deploy/update.sh --staging-dir DIR   # use a build produced elsewhere, skip building
+
+deploy/control.sh status             # resolved config + running/stopped + health
+deploy/control.sh stop / start / restart
+```
+
+- **Prepare + validate first.** `update.sh` builds the frontend into
+  `<frontend-dist>.staging` (sibling of the live build), runs `uv sync`, and
+  does a backend import smoke against the staged assets. **A failed build or
+  validation leaves the current deployment and its data completely
+  untouched** — nothing is stopped, switched, or snapshotted.
+- **Pre-maintenance snapshot.** Before the switch, `update.sh` takes a live
+  snapshot of the deployment database into `RECIPE_DEPLOY_BACKUP_DIR` via
+  `scripts/backup.py` (runbook 2). A snapshot failure also aborts before the
+  switch.
+- **Switch + restart.** The deployment is stopped, the staged build moved into
+  place, and `deploy/control.sh start` brings it back on the configured
+  absolute `RECIPE_DATABASE_URL`. The outgoing build is held aside as
+  `<frontend-dist>.prev` only for the duration of the switch: if the new build
+  fails to start, `update.sh` restores it and restarts; on success it is
+  removed. The operator command to return to an older build on demand is
+  ticket 04c.
+- **No schema changes here.** This procedure never resets the database and
+  never runs a schema-changing upgrade. A future `models.py` change needs a
+  reviewed, data-preserving migration (runbook 3 is the dev-only reset, *not*
+  an upgrade path) before it can be installed against household data.
+- **Health check.** `deploy/control.sh status` reports the resolved config,
+  whether the app is running, the database file, and `GET /api/health`
+  liveness; `start` that never becomes healthy prints the tail of
+  `RECIPE_DEPLOY_DATA_DIR/run/recipe.log` and exits non-zero.
+
+`backend/tests/test_deploy.py` covers the switch/snapshot/abort logic against
+disposable data; the `deployment-update` CI run
+(`npm run test:e2e:deployment-update`) drives a real browser through an update:
+records written against the old build — and the adopted ones — are still there
+on the replacement build, and later writes persist.
 
 ## v1 workflows
 

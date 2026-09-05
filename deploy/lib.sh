@@ -136,3 +136,22 @@ deploy_wait_health() {
   done
   return 1
 }
+
+# Take a live snapshot of $1 into directory $2 via scripts/backup.py and echo
+# the resulting snapshot path. backup.py writes recipe-<UTC timestamp>.db; the
+# timestamp format sorts chronologically, so the newest snapshot is the last
+# one lexically — pick it from the directory rather than parsing stdout.
+# Shared by install.sh (data adoption) and update.sh (pre-maintenance backup).
+deploy_snapshot() {
+  local source="$1" dest_dir="$2" snap
+  mkdir -p "$dest_dir"
+  # backup.py's own "backup ok: ..." line goes to stderr so this function's
+  # stdout is only the snapshot path (callers capture it with $(...)).
+  ( cd "$RECIPE_DEPLOY_CHECKOUT/backend" \
+    && "$RECIPE_DEPLOY_UV_BIN" run python scripts/backup.py \
+      --source "$source" --dest-dir "$dest_dir" >&2 ) \
+    || return 1
+  snap="$(printf '%s\n' "$dest_dir"/recipe-*.db | sort | tail -n 1)"
+  [ -f "$snap" ] || return 1
+  printf '%s\n' "$snap"
+}
