@@ -93,7 +93,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Five runbooks, in the order you'll actually need them. All five are the same
+Six runbooks, in the order you'll actually need them. All six are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -111,6 +111,9 @@ RECIPE_ALLOW_REGISTRATION=true RECIPE_REGISTRATION_CODE=<code> \
    `RECIPE_REGISTRATION_CODE` set (i.e. the defaults in `backend/.env.example`).
 3. Confirm registration is now closed: a second `POST /api/auth/register`
    returns `403 {"detail": "registration disabled"}`.
+
+To provision several household accounts at once, or to add a member later
+without opening registration at all, use runbook 6 instead.
 
 ### 2. Backup
 
@@ -246,6 +249,48 @@ against disposable data in the `backend` CI job: seed a live database,
 snapshot it, diverge it, recover into a fresh target, and confirm a factory
 app on the target sees the snapshot's records, not the later change, and
 refuses the snapshot's tokens.
+
+### 6. Household account provisioning
+
+Create a login for each intended household member, then run the deployment
+with registration closed (private-household-deployment ticket 03a). Run this
+with the app **stopped** — the script writes straight to the configured
+database, so registration is never opened.
+
+```bash
+cd backend
+uv run python scripts/provision.py --accounts /path/outside/the/checkout/accounts.txt
+```
+
+- `--accounts` is a file of `<username> <password>` lines (split on the first
+  whitespace; `#` comments and blank lines ignored), or `-` to read the same
+  from stdin. The password is taken from the file, never the command line, so
+  it stays out of shell history, `ps`, and any log. Keep the file outside the
+  checkout, `chmod 600`, and delete it once provisioning succeeds — it is
+  never committed. Usernames follow the register rule (3–50 chars,
+  `A-Z a-z 0-9 _ . -`); passwords are 8–128 chars.
+- `--database-url` defaults to `RECIPE_DATABASE_URL` and is echoed so you can
+  confirm which database is being written. The target must already have the
+  app's schema — start the deployment once (runbook 4) if it is brand new.
+- A username that already exists (case-insensitively) is left untouched and
+  reported as `already existed (skipped)`, so adding a member later is the
+  same command with one more line.
+- No session token is issued and no roles or memberships exist: every member
+  signs in themselves and has equal read/write on all household data.
+- **Success** prints a `provisioned:` / `already existed (skipped):` summary
+  (usernames only) and exits 0. **Failure** — a malformed line, a username or
+  password that breaks the register rule, or a database with no schema —
+  prints `provision failed: <reason>` to stderr, exits 1, and commits nothing.
+
+Then start the app normally (runbook 4, `RECIPE_ALLOW_REGISTRATION` unset) and
+confirm the window is closed: `POST /api/auth/register` returns
+`403 {"detail": "registration disabled"}`. A forgotten password afterward is
+an operator action against the database (there is no self-service reset).
+
+`test_provision.py` / `test_provision_cli.py` run this against disposable data
+in the `backend` CI job: provision two accounts, then drive a factory app with
+registration closed where both members log in and read/edit the same recipe,
+and a direct `register` call is refused.
 
 ## v1 workflows
 
