@@ -4,7 +4,7 @@
 
 **Blocked by:** 04a: Install the WSL app with existing household data.
 
-**Status:** in-review
+**Status:** done
 
 - [x] Provide a repeatable update procedure that prepares and validates a build before switching the running deployment, takes a pre-maintenance snapshot, and restarts against the explicit persistent database.
 
@@ -24,6 +24,10 @@
 
 
 ## Comments
+
+- Merged via PR [#87](https://github.com/dylanmccoy/stockpot/pull/87)
+  (squash), CI green (`backend`, `frontend`, `integration`,
+  `production-smoke`, `deployment` incl. the new `deployment-update` step).
 
 - Implemented on branch `feat/private-household-deployment-04b`, worktree
   `.claude/worktrees/private-household-deployment-04b`.
