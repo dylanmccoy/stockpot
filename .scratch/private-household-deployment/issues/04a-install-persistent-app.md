@@ -4,7 +4,7 @@
 
 **Blocked by:** 01a: Open and use the built app at its entry address; 02a: Take a usable live SQLite snapshot.
 
-**Status:** in-review
+**Status:** done
 
 - [x] Provide repeatable installation and local start/stop/status controls with explicit WSL distribution, executables, build location, loopback port, and absolute database location.
 
@@ -23,6 +23,10 @@
 - Preserve the parent spec's scope: one private household, existing domain/API behavior and schema, local SQLite and local backups. No public hosting, multi-household work, or authentication redesign.
 
 ## Comments
+
+- Merged via PR [#86](https://github.com/dylanmccoy/stockpot/pull/86)
+  (squash), CI green (`backend`, `frontend`, `integration`,
+  `production-smoke`, `deployment`).
 
 - Implemented on branch `feat/private-household-deployment-04a`, worktree
   `.claude/worktrees/private-household-deployment-04a`.
