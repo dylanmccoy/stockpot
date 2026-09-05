@@ -22,6 +22,13 @@ import {
  *  - registration stays closed: no sign-up UI in the shipped build, and the
  *    API itself refuses a direct registration request
  *
+ * Ticket 01b adds direct-link coverage in the second `describe` below: opening
+ * or reloading a bookmarked nested route (including `/login`) works against
+ * the production build, session hydration survives a full reload, an invalid
+ * stored session is redirected to login rather than left half-authenticated,
+ * and an unknown API path / missing asset still get their plain API/404
+ * response rather than the SPA document.
+ *
  * No `VITE_ENABLE_REGISTER` build flag here (unlike
  * `playwright.integration.config.ts`'s dev server) — this is deliberately the
  * plain `npm run build` output a household actually gets.
@@ -100,8 +107,8 @@ test.describe("production smoke · built frontend + real backend", () => {
 
     // Prove the write persisted server-side: a fresh full navigation to the
     // entry document ("/", the address a household member actually opens)
-    // reads it back from the real API. Reloading the nested detail URL
-    // directly isn't supported until ticket 01b.
+    // reads it back from the real API. Direct reload of the nested detail URL
+    // itself is covered by the 01b describe block below.
     await page.goto("/");
     await expect(
       page.getByRole("heading", { name: title, level: 2 }),
@@ -130,5 +137,98 @@ test.describe("production smoke · built frontend + real backend", () => {
       },
     });
     expect(res.status()).toBe(403);
+  });
+});
+
+/**
+ * Deployment ticket 01b: "a household member can open or reload a bookmarked
+ * recipe or inventory page while API failures and missing assets retain
+ * correct responses." Same built-frontend-behind-real-backend harness as
+ * above; these scenarios are the ones that only exist once the server-side
+ * SPA fallback (`main.py::_mount_frontend`) is in place.
+ */
+test.describe("production smoke · direct links (01b)", () => {
+  test("opening a nested route directly serves the app and requires login", async ({
+    page,
+  }) => {
+    await page.goto("/inventory");
+
+    await expect(
+      page.getByRole("heading", { name: "Log in", level: 1 }),
+    ).toBeVisible();
+  });
+
+  test("the login route itself can be opened directly", async ({ page }) => {
+    await page.goto("/login");
+
+    await expect(
+      page.getByRole("heading", { name: "Log in", level: 1 }),
+    ).toBeVisible();
+  });
+
+  test("reloading a nested route after login re-hydrates the session", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await logIn(page);
+    await expect(page.getByRole("heading", { name: "Recipes" })).toBeVisible();
+
+    await page.goto("/inventory");
+    await expect(
+      page.getByRole("heading", { name: "Inventory" }),
+    ).toBeVisible();
+
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: "Inventory" }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate((key) => localStorage.getItem(key), TOKEN_KEY),
+    ).not.toBeNull();
+  });
+
+  test("an invalid stored session is redirected to login on reload, not left half-authenticated", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await logIn(page);
+    await expect(page.getByRole("heading", { name: "Recipes" })).toBeVisible();
+
+    await page.goto("/inventory");
+    await expect(
+      page.getByRole("heading", { name: "Inventory" }),
+    ).toBeVisible();
+
+    await page.evaluate(
+      (key) => localStorage.setItem(key, "not-a-real-session-token"),
+      TOKEN_KEY,
+    );
+    await page.reload();
+
+    await expect(
+      page.getByRole("heading", { name: "Log in", level: 1 }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate((key) => localStorage.getItem(key), TOKEN_KEY),
+    ).toBeNull();
+  });
+
+  test("an unknown API path stays a plain 404, not the SPA document", async ({
+    request,
+  }) => {
+    const res = await request.get("/api/does-not-exist");
+
+    expect(res.status()).toBe(404);
+    expect(res.headers()["content-type"]).toContain("application/json");
+  });
+
+  test("a missing built asset stays a plain 404, not the SPA document", async ({
+    request,
+  }) => {
+    const res = await request.get("/assets/does-not-exist.js");
+
+    expect(res.status()).toBe(404);
+    const body = await res.text();
+    expect(body).not.toContain('<div id="root">');
   });
 });

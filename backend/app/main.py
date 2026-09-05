@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,14 +64,22 @@ def _to_409_if_locked_else_500(request: Request, exc: OperationalError) -> JSONR
 
 
 def _mount_frontend(app: FastAPI, frontend_dist: str) -> None:
-    """Serve the built frontend's entry document and public assets.
+    """Serve the built frontend's entry document, public assets, and the
+    client-side-route fallback.
 
-    Private-household-deployment ticket 01a. Registered after every API route,
-    so `/api/*` always wins on a path collision. Scope is deliberately narrow:
-    only `dist/index.html` (at `/`) and `dist/assets/*` (Vite's build output) are
-    served — never the checkout, config, or database. Direct navigation/reload
-    of a client-side route (e.g. `/recipes/5`) is out of scope here (ticket 01b);
-    an unbuilt path like that falls through to a plain 404, not the SPA document.
+    Private-household-deployment ticket 01a (entry document + assets) and 01b
+    (client-side route fallback). Registered after every API route, so
+    `/api/*` always wins on a path collision. Scope is deliberately narrow:
+    only `dist/index.html` and `dist/assets/*` (Vite's build output) are
+    served — never the checkout, config, or database.
+
+    `react-router`'s `<BrowserRouter>` owns client-side routes (`/login`,
+    `/recipes/5`, ...): the server has no notion of them, so any GET that
+    isn't `/api/*` and isn't a real built asset gets the entry document and
+    lets the client router decide what to render — including its own
+    catch-all `NotFound` for a path that matches nothing there either. A
+    `/api/*` path with no matching route stays a plain 404 in the API's JSON
+    shape, never the SPA document.
     """
     dist_dir = Path(frontend_dist)
     index_path = dist_dir / "index.html"
@@ -88,6 +96,18 @@ def _mount_frontend(app: FastAPI, frontend_dist: str) -> None:
 
     @app.get("/", include_in_schema=False)
     def frontend_entry() -> FileResponse:
+        return FileResponse(index_path)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def frontend_fallback(full_path: str) -> FileResponse:
+        # "api" is unreachable in practice (every real API route is matched
+        # first); "assets" only matters when assets_dir doesn't exist above,
+        # since a real /assets mount would already have claimed the request.
+        # Kept explicit so a missing/renamed asset never falls back to the
+        # entry document regardless of mount state.
+        first_segment = full_path.split("/", 1)[0]
+        if first_segment in ("api", "assets"):
+            raise HTTPException(status_code=404)
         return FileResponse(index_path)
 
 
