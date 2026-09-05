@@ -38,7 +38,7 @@ close: `docs/phases/phase-N.md`. Ticket dependency order and the R-7 rules:
 
 | File | Responsibility |
 | --- | --- |
-| `config.py` | `Settings` (pydantic-settings). All config from `RECIPE_`-prefixed env / `backend/.env`. Knobs: `database_url`, `cors_origins`. |
+| `config.py` | `Settings` (pydantic-settings). All config from `RECIPE_`-prefixed env / `backend/.env`. Knobs: `database_url`, `cors_origins`, `frontend_dist`. |
 | `database.py` | `engine`, `SessionLocal`, `Base`, `get_db()` dependency. SQLite → `check_same_thread=False`. No module-level session. |
 | `models.py` | Every ORM table (SQLAlchemy 2.0 `Mapped[...]`). |
 | `normalize.py` | Pure: food-name normalization. |
@@ -48,7 +48,7 @@ close: `docs/phases/phase-N.md`. Ticket dependency order and the R-7 rules:
 | `routers/` | One `APIRouter` per resource, each with its own `/api/<x>` prefix. Register in `main.py` via `app.include_router(...)`. |
 | `services/ingredient_parse.py` | Pure: pasted-line → structured ingredient. |
 | `services/inventory_math.py` | Pure calc layer for inventory / availability / grocery / cook (spec §4). |
-| `main.py` | Builds the `FastAPI` app, CORS, `include_router`. Schema = a lifespan `Base.metadata.create_all()` — no migrations. |
+| `main.py` | Builds the `FastAPI` app, CORS, `include_router`; opt-in built-frontend serving when `Settings.frontend_dist` is set (`_mount_frontend`, ticket 01a). Schema = a lifespan `Base.metadata.create_all()` — no migrations. |
 
 ## Invariants agents keep re-deriving
 

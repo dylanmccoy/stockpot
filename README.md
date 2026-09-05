@@ -93,7 +93,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Three runbooks, in the order you'll actually need them. All three are the same
+Four runbooks, in the order you'll actually need them. All four are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -143,6 +143,40 @@ rm backend/recipe.db
 cp backend/recipe-2026-09-04.db backend/recipe.db
 #   2. restart
 ```
+
+### 4. Production entry (built frontend + API, one origin)
+
+Serves the production frontend build and the API from the same FastAPI
+process — no Vite dev server, no dev proxy (private-household-deployment
+ticket 01a). Opt-in: unset `RECIPE_FRONTEND_DIST` and the server behaves
+exactly as it does today, API-only.
+
+```bash
+cd frontend && npm run build          # writes frontend/dist/
+cd ../backend
+RECIPE_FRONTEND_DIST=$(pwd)/../frontend/dist uv run uvicorn app.main:app
+```
+
+`RECIPE_FRONTEND_DIST` must be the built `dist/` directory (`index.html` +
+`assets/`) — `create_app` refuses to start with a clear error if it doesn't
+look like a real build. Only `/` (the entry document) and `dist/assets/*` are
+served this way; direct navigation to a bookmarked/reloaded client-side route
+(e.g. reloading `/recipes/5`) isn't wired up yet (ticket 01b) — everything
+reached by clicking through the app from `/` works today.
+
+A deterministic smoke test exercises this end to end — build, boot with
+registration briefly open to seed one account (the shipped build has no
+sign-up UI), boot again with registration closed, then drive login, a wrong
+password, logout, a recipe write/read, an unauthenticated API request, and the
+closed-registration checks through a real browser:
+
+```bash
+cd frontend && npm run build && npm run test:e2e:production
+```
+
+This runs in CI as the `production-smoke` job. See
+`frontend/playwright.production.config.ts` and `frontend/e2e/production-server.mjs`
+for how the two-boot seed sequence works.
 
 ## v1 workflows
 

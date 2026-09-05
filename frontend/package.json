@@ -16,7 +16,8 @@
     "test:ui": "vitest --ui",
     "test:e2e": "playwright test",
     "test:e2e:update": "playwright test --update-snapshots",
-    "test:integration": "playwright test --config=playwright.integration.config.ts"
+    "test:integration": "playwright test --config=playwright.integration.config.ts",
+    "test:e2e:production": "playwright test --config=playwright.production.config.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.102.8",
