@@ -82,30 +82,89 @@ requirements.
 - *full spec: git 5144c25 §"Done criteria" item 3, §"Module / router layout".*
 
 ### URL import (fast-follow)
-- **Service `services/import_recipe.py`:**
-  `fetch_bytes(url, *, limit, allowed_types) -> bytes` — the **only** network
-  call, SSRF-guarded (#H1/#10b): HTTP(S) scheme allowlist; resolve host and
-  reject private/loopback/link-local/ULA/multicast/`169.254.169.254`;
+
+**API shape decided 2026-09-05**, superseding the earlier `save`-flag design.
+Sources: [ticket 10](../.scratch/post-v1-route/issues/10-import-endpoint-shape.md)
+and the [`recipe-scrapers` findings](../.scratch/post-v1-route/research/recipe-scrapers.md).
+
+- **Service `services/import_recipe.py` — `fetch_bytes(url, *, limit, allowed_types) -> bytes`:**
+  the **only** network call, SSRF-guarded (#H1/#10b): HTTP(S) scheme allowlist;
+  resolve host and reject private/loopback/link-local/ULA/multicast/`169.254.169.254`;
   `follow_redirects=False` (3xx → 502); `raise_for_status`; `Content-Type`
-  allowlist; stream to a byte cap. `RECIPE_IMPORT_ALLOW_PRIVATE=true` re-opens it
-  for a trusted LAN. Split from
-  `scrape_preview(html, url, wild_mode=False) -> RecipeImportPreview` (pure;
-  wraps `recipe-scrapers`, normal then wild mode; the route holds `html` for the
-  retry, #10a).
-- **Route:** `POST /api/recipes/import {url, save?}` → 200 `RecipeImportPreview`
-  (or 201 `RecipeRead` when `save=true`, image downloaded through the same
-  `fetch_bytes`). Unsupported site → 422 `unsupported:true`; any fetch failure →
-  502.
-- **DTO:** `ImportIngredient` = `RecipeIngredientIn` + `{raw_text, normalized_name}`
-  (#3) — populates `recipe_ingredients.raw_text` (column already present).
-- **Deps:** `recipe-scrapers`; promote `httpx` from dev to runtime.
-- **Config:** `import_max_bytes`, `import_fetch_timeout` (10s), `max_image_bytes`
-  (~5 MiB), `import_allow_private` (default false).
-- **Tests:** `test_import.py` via `httpx.MockTransport` — happy path, wild-mode
-  retry, unsupported → 422, non-2xx / redirect / oversize / wrong content-type →
-  502, blocked address (`169.254.169.254`, `localhost`) → 502 with no request,
-  `save=true` offline.
-- **Data-model impact:** none.
+  allowlist; stream to a byte cap. `RECIPE_IMPORT_ALLOW_PRIVATE=true` re-opens
+  it for a trusted LAN. Unchanged from the original spec.
+- **Service — `scrape_preview(html, url) -> RecipeImportPreview`:** pure, and
+  the parsing half of the split the library's own docs recommend.
+  - **One** `scrape_html(html, org_url=url, supported_only=False)` call. It uses
+    the dedicated scraper when the host is known and the generic schema.org path
+    otherwise. There is **no two-pass "normal then wild mode" retry** — one call
+    covers both, so the route no longer holds `html` for a retry (#10a retired).
+  - **Do not pass `wild_mode=`.** It is deprecated in 15.x, and passing it
+    together with `supported_only` raises `ValueError`.
+  - **Every field accessor raises** when its field is absent
+    (`SchemaOrgException`, `ElementNotFoundInHtml`, `OpenGraphException`,
+    `StaticValueException`). Read each field under its own `try/except`, or set
+    `recipe_scrapers.settings.SUPPRESS_EXCEPTIONS`. **A partial result is the
+    normal shape of the return value, not an edge case.**
+  - Use **`ingredient_groups()`**, not `ingredients()`, so a `For the sauce:`
+    header never becomes a false ingredient. Flatten the groups to lines; the
+    group `purpose` is a **deliberate loss** — the data model has no group
+    concept and adding one is a schema change (see Alembic below).
+  - **Retry the generic path when a dedicated scraper returns empty.**
+    `scrape_html` dispatches once and never falls back, ~8% of scrapers break
+    per year, and the library's CI runs offline fixtures only — so a break
+    reaches users first. ~5 lines via `SchemaScraperFactory`.
+- **Route:** `POST /api/recipes/import {url?, html?}` — **exactly one**; both or
+  neither → 422. **Read-only: it never writes.** Returns 200
+  `RecipeImportPreview`. The person corrects the preview, and the app saves it
+  through the existing `POST /api/recipes`.
+  - **Success = ingredients and steps present.** A missing title, `yields`,
+    `total_time`, `ratings` or `author` is *not* a failure. Title is the most
+    reliably extracted field (90.0% exact) and is easily typed when absent —
+    note `RecipeCreate.title` has `min_length=1`, so the client must require one
+    before saving.
+  - No recipe found → 422 `unsupported: true` (`NoSchemaFoundInWildMode`,
+    `WebsiteNotImplementedError` both map here).
+  - Fetch failure → 502. **For 403/503 the message must say the site blocks
+    automated access and to paste the page instead** — bot protection was 2 of
+    20 live fetches, both on *supported* sites, and no parser can fix it.
+- **DTO:** `RecipeImportPreview(RecipeCreate)` — `ingredients` is `list[str]`,
+  the scraped lines verbatim. `source_url` is already a `RecipeBase` field, so
+  provenance persists with no addition. Advisory fields (which fields were
+  absent, the discarded group purposes for display) are safe to add:
+  `RecipeCreate` does not set `extra="forbid"`, so the preview posts back
+  unchanged.
+  - **`ImportIngredient` is removed.** The earlier DTO (`RecipeIngredientIn` +
+    `{raw_text, normalized_name}`) **could not be posted back** —
+    `RecipeIngredientIn` carries `extra="forbid"`, the only schema in the API
+    that does. Plain lines avoid it entirely, and §5.2's string-element path
+    already populates `raw_text` and computes `normalized_name` server-side.
+- **Deps:** `recipe-scrapers`, **pinned to an exact version** (Mealie pins
+  15.12.0, Tandoor 15.11.0). Promote `httpx` from dev to runtime.
+- **Config:** `import_max_bytes`, `import_fetch_timeout` (10s),
+  `import_allow_private` (default false). `max_image_bytes` is **dropped** —
+  nothing downloads an image now that import is read-only and photo upload is
+  off the route.
+- **Tests:** `test_import.py` via `httpx.MockTransport` — happy path from a
+  saved fixture; pasted `html` with no `url`; both or neither → 422; no recipe
+  found → 422; non-2xx / redirect / oversize / wrong content-type → 502;
+  403 → 502 with the paste-instead message; blocked address
+  (`169.254.169.254`, `localhost`) → 502 with no request issued; a page with no
+  `total_time` still previews; ingredients absent → 422; a group header is not
+  emitted as an ingredient; a preview posts to `POST /api/recipes` unchanged and
+  stores `raw_text`. **Retire the "wild-mode retry" case** — there is no retry.
+- **Data-model impact:** none. `recipes.source_url` and
+  `recipe_ingredients.raw_text` are existing columns, so this track stays in
+  front of the Alembic gate.
+- **Known limitation:** pasting raw HTML is a desktop gesture (view-source,
+  copy). On a phone it is awkward, and rendered page text cannot be parsed
+  because the parser needs markup. Accepted for now; revisit if real use shows
+  it biting.
+- **Measured expectations** (1109 fixture pages, generic path only, scored
+  against the dedicated scraper): a parseable recipe on 91.1%, non-empty
+  ingredients on 87.7%, byte-identical ingredients on 75.9%. Supported hosts do
+  better, because they use their dedicated scraper. Known failure population:
+  newsletter/prose sources with no recipe markup, and bot-protected sites.
 - **Before v2 (#R-def):** "stream to a byte cap" must be an actual streaming
   read that aborts once a running byte counter exceeds the cap — **not**
   `resp.content[:N]` after a full download. Also: `httpx.Client(trust_env=False)`
@@ -119,6 +178,11 @@ requirements.
   `compare_ingredients(previews) -> ResearchReport` — for a batch of scraped
   `RecipeImportPreview`s, report what fraction contain each `normalized_name`
   (one recipe counts an ingredient once). Nothing is persisted.
+  - **Amended 2026-09-05:** the preview now carries `ingredients` as plain
+    lines, so `normalized_name` is no longer a field to read off it. This
+    service calls `normalize_name` on each scraped line itself. The removed
+    `ImportIngredient` DTO was the only thing that carried it, and computing it
+    here is one call — see the URL-import section above.
 - **Route `routers/research.py`:** `POST /api/research/compare {urls, limit?}`
   (`limit` capped at `settings.research_max_urls`; empty `urls` → 422). Reuses
   `fetch_bytes` + `scrape_preview`, so the whole batch inherits the SSRF guard
