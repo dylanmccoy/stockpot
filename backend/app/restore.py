@@ -5,8 +5,9 @@
 and materializes it at a **new** target path — never an existing one, because
 replacing a live database in place is ticket 02c. Before the recovered
 database is published, every row in `sessions` is deleted: a session token
-captured from the snapshot cannot be replayed against the recovered database,
-so the owner signs in afresh to inspect the recovered household.
+captured from the snapshot cannot be replayed against the recovered database
+(and a session revoked before the snapshot is not revived), so the owner
+signs in afresh to inspect the recovered household.
 
 The snapshot and any live database are only ever read, never written.
 """
@@ -17,17 +18,14 @@ import os
 import shutil
 import sqlite3
 from pathlib import Path
+from urllib.request import pathname2url
+
+from app import models  # noqa: F401  — populates Base.metadata with every table
+from app.database import Base
 
 
 class RestoreError(Exception):
     """A recovery attempt failed; no recovered database was published."""
-
-
-# Tables every real recipe-app database has — the schema is created by
-# `Base.metadata.create_all()` at startup (app/main.py). A SQLite file missing
-# any of them is not a snapshot of this application and is refused rather than
-# recovered into a database that would look usable but isn't.
-_REQUIRED_TABLES = frozenset({"users", "sessions", "recipes"})
 
 
 def recover_snapshot(snapshot: Path | str, target: Path | str) -> Path:
@@ -36,8 +34,8 @@ def recover_snapshot(snapshot: Path | str, target: Path | str) -> Path:
 
     Raises `RestoreError` — leaving `target` absent, and the snapshot and any
     live database untouched — if `snapshot` is missing or is not an intact
-    database of this application, if `target` already exists, or if the copy
-    or session-invalidation fails partway.
+    database with this application's full schema, if `target` already exists,
+    or if the copy or session-invalidation fails partway.
     """
     snapshot = Path(snapshot)
     target = Path(target)
@@ -66,10 +64,10 @@ def recover_snapshot(snapshot: Path | str, target: Path | str) -> Path:
     try:
         shutil.copyfile(snapshot, tmp_path)
         _invalidate_sessions(tmp_path)
-        # Operator-only access on the recovered database itself. The target
-        # directory's permissions are left as the operator chose them — unlike
-        # `create_backup`'s dedicated snapshot directory, a rehearsal target
-        # can sit in an existing shared location.
+        # Operator-only access on the recovered database itself — it holds the
+        # household's records and password hashes, so a rehearsal copy is no
+        # more world-readable than a snapshot (spec item 9). The target
+        # directory's own permissions are left as the operator chose them.
         os.chmod(tmp_path, 0o600)
         tmp_path.replace(target)
     except (OSError, sqlite3.Error) as exc:
@@ -80,9 +78,12 @@ def recover_snapshot(snapshot: Path | str, target: Path | str) -> Path:
 
 
 def _validate_snapshot(snapshot: Path) -> None:
-    """Reject anything that isn't an intact SQLite database of this app."""
+    """Reject anything that isn't an intact SQLite database with this app's
+    full schema — so a truncated or unrelated file can't be recovered into a
+    database that looks successful but fails the moment the app touches it."""
+    uri = f"file:{pathname2url(str(snapshot))}?mode=ro"
     try:
-        conn = sqlite3.connect(f"file:{snapshot}?mode=ro", uri=True, timeout=30)
+        conn = sqlite3.connect(uri, uri=True, timeout=30)
     except sqlite3.Error as exc:
         raise RestoreError(f"cannot open snapshot {snapshot}: {exc}") from exc
 
@@ -95,7 +96,7 @@ def _validate_snapshot(snapshot: Path) -> None:
                     "SELECT name FROM sqlite_master WHERE type = 'table'"
                 )
             }
-        except sqlite3.DatabaseError as exc:
+        except sqlite3.Error as exc:
             raise RestoreError(
                 f"snapshot is not a valid SQLite database: {snapshot} ({exc})"
             ) from exc
@@ -105,7 +106,7 @@ def _validate_snapshot(snapshot: Path) -> None:
     if not integrity or integrity[0] != "ok":
         raise RestoreError(f"snapshot failed its SQLite integrity check: {snapshot}")
 
-    missing = _REQUIRED_TABLES - table_names
+    missing = set(Base.metadata.tables) - table_names
     if missing:
         raise RestoreError(
             f"snapshot is not a recipe-app database: {snapshot} "

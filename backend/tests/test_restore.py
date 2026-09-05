@@ -131,6 +131,59 @@ def test_recovered_database_refuses_snapshot_session_tokens(tmp_path: Path) -> N
         assert fresh.json()["username"] == USERNAME
 
 
+def test_a_session_revoked_before_the_snapshot_is_not_revived(tmp_path: Path) -> None:
+    live_db = tmp_path / "live.db"
+    keep_token = _seed_live_db(live_db)
+
+    with _client(live_db, allow_registration=False) as client:
+        # A second device signs in, then signs out — its session is revoked
+        # while the app is live, *before* the snapshot is taken.
+        second = client.post(
+            "/api/auth/login", json={"username": USERNAME, "password": PASSWORD}
+        )
+        assert second.status_code == 200, second.text
+        revoked_token = second.json()["token"]
+        signed_out = client.post(
+            "/api/auth/logout",
+            headers={"Authorization": f"Bearer {revoked_token}"},
+        )
+        assert signed_out.status_code == 204
+
+    snapshot = create_backup(live_db, tmp_path / "backups")
+    target = tmp_path / "rehearsal.db"
+    recover_snapshot(snapshot, target)
+
+    with _client(target, allow_registration=False) as client:
+        for token in (keep_token, revoked_token):
+            refused = client.get(
+                "/api/auth/me", headers={"Authorization": f"Bearer {token}"}
+            )
+            assert refused.status_code == 401
+        login = client.post(
+            "/api/auth/login", json={"username": USERNAME, "password": PASSWORD}
+        )
+        assert login.status_code == 200, login.text
+
+
+def test_recovers_a_snapshot_whose_path_contains_a_space(tmp_path: Path) -> None:
+    live_db = tmp_path / "live.db"
+    _seed_live_db(live_db)
+
+    spaced_dir = tmp_path / "back ups"
+    spaced_dir.mkdir()
+    snapshot = create_backup(live_db, spaced_dir)
+    assert " " in str(snapshot)
+
+    target = tmp_path / "re hearsal.db"
+    recover_snapshot(snapshot, target)
+
+    with _client(target, allow_registration=False) as client:
+        login = client.post(
+            "/api/auth/login", json={"username": USERNAME, "password": PASSWORD}
+        )
+        assert login.status_code == 200, login.text
+
+
 def test_live_database_and_snapshot_are_untouched_by_recovery(tmp_path: Path) -> None:
     live_db = tmp_path / "live.db"
     _seed_live_db(live_db)

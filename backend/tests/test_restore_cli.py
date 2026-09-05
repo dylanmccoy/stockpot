@@ -7,27 +7,38 @@ import subprocess
 import sys
 from pathlib import Path
 
+from app import models  # noqa: F401  — populates Base.metadata
+from app.database import Base, make_engine
+
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 SCRIPT = BACKEND_DIR / "scripts" / "restore.py"
 
 
 def _recipe_shaped_sqlite(path: Path) -> None:
+    """A real file-backed database with the app's full schema and one session
+    row, so the CLI's snapshot validation passes and the row proves the
+    session wipe ran."""
+    engine = make_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    engine.dispose()
+
     conn = sqlite3.connect(path)
-    conn.executescript(
-        "CREATE TABLE users (id INTEGER PRIMARY KEY);"
-        "CREATE TABLE sessions (id INTEGER PRIMARY KEY, token TEXT);"
-        "CREATE TABLE recipes (id INTEGER PRIMARY KEY);"
-    )
-    conn.execute("INSERT INTO sessions (token) VALUES ('stale-token')")
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute(
+            "INSERT INTO sessions (token, user_id, created_at, last_used_at, expires_at) "
+            "VALUES ('stale-token', 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00', "
+            "'2099-01-01 00:00:00')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess:
+def _run(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         cwd=BACKEND_DIR,
-        env={**os.environ},
+        env={**os.environ, **(env or {})},
         capture_output=True,
         text=True,
         timeout=30,
