@@ -4,7 +4,7 @@
 
 **Blocked by:** 14, 15, 16, 17, 18.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** cross-screen edits under `frontend/src/pages/*`, `frontend/src/components/*`, `frontend/src/styles/*`; `frontend/src/types.ts` re-diff; `docs/frontend/spec.md` §12 checklist.
 
