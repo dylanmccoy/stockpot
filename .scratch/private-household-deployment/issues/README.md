@@ -1,15 +1,16 @@
 # Private household deployment tickets
 
-The 18 approved slices implement the [deployment spec](../spec.md). Each
+The 19 approved slices implement the [deployment spec](../spec.md). Each
 ticket is marked `ready-for-agent`; start it only after all its blockers
 are complete. Lettered IDs preserve the seven agreed feature groups.
 
-Initial available tickets: **01a, 02a, 03a, 03b**.
+Initial available tickets: **01a, 01c, 02a, 03a, 03b**.
 
 | Ticket | Delivers | Blocked by |
 | --- | --- | --- |
 | [01a](01a-production-entry.md) | Open and use the built app at its entry address | None |
 | [01b](01b-direct-links.md) | Reload bookmarked pages without breaking API errors | 01a |
+| [01c](01c-ci-real-backend-integration.md) | Gate changes on the real-backend browser integration suite | None |
 | [02a](02a-create-snapshot.md) | Take a usable live SQLite snapshot | None |
 | [02b](02b-restore-isolated.md) | Recover a snapshot into a separate database | 02a |
 | [02c](02c-replace-stopped-database.md) | Restore an existing database safely while stopped | 02b |
