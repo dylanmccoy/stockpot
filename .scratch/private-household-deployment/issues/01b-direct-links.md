@@ -4,7 +4,7 @@
 
 **Blocked by:** 01a: Open and use the built app at its entry address.
 
-**Status:** in-review
+**Status:** done
 
 - [x] Add frontend route fallback so direct loading and reloading a nested route, including the login route, works with the production build.
 
@@ -15,6 +15,9 @@
 - [x] Keep static-file confinement tests green and add focused boundary/traversal cases for the new fallback. Document direct-link behavior as part of the serving instructions.
 
 ## Comments
+
+- Merged via PR [#80](https://github.com/dylanmccoy/stockpot/pull/80)
+  (squash), CI green (`backend`, `frontend`, `production-smoke`).
 
 - Implemented on `feat/private-household-deployment-01b`, worktree at
   `.claude/worktrees/private-household-deployment-01b`.
