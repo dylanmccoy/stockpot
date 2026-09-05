@@ -275,3 +275,126 @@ def test_update_aborts_on_bad_build_and_leaves_running_deployment_intact(deploy_
     assert _recipe_titles(deployment_db) == ["UNTOUCHED BY FAILED UPDATE"]
 
     assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
+
+
+# --- deploy/rollback.sh (private-household-deployment ticket 04c) -----------
+
+ROLLBACK = REPO_ROOT / "deploy" / "rollback.sh"
+
+
+def _retained_builds(tmp_path: Path) -> list[Path]:
+    archive = tmp_path / "data" / "builds"
+    return sorted(p for p in archive.iterdir() if p.is_dir()) if archive.is_dir() else []
+
+
+def test_rollback_returns_to_the_retained_previous_build_and_preserves_data(
+    deploy_env, tmp_path: Path
+):
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["KEPT ACROSS ROLLBACK"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+
+    deployment_db = tmp_path / "data" / "recipe.db"
+    live_dist = Path(deploy_env["RECIPE_DEPLOY_FRONTEND_DIST"])
+    # Tag the installed build so the test can tell which build is being served.
+    (live_dist / "assets" / "build-marker.txt").write_text("BUILD-1")
+
+    assert _run(CONTROL, "start", env=deploy_env).returncode == 0
+    assert _wait_health()
+    assert _snapshot_count(tmp_path) == 1  # the adoption snapshot
+
+    # Update to BUILD-2 — update.sh retains BUILD-1 in the build archive.
+    next_build = _stub_dist(tmp_path, "next-dist", marker="BUILD-2")
+    assert _run(UPDATE, "--staging-dir", str(next_build), env=deploy_env).returncode == 0
+    assert (live_dist / "assets" / "build-marker.txt").read_text() == "BUILD-2"
+    assert _snapshot_count(tmp_path) == 2
+    retained = _retained_builds(tmp_path)
+    assert len(retained) == 1
+    assert (retained[0] / "assets" / "build-marker.txt").read_text() == "BUILD-1"
+
+    # Deliberate operator rollback to the most recently retained build.
+    result = _run(ROLLBACK, env=deploy_env)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "rollback complete" in result.stdout
+
+    # A pre-maintenance snapshot was taken before the switch.
+    assert _snapshot_count(tmp_path) == 3
+    # BUILD-1 is the served build again; same explicit DB, adopted record intact.
+    assert (live_dist / "assets" / "build-marker.txt").read_text() == "BUILD-1"
+    assert not (Path(str(live_dist) + ".prev")).exists()
+    assert not (Path(str(live_dist) + ".staging")).exists()
+    assert _wait_health()
+    assert _recipe_titles(deployment_db) == ["KEPT ACROSS ROLLBACK"]
+
+    # rollback.sh does not archive; the update's retained BUILD-1 is unchanged
+    # (moving forward again is a deploy/update.sh build, not a rollback).
+    markers = sorted(
+        p.read_text() for p in (tmp_path / "data" / "builds").glob("*/assets/build-marker.txt")
+    )
+    assert markers == ["BUILD-1"]
+
+    assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
+
+
+def test_rollback_aborts_on_bad_selection_and_leaves_running_deployment_intact(
+    deploy_env, tmp_path: Path
+):
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["UNTOUCHED BY FAILED ROLLBACK"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+
+    deployment_db = tmp_path / "data" / "recipe.db"
+    live_dist = Path(deploy_env["RECIPE_DEPLOY_FRONTEND_DIST"])
+    (live_dist / "assets" / "build-marker.txt").write_text("RUNNING")
+    assert _run(CONTROL, "start", env=deploy_env).returncode == 0
+    assert _wait_health()
+
+    # No retained build yet (no update has run): a no-arg rollback must refuse
+    # without touching the running deployment.
+    r1 = _run(ROLLBACK, env=deploy_env)
+    assert r1.returncode != 0
+    assert "no retained build" in r1.stderr
+
+    # An explicit --to that resolves to nothing: same guarantee.
+    r2 = _run(ROLLBACK, "--to", str(tmp_path / "no-such-build"), env=deploy_env)
+    assert r2.returncode != 0
+    assert "nothing switched" in r2.stderr
+
+    # A --to directory that exists but is not a usable build: refused before any
+    # switch, stop, or snapshot.
+    unusable = tmp_path / "unusable-build"
+    (unusable / "assets").mkdir(parents=True)
+    r3 = _run(ROLLBACK, "--to", str(unusable), env=deploy_env)
+    assert r3.returncode != 0
+    assert "no index.html" in r3.stderr
+
+    assert _snapshot_count(tmp_path) == 1  # no pre-maintenance snapshot taken
+    assert not (Path(str(live_dist) + ".prev")).exists()
+    assert (live_dist / "assets" / "build-marker.txt").read_text() == "RUNNING"
+    assert _wait_health()  # deployment still serving on the same build
+    assert _recipe_titles(deployment_db) == ["UNTOUCHED BY FAILED ROLLBACK"]
+
+    assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
+
+
+def test_rollback_list_reports_retained_builds(deploy_env, tmp_path: Path):
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["R"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+
+    before_any = _run(ROLLBACK, "--list", env=deploy_env)
+    assert before_any.returncode == 0
+    assert "none" in before_any.stdout
+
+    assert _run(CONTROL, "start", env=deploy_env).returncode == 0
+    assert _wait_health()
+    next_build = _stub_dist(tmp_path, "next-dist", marker="X")
+    assert _run(UPDATE, "--staging-dir", str(next_build), env=deploy_env).returncode == 0
+
+    listed = _run(ROLLBACK, "--list", env=deploy_env)
+    assert listed.returncode == 0
+    retained = _retained_builds(tmp_path)
+    assert len(retained) == 1
+    assert retained[0].name in listed.stdout
+
+    assert _run(CONTROL, "stop", env=deploy_env).returncode == 0

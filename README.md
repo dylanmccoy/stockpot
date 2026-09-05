@@ -112,7 +112,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Nine runbooks, in the order you'll actually need them. Most are the same
+Ten runbooks, in the order you'll actually need them. Most are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -437,9 +437,10 @@ deploy/control.sh stop / start / restart
   place, and `deploy/control.sh start` brings it back on the configured
   absolute `RECIPE_DATABASE_URL`. The outgoing build is held aside as
   `<frontend-dist>.prev` only for the duration of the switch: if the new build
-  fails to start, `update.sh` restores it and restarts; on success it is
-  removed. The operator command to return to an older build on demand is
-  ticket 04c.
+  fails to start, `update.sh` restores it and restarts. On success the build it
+  replaced is copied into the build archive (`RECIPE_DEPLOY_BUILD_ARCHIVE`,
+  default `RECIPE_DEPLOY_DATA_DIR/builds`, newest `RECIPE_DEPLOY_BUILD_KEEP`
+  kept) so runbook 10 can return to it on demand.
 - **No schema changes here.** This procedure never resets the database and
   never runs a schema-changing upgrade. A future `models.py` change needs a
   reviewed, data-preserving migration (runbook 3 is the dev-only reset, *not*
@@ -451,9 +452,54 @@ deploy/control.sh stop / start / restart
 
 `backend/tests/test_deploy.py` covers the switch/snapshot/abort logic against
 disposable data; the `deployment-update` CI run
-(`npm run test:e2e:deployment-update`) drives a real browser through an update:
-records written against the old build — and the adopted ones — are still there
-on the replacement build, and later writes persist.
+(`npm run test:e2e:deployment-update`) drives a real browser through an update
+**and** a rollback (runbook 10): records written against each build — and the
+adopted ones — survive both switches, and later writes persist.
+
+### 10. WSL deployment rollback (return to a previous build)
+
+Step the deployment back to an earlier application build after an unsuitable
+update (private-household-deployment ticket 04c). This is a **build** operation,
+not a data operation — it is not how you recover household *records* (that is
+runbook 5, restore from a snapshot). The app restarts against the **same**
+explicit database; household data is never touched, and a pre-maintenance
+snapshot is taken first.
+
+```bash
+deploy/rollback.sh --list            # retained builds, newest first
+deploy/rollback.sh                   # return to the most recently retained build
+deploy/rollback.sh --to 20260905T231233Z   # a specific retained build (by name)
+deploy/rollback.sh --to /path/to/build     # a build directory you identified yourself
+```
+
+- **Where retained builds come from.** `deploy/update.sh` copies the build it
+  replaces into `RECIPE_DEPLOY_BUILD_ARCHIVE` (default
+  `RECIPE_DEPLOY_DATA_DIR/builds`, newest `RECIPE_DEPLOY_BUILD_KEEP` kept) on
+  every successful update. To move *forward* again, build and deploy with
+  `deploy/update.sh` — rollback is one-directional.
+- **Validate first.** `rollback.sh` checks the selected build has `index.html`
+  and that the backend imports cleanly against it **before** stopping anything.
+  A missing, unknown, or unusable selection aborts with the running deployment
+  and its data completely intact — nothing is stopped, switched, or snapshotted.
+- **Pre-maintenance snapshot.** Before the switch, a live snapshot of the
+  deployment database is taken into `RECIPE_DEPLOY_BACKUP_DIR` via
+  `scripts/backup.py` (runbook 2). A snapshot failure aborts before the switch.
+- **Switch + restart.** Stop, swap the selected build in, `deploy/control.sh
+  start` on the configured absolute `RECIPE_DATABASE_URL`. If the selected build
+  fails to start, the build that was running is put back and restarted.
+- **Not across a schema change.** "Compatible" here means *same schema era* —
+  `rollback.sh` validates the build is serveable, but it cannot check the schema.
+  An older build must not be run against a newer, migrated schema. Roll back a
+  build only while the schema is unchanged. This deployment ships no schema
+  change; a future `models.py` change needs a reviewed, data-preserving
+  migration (there is none yet — runbook 3 is the dev-only reset, *not* an
+  upgrade path), and once household data is migrated forward the older build is
+  no longer compatible.
+- **Health check.** `deploy/control.sh status`, as in runbook 9.
+
+`backend/tests/test_deploy.py` covers the select / validate / snapshot / abort
+logic against disposable data; the `deployment-update` CI run also drives a
+browser through update → rollback (above).
 
 ## v1 workflows
 

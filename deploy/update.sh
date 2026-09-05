@@ -20,10 +20,14 @@
 #      RECIPE_DATABASE_URL. If the new build fails to start, roll the served
 #      build back to the previous one so the household is never left down.
 #
+# On a successful update the build it replaced is copied into the build archive
+# (RECIPE_DEPLOY_BUILD_ARCHIVE) so deploy/rollback.sh can return to it on demand
+# (ticket 04c) — that is a deliberate operator command, distinct from the
+# in-run rollback below that only guards a failed switch.
+#
 # This procedure never resets the database and never runs a schema-changing
 # upgrade. A future schema change needs a reviewed, data-preserving migration
-# before it can be installed (see root README.md runbook 3). The operator
-# command to switch back to an older build on demand is ticket 04c.
+# before it can be installed (see root README.md runbook 3).
 
 set -euo pipefail
 # shellcheck source=deploy/lib.sh
@@ -80,17 +84,9 @@ else
   fi
 fi
 
-[ -f "$STAGING/index.html" ] \
-  || { rm -rf "$STAGING"; _deploy_die "staged build has no index.html — current deployment left intact"; }
-
-echo "-- validating staged build (backend import smoke against the staged assets)"
-if ! ( cd "$RECIPE_DEPLOY_CHECKOUT/backend" \
-    && RECIPE_DATABASE_URL="$DEPLOY_DATABASE_URL" \
-       RECIPE_FRONTEND_DIST="$STAGING" \
-       "$RECIPE_DEPLOY_UV_BIN" run python -c "import app.main" ); then
-  rm -rf "$STAGING"
-  _deploy_die "staged build failed validation — current deployment and data left intact"
-fi
+echo "-- validating staged build (index.html + backend import smoke against the staged assets)"
+deploy_validate_build "$STAGING" \
+  || { rm -rf "$STAGING"; _deploy_die "staged build failed validation — current deployment and data left intact"; }
 
 # --- 2. pre-maintenance snapshot ----------------------------------------
 if [ -f "$RECIPE_DEPLOY_DB_FILE" ]; then
@@ -103,34 +99,26 @@ else
 fi
 
 # --- 3. switch + restart against the explicit persistent database -------
-if deploy_pid_if_running >/dev/null; then
-  echo "-- stopping the running deployment"
-  bash "$_DEPLOY_DIR/control.sh" stop
-fi
-
-echo "-- switching the served build"
-rm -rf "$PREV"
-if [ -e "$RECIPE_DEPLOY_FRONTEND_DIST" ]; then
-  mv "$RECIPE_DEPLOY_FRONTEND_DIST" "$PREV"
-fi
-mv "$STAGING" "$RECIPE_DEPLOY_FRONTEND_DIST"
-
-echo "-- starting the updated deployment"
-if bash "$_DEPLOY_DIR/control.sh" start; then
+# deploy_switch_build stages the new build, stops, swaps it in with two atomic
+# renames, and starts. On a failed start it restores and restarts the build
+# that was running (the ticket's "leave the current usable deployment intact"
+# guarantee applied to a failed switch — distinct from ticket 04c's deliberate
+# return to an older build) and returns non-zero.
+if deploy_switch_build "$STAGING"; then
+  # Retain the build we just replaced so deploy/rollback.sh (ticket 04c) can
+  # return to it on demand. A failure here does not fail the update — the new
+  # build is already serving.
+  if [ -d "$PREV" ]; then
+    if archived="$(deploy_archive_build "$PREV")"; then
+      echo "-- retained the previous build for rollback: $archived"
+    else
+      echo "deploy: warning: could not archive the previous build (rollback would need deploy/rollback.sh --to <dir>)" >&2
+    fi
+  fi
   rm -rf "$PREV"
   echo
   echo "update complete. Serving the new build against $RECIPE_DEPLOY_DB_FILE."
   exit 0
 fi
 
-# Start failed: put the previous build back so the household keeps a working
-# deployment. This is the ticket's "leave the current usable deployment intact"
-# guarantee applied to a failed switch — not ticket 04c, which is a deliberate
-# operator command to return to an older build.
-echo "deploy: updated build did not start — rolling back to the previous build" >&2
-rm -rf "$RECIPE_DEPLOY_FRONTEND_DIST"
-if [ -e "$PREV" ]; then
-  mv "$PREV" "$RECIPE_DEPLOY_FRONTEND_DIST"
-  bash "$_DEPLOY_DIR/control.sh" start || true
-fi
 _deploy_die "update failed and was rolled back to the previous build; database untouched"
