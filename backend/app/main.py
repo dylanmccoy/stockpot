@@ -64,7 +64,8 @@ def _to_409_if_locked_else_500(request: Request, exc: OperationalError) -> JSONR
 
 
 def _mount_frontend(app: FastAPI, frontend_dist: str) -> None:
-    """Serve the built frontend's entry document and public assets.
+    """Serve the built frontend's entry document, public assets, and the
+    client-side-route fallback.
 
     Private-household-deployment ticket 01a (entry document + assets) and 01b
     (client-side route fallback). Registered after every API route, so
@@ -99,6 +100,11 @@ def _mount_frontend(app: FastAPI, frontend_dist: str) -> None:
 
     @app.get("/{full_path:path}", include_in_schema=False)
     def frontend_fallback(full_path: str) -> FileResponse:
+        # "api" is unreachable in practice (every real API route is matched
+        # first); "assets" only matters when assets_dir doesn't exist above,
+        # since a real /assets mount would already have claimed the request.
+        # Kept explicit so a missing/renamed asset never falls back to the
+        # entry document regardless of mount state.
         first_segment = full_path.split("/", 1)[0]
         if first_segment in ("api", "assets"):
             raise HTTPException(status_code=404)
