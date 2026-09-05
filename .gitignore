@@ -26,3 +26,6 @@ frontend/playwright/.cache/
 # Tooling-local state (Claude Code, etc.)
 .claude/worktrees/
 .claude/settings.local.json
+
+# Deployment (private-household-deployment) — host-specific operator config
+deploy/deploy.env
