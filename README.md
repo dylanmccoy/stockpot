@@ -70,15 +70,16 @@ request, as parallel jobs:
 
 - **backend** — `uv run pytest`.
 - **frontend** — `npm run lint`, `npm run test:run`, `npm run build`.
-- **integration** — `npm run test:integration`: the real-backend Playwright
-  suite (real SPA + real FastAPI process through the Vite dev proxy, dedicated
-  ports, disposable SQLite DB). Local repro: `cd frontend && npm run test:integration`
-  (needs `uv` on PATH). On failure the Playwright report and `test-results/`
-  traces are uploaded as the `playwright-integration-report` artifact.
-- **production-smoke** — `npm run build && npm run test:e2e:production`: the
-  built single-origin deployment (see "Production entry" below). Kept as its own
-  required check — the dev-proxy `integration` suite does not exercise
-  `RECIPE_FRONTEND_DIST` or single-origin routing.
+- **integration** — `npm run test:integration`.
+  - The real-backend Playwright suite: real SPA + real FastAPI process through
+    the Vite dev proxy, on dedicated ports against a disposable SQLite DB.
+  - Local repro: `cd frontend && npm run test:integration` (needs `uv` on PATH).
+  - On failure the Playwright report and `test-results/` traces upload as the
+    `playwright-integration-report` artifact.
+- **production-smoke** — `npm run build && npm run test:e2e:production`.
+  - Drives the built single-origin deployment (see "Production entry" below).
+  - Its own required check: the dev-proxy `integration` suite never exercises
+    `RECIPE_FRONTEND_DIST` or single-origin routing.
 
 ## Authentication
 
