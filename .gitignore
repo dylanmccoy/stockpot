@@ -29,3 +29,7 @@ frontend/playwright/.cache/
 
 # Deployment (private-household-deployment) — host-specific operator config
 deploy/deploy.env
+
+# Deployment update (ticket 04b) — staged / previous served build, swapped by deploy/update.sh
+frontend/dist.staging/
+frontend/dist.prev/

@@ -61,10 +61,14 @@ def _recipe_titles(path: Path) -> list[str]:
         conn.close()
 
 
-def _stub_dist(root: Path) -> Path:
-    dist = root / "dist"
+def _stub_dist(root: Path, name: str = "dist", marker: str | None = None) -> Path:
+    """A stub built-frontend tree. With `marker`, drops a uniquely identifiable
+    asset so a test can tell which build a running deployment is serving."""
+    dist = root / name
     (dist / "assets").mkdir(parents=True)
     (dist / "index.html").write_text('<!doctype html><div id="root"></div>')
+    if marker is not None:
+        (dist / "assets" / "build-marker.txt").write_text(marker)
     return dist
 
 
@@ -201,3 +205,73 @@ def test_control_lifecycle_uses_one_explicit_db_from_any_cwd(deploy_env, tmp_pat
     stopped = _run(CONTROL, "status", env=deploy_env)
     assert stopped.returncode == 3
     assert re.search(r"state\s*:\s*stopped", stopped.stdout)
+
+
+# --- deploy/update.sh (private-household-deployment ticket 04b) -------------
+
+UPDATE = REPO_ROOT / "deploy" / "update.sh"
+
+
+def _snapshot_count(tmp_path: Path) -> int:
+    return len(list((tmp_path / "data" / "backups").glob("recipe-*.db")))
+
+
+def test_update_switches_build_snapshots_first_and_preserves_data(deploy_env, tmp_path: Path):
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["SURVIVES THE UPDATE"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+
+    deployment_db = tmp_path / "data" / "recipe.db"
+    assert _run(CONTROL, "start", env=deploy_env).returncode == 0
+    assert _wait_health()
+    assert _snapshot_count(tmp_path) == 1  # the adoption snapshot
+
+    next_build = _stub_dist(tmp_path, "next-dist", marker="NEW-BUILD-04b")
+    result = _run(UPDATE, "--staging-dir", str(next_build), env=deploy_env)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    # A pre-maintenance snapshot was taken before the switch.
+    assert _snapshot_count(tmp_path) == 2
+
+    # The new build is now the served one; the staging and rollback dirs are
+    # cleaned up on success (retaining an old build for on-demand return is 04c).
+    live_dist = Path(deploy_env["RECIPE_DEPLOY_FRONTEND_DIST"])
+    assert (live_dist / "assets" / "build-marker.txt").read_text() == "NEW-BUILD-04b"
+    assert not (Path(str(live_dist) + ".prev")).exists()
+    assert not (Path(str(live_dist) + ".staging")).exists()
+
+    # Same explicit database, adopted record intact — no reset, no schema step.
+    assert _wait_health()
+    assert _recipe_titles(deployment_db) == ["SURVIVES THE UPDATE"]
+
+    assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
+
+
+def test_update_aborts_on_bad_build_and_leaves_running_deployment_intact(deploy_env, tmp_path: Path):
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["UNTOUCHED BY FAILED UPDATE"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+
+    deployment_db = tmp_path / "data" / "recipe.db"
+    assert _run(CONTROL, "start", env=deploy_env).returncode == 0
+    assert _wait_health()
+
+    live_dist = Path(deploy_env["RECIPE_DEPLOY_FRONTEND_DIST"])
+    marker_before = (live_dist / "index.html").read_text()
+
+    # A staging dir with no index.html: preparation must fail before anything is
+    # switched, stopped, or snapshotted.
+    broken = tmp_path / "broken-build"
+    broken.mkdir()
+    (broken / "assets").mkdir()
+    result = _run(UPDATE, "--staging-dir", str(broken), env=deploy_env)
+    assert result.returncode != 0
+    assert "left intact" in result.stderr
+
+    assert _snapshot_count(tmp_path) == 1  # no pre-maintenance snapshot taken
+    assert not (Path(str(live_dist) + ".prev")).exists()
+    assert (live_dist / "index.html").read_text() == marker_before
+    assert _wait_health()  # old deployment still serving
+    assert _recipe_titles(deployment_db) == ["UNTOUCHED BY FAILED UPDATE"]
+
+    assert _run(CONTROL, "stop", env=deploy_env).returncode == 0

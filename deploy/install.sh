@@ -78,17 +78,8 @@ else
   if [ -e "$src" ]; then
     echo "-- adopting existing household data from $src"
     echo "   taking a live snapshot into $RECIPE_DEPLOY_BACKUP_DIR first"
-    ( cd "$RECIPE_DEPLOY_CHECKOUT/backend" \
-      && "$RECIPE_DEPLOY_UV_BIN" run python scripts/backup.py \
-        --source "$src" --dest-dir "$RECIPE_DEPLOY_BACKUP_DIR" ) \
+    snap_path="$(deploy_snapshot "$src" "$RECIPE_DEPLOY_BACKUP_DIR")" \
       || _deploy_die "snapshot of $src failed"
-    # backup.py writes recipe-<UTC timestamp>.db; the timestamp format sorts
-    # chronologically, so the newest snapshot is the last one lexically. Pick it
-    # from the directory rather than parsing the script's stdout.
-    snap_path="$(printf '%s\n' "$RECIPE_DEPLOY_BACKUP_DIR"/recipe-*.db | sort | tail -n 1)"
-    if [ -z "$snap_path" ] || [ ! -f "$snap_path" ]; then
-      _deploy_die "snapshot did not land in $RECIPE_DEPLOY_BACKUP_DIR"
-    fi
     echo "   snapshot: $snap_path"
     tmp="$RECIPE_DEPLOY_DB_FILE.adopt.tmp"
     rm -f "$tmp"

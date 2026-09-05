@@ -17,7 +17,11 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   snapshotDir: "./e2e/__snapshots__",
-  testIgnore: [/\.integration\.spec\.ts$/, /\.deployment\.spec\.ts$/],
+  testIgnore: [
+    /\.integration\.spec\.ts$/,
+    /\.deployment\.spec\.ts$/,
+    /\.update\.spec\.ts$/,
+  ],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
