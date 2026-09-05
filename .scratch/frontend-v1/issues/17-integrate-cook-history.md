@@ -4,7 +4,7 @@
 
 **Blocked by:** 10, 11a, 11b. External gate: backend Phase 5 (cooking + history) merged.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/api/cookLogs.ts`, `frontend/src/api/recipes.ts` (cook), `frontend/src/types.ts`, `docs/frontend/spec.md` §5. External gate: backend Phase 5 merged.
 

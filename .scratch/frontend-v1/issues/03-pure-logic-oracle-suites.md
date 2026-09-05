@@ -4,7 +4,7 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `parseIngredients`: splits on newline, trims, drops blank lines, strips one leading bullet/number marker, drops section-header lines (trailing `:` with no parseable leading quantity), no soft-wrap rejoin. Passes all 10 oracle rows (spec §7.1).
 - [ ] `format`: `formatQuantity(value, unit)` — fraction-prefer (`⅛ ¼ ⅓ ½ ⅔ ¾`, incl. integer+fraction) when `value < 10` and within 2% of a common fraction; counts snap to integer within 1%; canonical bulk units (`g`, `ml`) always decimal; otherwise 3 significant figures, trailing zeros trimmed, no thousands separators; `null` → `""`. `formatDateTime` per spec. Passes all 15 oracle rows (spec §7.2).

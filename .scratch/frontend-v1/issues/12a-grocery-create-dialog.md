@@ -4,7 +4,7 @@
 
 **Blocked by:** 05b, 03.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/pages/RecipeList.tsx` (wire the 05b multi-select stub), `frontend/src/pages/RecipeList.test.tsx`, `frontend/src/api/grocery.ts`; create a create-dialog component (`frontend/src/pages/GroceryCreateDialog.tsx` + `.module.css`) using `frontend/src/components/Dialog.tsx` + `Stepper.tsx`. Built against the spec DTO — **not** wired to real calls (ticket 18).
 

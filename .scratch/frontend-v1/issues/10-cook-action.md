@@ -4,7 +4,7 @@
 
 **Blocked by:** 09, 08a.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/pages/RecipeDetail.tsx`, `frontend/src/pages/RecipeDetail.test.tsx`, `frontend/src/api/recipes.ts` (cook adapter). Built against the spec DTO — **not** wired to real calls (ticket 17).
 

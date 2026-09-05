@@ -4,7 +4,7 @@
 
 **Blocked by:** 04.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `/` renders recipes as cards (title, cuisine, tags, prep/cook time), newest-first by default, behind `RequireAuth`. Query key `["recipes"]`.
 - [ ] Client-side search box filters by title, cuisine, or tag text.

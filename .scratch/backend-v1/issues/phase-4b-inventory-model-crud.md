@@ -7,7 +7,7 @@ lands in `phase-4c`.
 
 **Blocked by:** `phase-4a` (locked add-to-inventory oracle).
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Files:** create `backend/app/schemas/inventory.py`, `backend/app/routers/inventory.py`, `backend/tests/test_inventory.py`; edit `backend/app/models.py` (add `InventoryItem`), `backend/app/services/inventory_math.py` (add `add_to_inventory_calc`), `backend/app/schemas/__init__.py`, `backend/app/main.py`, `backend/tests/test_validation.py`.
 

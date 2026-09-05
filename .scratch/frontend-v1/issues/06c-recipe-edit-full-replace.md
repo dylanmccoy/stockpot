@@ -4,7 +4,7 @@
 
 **Blocked by:** 06a.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Files:** edit `frontend/src/pages/RecipeForm.tsx`, `frontend/src/pages/RecipeForm.test.tsx`, `frontend/src/api/recipes.ts` (PUT full-replace adapter).
 

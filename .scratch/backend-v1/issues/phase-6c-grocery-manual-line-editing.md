@@ -7,7 +7,7 @@ nothing reaches stock until `submit` (`phase-6d`).
 
 **Blocked by:** `phase-6b`.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `backend/app/routers/grocery.py` (add `/items` `POST`/`PATCH`/`DELETE`), `backend/app/schemas/grocery.py`, `backend/tests/test_grocery.py`.
 

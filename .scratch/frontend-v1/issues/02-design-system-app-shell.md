@@ -4,7 +4,7 @@
 
 **Blocked by:** 01.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `tokens.css`: color roles, 4px spacing scale, type scale, radii; `:root` light + `[data-theme="dark"]`; default follows `prefers-color-scheme` with a `localStorage` override; global reset.
 - [ ] Primitives built and unit-tested in isolation for behavior + accessibility wiring: `Button`, `Input`/`Textarea`/`Select`, `Field` (label + control + hint + error), `Card`, `DataTable` (real `<table>` ≥ 640px, stacked rows below), `Dialog` (focus trap, `Esc`, focus restore), `Toast` + provider (`aria-live="polite"`), `Badge`, `Stepper` (presets + free input, enforces `> 0`).

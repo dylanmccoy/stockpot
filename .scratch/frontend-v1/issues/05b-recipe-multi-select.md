@@ -4,7 +4,7 @@
 
 **Blocked by:** 05a.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] A toggle enters/leaves multi-select mode; leaving it clears the selection.
 - [ ] In select mode, tapping a card ticks/unticks it (card click no longer navigates).

@@ -10,7 +10,7 @@ live in one place and were executed for real, and no stale references remain.
 deferred work and verify exclusions. It must not implement a deferred feature or
 describe one as shipped v1 surface.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `README.md`, `CLAUDE.md`, `backend/.env.example`, `docs/phases/phase-7.md`, `docs/plan.md`. Read `docs/features.md` only to link deferrals.
 

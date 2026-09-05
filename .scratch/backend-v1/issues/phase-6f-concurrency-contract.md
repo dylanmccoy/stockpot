@@ -7,7 +7,7 @@ the backend is feature-complete.
 
 **Blocked by:** `phase-6e`.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** rewrite `backend/tests/test_concurrency.py`; edit `backend/app/main.py` / `backend/app/database.py` only if the `409` mapping needs it; `docs/phases/phase-6.md`, `docs/plan.md`.
 

@@ -4,7 +4,7 @@
 
 **Blocked by:** 08a, 08b, 09. External gate: backend Phase 4 (inventory + availability) merged.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/api/inventory.ts`, `frontend/src/api/recipes.ts` (availability), `frontend/src/types.ts`, `docs/frontend/spec.md` §5. External gate: backend Phase 4 merged.
 

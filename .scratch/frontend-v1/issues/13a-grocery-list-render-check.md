@@ -4,7 +4,7 @@
 
 **Blocked by:** 12a.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/pages/GroceryListDetail.tsx`, `frontend/src/api/grocery.ts`; create `frontend/src/pages/GroceryListDetail.module.css`, `frontend/src/pages/GroceryListDetail.test.tsx`. Use `frontend/src/lib/format.ts` as-is. Built against the spec DTO — **not** wired to real calls (ticket 18).
 

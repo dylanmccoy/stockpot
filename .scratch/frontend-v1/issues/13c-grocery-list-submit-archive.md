@@ -4,7 +4,7 @@
 
 **Blocked by:** 13a, 08a.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/pages/GroceryListDetail.tsx`, `frontend/src/pages/GroceryListDetail.test.tsx`, `frontend/src/api/grocery.ts`. Use `frontend/src/components/Dialog.tsx`.
 

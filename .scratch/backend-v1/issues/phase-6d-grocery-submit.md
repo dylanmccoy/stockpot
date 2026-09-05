@@ -6,7 +6,7 @@ freezes it — forward-only, with no status change.
 
 **Blocked by:** `phase-6c`.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `backend/app/routers/grocery.py` (add `/submit`), `backend/app/schemas/grocery.py`, `backend/tests/test_grocery.py`.
 

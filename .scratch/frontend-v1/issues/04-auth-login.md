@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Auth provider: token in `localStorage` under `recipe.token`; `login` / `logout`; current user hydrated via `GET /api/auth/me` on load; query cache dropped on `401`.
 - [ ] HTTP client `401` interceptor: clear token, drop the query cache, redirect to `/login?next=<attempted path>`.

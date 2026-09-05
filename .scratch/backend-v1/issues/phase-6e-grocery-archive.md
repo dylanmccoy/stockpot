@@ -6,7 +6,7 @@ with `409`.
 
 **Blocked by:** `phase-6d` (the archived-state guard tests reference `submit`).
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `backend/app/routers/grocery.py` (add `/archive`; archived-state `409` guard on every mutating grocery route), `backend/tests/test_grocery.py`.
 

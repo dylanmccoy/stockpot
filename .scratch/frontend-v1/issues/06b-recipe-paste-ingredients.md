@@ -4,7 +4,7 @@
 
 **Blocked by:** 06a.
 
-**Status:** ready-for-agent
+**Status:** done
 
 **Files:** edit `frontend/src/pages/RecipeForm.tsx`, `frontend/src/pages/RecipeForm.module.css`, `frontend/src/pages/RecipeForm.test.tsx`. Use `frontend/src/lib/parseIngredients.ts` as-is (do not edit it or its oracle).
 

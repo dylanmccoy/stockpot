@@ -7,7 +7,7 @@ correct group aggregation and the three-way uncertain / short / missing split.
 **Blocked by:** `phase-4b` (needs `InventoryItem` to load stock), `phase-4a`
 (locked availability + aggregation oracle).
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `backend/app/services/inventory_math.py` (add `aggregate`, `check_availability`), `backend/app/routers/recipes.py` (add `GET /{id}/availability`), `backend/app/schemas/recipe.py` (availability DTOs), `backend/tests/test_recipes.py`, `backend/tests/test_validation.py`.
 

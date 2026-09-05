@@ -4,7 +4,7 @@
 
 **Blocked by:** 12a, 12b, 13a, 13b, 13c. External gate: backend Phase 6 (grocery lists) merged.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `frontend/src/api/grocery.ts`, `frontend/src/types.ts`, `docs/frontend/spec.md` §5. External gate: backend Phase 6 merged.
 

@@ -8,7 +8,7 @@ satisfy without editing it.
 
 **Blocked by:** None (Phase 3 complete; N5 already resolved). Can start immediately.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `backend/tests/test_inventory_math.py` created, authored black-box from
       `spec.md` §4 / §7.

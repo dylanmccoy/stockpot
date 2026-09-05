@@ -7,7 +7,7 @@
 
 **Blocked by:** `phase-4b`.
 
-**Status:** in-review
+**Status:** done
 
 **Files:** edit `backend/app/routers/inventory.py`, `backend/app/schemas/inventory.py`, `backend/tests/test_inventory.py`, `backend/tests/test_validation.py`.
 

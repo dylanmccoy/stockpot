@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Runtime deps added: `react-router-dom`, `@tanstack/react-query`. Dev deps: `msw`, `eslint` (+ `@typescript-eslint`, `eslint-plugin-react-hooks`), `prettier`. No dependency outside the spec §1 list.
 - [ ] Pre-v1 `App` / `types` / `api` / `api.test` removed; `main` rewritten to mount the provider stack (QueryClient + Auth + Router). `setupTests`, vite config, `tsconfig` solution layout kept; `index.html` retitled "Recipes".

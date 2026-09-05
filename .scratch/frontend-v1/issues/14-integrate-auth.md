@@ -4,7 +4,7 @@
 
 **Blocked by:** 04. External gate: backend Phase 2 (auth + app factory) merged.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] Login, logout, and `GET /api/auth/me` run against the real backend via the dev proxy.
 - [ ] The bearer header format, token field name, and error body shapes match what the client and `parseApiError` expect; any MSW-vs-reality gap is fixed in the handlers and the client.

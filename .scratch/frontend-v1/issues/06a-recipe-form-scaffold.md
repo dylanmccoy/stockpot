@@ -4,7 +4,7 @@
 
 **Blocked by:** 05a, 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [ ] `/recipes/new` renders one form: title, cuisine, servings, prep time, cook time, source URL, tags, notes, ordered steps.
 - [ ] Steps: add, remove, reorder with up/down buttons (keyboard-safe; no drag).
