@@ -1,10 +1,18 @@
 # Recipe & Food Inventory
 
-A single-household app for storing recipes with structured ingredients, tracking
+A household app for storing recipes with structured ingredients, tracking
 food on hand, checking a recipe against stock, recording cooking, and building
 grocery lists from what is missing. The unit of work is "make this recipe now."
 
 ## Language
+
+### Households
+
+**Household**:
+A private group whose recipes, food inventory, cooking history, and grocery
+lists are separate from those of every other household. Households have no
+cross-household sharing or relationships.
+_Avoid_: account (when referring to the whole household)
 
 ### Units and quantities
 

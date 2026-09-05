@@ -1,21 +1,48 @@
 # Future Features and Roadmap
 
-This file owns work outside backend v1: deferred product capabilities,
+This file owns work outside the shipped v1 product: deferred capabilities,
 infrastructure upgrades, extension invariants, and deliberately excluded
-directions. The shipped v1 boundary and phase order live in [`plan.md`](plan.md);
-the normative v1 behavior lives in [`spec.md`](spec.md).
+directions. The backend phase order and normative behavior live in
+[`plan.md`](plan.md) and [`spec.md`](spec.md); the frontend equivalents live in
+[`frontend/plan.md`](frontend/plan.md) and [`frontend/spec.md`](frontend/spec.md).
 
 The pre-trim plan and its original review detail remain available at
 `git show 5144c25:docs/plan.md`.
 
 ## Current v1 boundary
 
-Backend v1 contains authentication, structured recipes, inventory, availability,
-cook/deduct history, grocery-list generation and submit, unit conversion, tests,
-and LAN operating documentation. It has eight phases numbered 0–7.
+V1 contains a FastAPI backend and a working React frontend for authentication,
+structured recipes, inventory, availability, cook/deduct history, grocery-list
+generation and submit, and unit conversion. It includes backend and frontend
+tests plus LAN operating documentation.
 
-It does not contain uploads, outbound HTTP, OCR, a rebuilt frontend, migrations,
-meal planning, or multi-household authorization.
+It does not contain uploads, outbound HTTP, OCR, migrations, meal planning, or
+multi-household authorization.
+
+## Post-v1 route (2026-09-05)
+
+The working order for post-v1 work, decided in the
+[post-v1-route wayfinding map](../.scratch/post-v1-route/map.md). This section
+records **order only** — every track's detail stays in its own section below,
+and nothing in this file was removed to make room for it.
+
+| # | Track | What it is | Gate before it can be built |
+| --- | --- | --- | --- |
+| 1 | Private household deployment | [`spec.md`](../.scratch/private-household-deployment/spec.md), ready-for-agent | Verify the Tailscale → Windows → WSL network path on the target host |
+| 2 | Friction pass | Edit-recipe entry point · create grocery list from a recipe · "what can we make now" | — |
+| 3 | Recipe entry | URL import — the household's recipes come from websites | `recipe-scrapers` coverage; what happens when a site can't be scraped |
+| 4 | Inventory upkeep | One of receipt OCR / staples / undo — which one is still open | Alembic, plus the choice itself |
+
+Selection criteria were daily-use friction and durability/risk. Deployment
+leads because no real household data exists yet, which makes both it and
+Alembic cheapest right now, and because real use is the only way to replace
+guesses about friction with evidence. Tracks 1–3 are all data-model-neutral, so
+Alembic is an explicit gate in front of track 4 rather than a track of its own.
+
+**Deliberately not on the route:** multi-household support and photo upload.
+Both specifications below are unchanged and remain available; the map's
+Out of scope section records why. Everything else in this file is catalogued
+and unscheduled — not rejected.
 
 ## Standing constraints for future work
 
@@ -209,11 +236,12 @@ requirements.
 | Feature | v1 status | Hook already in place | Work to add |
 | --- | --- | --- | --- |
 | Edit recipes | Partially shipped; edit form exists but has no discoverable entry point | `/recipes/:id/edit`, the pre-filled `RecipeForm`, and PUT full-replace behavior already work | Add an "Edit recipe" action to Recipe Detail and cover navigation, responsive layout, and accessibility |
+| Create grocery list from a recipe | Requested | Existing grocery-list generation and inventory availability | Add a "Create grocery list" button to Recipe Detail that creates a new list containing only what is still needed for that recipe |
 | Preparation-descriptor ingredient matching | Limited; leading descriptors match, trailing descriptors do not | `normalize_name`, editable inventory `match_name`, and shared inventory-math consumers | Define safe preparation-word equivalence so `onion, diced` can match inventory `onion`, then apply it consistently to availability, grocery generation, and cook deductions |
 | "What can we make now" | Excluded | `check_availability` exists; runs on one recipe | `GET /api/recipes/makeable` — run it across all, filter `all_available` |
 | Staples / low-stock alerts | Excluded | `inventory_items` row structure | `is_staple: bool` + `min_quantity: float` columns; `GET /api/inventory/low` |
 | Undo for forward-only actions | Excluded | `CookLog.deductions` (requested/deducted/before/after) and `GroceryListItem.applied_quantity/unit` snapshot what was applied; `ReceiptItem.applied_quantity/unit` joins them once receipt OCR lands | One uniform reverse-apply op across cook + grocery (+ receipt in v2); no per-action `/undo` route until designed |
-| Frontend (React SPA) | Excluded; v1 backend only | Skeleton in place (`App.tsx` / `api.ts` / `types.ts`); **does not work against v1 API** and was left untouched | `react-router-dom` + pages; auth.tsx + bearer-token injection in api.ts; mirror types.ts to v1 schemas |
+| Frontend support for deferred features | Core v1 frontend shipped | Working React SPA, authenticated API adapters, routing, and hand-maintained API types | Add UI for photo and URL import, reviews, receipt OCR, and recipe research as their backend features land; see below |
 | Multi-line ingredient paste | Excluded; caller pre-splits | §5.2 per-line ingredient build; `parse_ingredient` per line | Server-side split of a pasted block on `\n` (blank/header/bullet handling) before the existing per-line build; `issues.md` §Deferred item D2 |
 | Availability / grocery uncertainty naming | v1 ships `AvailabilityStatus="have_uncertain"` and a negated `nettable` bool | `check_availability` / `generate_lines` set both; locked oracle tables in §7 | Investigate renaming to a positively-phrased `units_comparable` / `incomparable_units`, and a status enum on grocery lines for parity; raised by the frontend track (`frontend/decisions.md` §Q19 follow-up) — no user-facing effect, frontend copy already covers it |
 | Display-unit conversion on output | Excluded; every response is canonical-unit | `inventory_items.display_unit` already stores a per-row preference; `units.from_base` already converts | Apply a display preference when serializing availability / grocery / cook-log quantities, or accept a `?units=` request parameter; see below |
@@ -233,6 +261,20 @@ requirements.
   Recipe Detail test; no backend, API-adapter, or RecipeForm behavior change is
   needed.
 - **When to revisit:** the next frontend usability pass.
+
+### Create grocery list from a recipe
+
+- **Feature request:** add a "Create grocery list" button to the recipe page.
+  Clicking it creates a new grocery list scoped to that recipe and opens the
+  resulting list.
+- **Contents:** use the recipe's selected multiplier (default `1`) and existing
+  grocery-generation rules to subtract available inventory. Include only missing
+  ingredients or shortfall quantities; preserve existing uncertainty handling
+  when quantities or units cannot be compared.
+- **Empty result:** if everything is already available, show that no groceries
+  are needed instead of creating an empty list.
+- **Interaction:** disable the button while creation is in progress to prevent
+  duplicate lists, and show a recoverable error if creation fails.
 
 ### Preparation-descriptor ingredient matching
 
@@ -295,36 +337,23 @@ requirements.
   inventory row. Design as a single feature, not separate routes. Consider a
   mutation-event audit trail (who reversed it, when) before implementing.
 
-### Frontend (React SPA)
+### Frontend support for deferred features
 
-- **v1 status:** backend-only; v1 does not include a frontend.
-- **Hook in v1:** Schema definitions (Pydantic in backend) must be hand-mirrored
-  to `frontend/src/types.ts` (constraint: keep it manual, not auto-generated).
-  Existing `App.tsx` / `api.ts` / `types.ts` were left untouched; they do **not**
-  work against v1's API.
-- **Work to add:**
-  - **Auth:** `auth.tsx` (Login page; register + login forms; session storage for
-    bearer token), `RequireAuth` wrapper.
-  - **API layer:** `api.ts` → update to inject `Authorization: Bearer <token>`
-    header; namespace endpoints by resource.
-  - **Pages (v1 backend):** Login, RecipeList (search/filter/sort + multi-select
-    to create grocery list), RecipeDetail (ingredient table with availability
-    status, multiplier control, "mark as cooked" + deduct/no-deduct toggle,
-    made-history), RecipeForm (dynamic ingredient rows), Inventory (CRUD +
-    match-name editor), GroceryLists (check/uncheck lines, submit, view applied
-    state).
-  - **Pages (need v2 backend):** import-from-URL + photo upload in RecipeForm;
-    review form + nested past reviews in RecipeDetail; ReceiptUpload (photo →
-    OCR preview → edit → apply); Research (URL batch → ingredient-frequency
-    table).
-  - **Routing:** `react-router-dom`; `/` → Login or RecipeList (guarded);
-    `/recipes`, `/recipes/:id`, `/recipes/new`, `/inventory`, `/groceries`
-    (`/receipts`, `/research` with v2).
-  - **Vite dev proxy:** already forwards `/api` → `:8000`; add a `/uploads`
-    forward when photo upload lands (read-only recipe photos).
-  - **Build:** TypeScript strict mode; `npm run build` → production bundle.
-  - **Tests:** mirror backend patterns — `api` fetch wrapper under test via
-    fetch mock / `msw` / plain stubs.
+- **v1 status:** shipped. The React SPA works against the v1 API and includes
+  authentication, guarded routing, recipes, inventory and availability,
+  cook/history workflows, grocery lists, typed API adapters, tests, and a
+  production build.
+- **Contract constraint:** backend Pydantic schema changes must be hand-mirrored
+  in `frontend/src/types.ts`; do not introduce generated client types.
+- **Work to add as the corresponding backend features land:**
+  - import-from-URL and photo upload controls in RecipeForm;
+  - a review form and nested past reviews in RecipeDetail;
+  - ReceiptUpload (photo → OCR preview → edit → apply);
+  - Research (URL batch → ingredient-frequency table);
+  - `/receipts` and `/research` routes; and
+  - a Vite `/uploads` proxy for read-only recipe photos.
+- **Tests:** cover each new API adapter and user workflow with the existing
+  Vitest/MSW patterns, plus focused browser integration coverage where needed.
 
 ### Multi-line ingredient paste
 
@@ -344,6 +373,14 @@ requirements.
 
 ### Display-unit conversion on output
 
+- **Feature request — match availability to the recipe unit:** when showing an
+  ingredient's availability, attempt to express the available quantity in the
+  unit used by that recipe ingredient, so the required and available amounts
+  are easy to compare. For example, a recipe requiring `2 cups` of stock should
+  show compatible inventory availability in `cups` rather than `ml`. Convert
+  only when supported; otherwise retain the existing unit and uncertainty
+  behavior without guessing a conversion between incompatible units. Keep
+  stored quantities and availability calculations canonical.
 - **v1 status:** excluded (decision #P5). Every quantity outside a recipe body is
   emitted in its bucket's **canonical unit** — `g`, `ml`, `unit`, or the opaque
   token. `inventory_items.display_unit` is honored on `InventoryItemRead` only;
@@ -368,8 +405,8 @@ requirements.
   canonical value in the payload alongside the converted one so clients and tests
   can still assert on an unambiguous number. Do **not** change what is stored:
   `quantity_base` and the locked service-layer oracles stay canonical.
-- **When to revisit:** with the frontend SPA effort, which is where the
-  formatting burden actually lands. No timeline.
+- **When to revisit:** during a frontend output-formatting pass, where the
+  display preference and copy can be evaluated together. No timeline.
 
 ## Excluded by design (not deferred)
 
@@ -386,6 +423,117 @@ requirements.
   hack. It may be a new subsystem, not a table addition.
 
 ## Infrastructure deferrals
+
+### Deployment direction (2026-09-05)
+
+- The initial deployment is for private household use from away from home.
+- A future public service would serve entirely separate households, with no
+  cross-household relationships or sharing. See
+  [ADR 0001](adr/0001-independent-households.md).
+- Initial remote access will use private Tailscale access, with Tailscale
+  installed on household devices. The host is an existing Windows machine
+  running WSL.
+- Ordinary browser access without a private-network client remains the later
+  preference.
+- Hosting around $5/month later is acceptable; no provider is selected.
+- Current work focuses only on the owner's household deployment. Implementing
+  multiple-household support and deciding overlapping membership are deferred
+  until multiple households are introduced.
+- Household members will have individual logins with equal editing access;
+  registration closes after setup and the operator handles password recovery.
+- Up to 24 hours of lost changes and one day to restore service are acceptable.
+  Backups stay on the local disk for now; a better backup destination is
+  deferred until public deployment. These backups do not cover disk loss.
+- See the [private deployment outline](deployment.md) and the
+  [ready-for-agent deployment spec](../.scratch/private-household-deployment/spec.md).
+  The spec owns implementation scope and acceptance checks, including the
+  confirmed browser/real-backend test approach and actual-host verification.
+
+### Remote deployment exploration (informational, 2026-09-04)
+
+These are high-level findings and options, **not decisions, committed scope,
+or an implementation schedule**. No hosting provider, session redesign, or
+ordering relative to v2 has been selected. Provider prices and free-tier limits
+below were checked on 2026-09-04 and should be rechecked before choosing a host.
+
+#### Scope and likely effort
+
+- **Private household access from anywhere:** keep the shared-household model
+  and closed registration. The existing React/FastAPI architecture can stay;
+  most work would be targeted application changes and deployment setup.
+- **Open signup for unrelated households:** substantially more work. All
+  authenticated users currently share read/write access to all data;
+  `created_by_id` is attribution, not authorization. Separate households would
+  need memberships, household ownership and uniqueness rules, scoped reads and
+  writes across all workflows, and cross-household isolation tests. Roles
+  within one household alone would not provide this isolation. Public signup
+  would also need account onboarding, recovery, and deletion flows.
+- **Existing extension points:** centralized backend authentication, one
+  frontend API client, centralized database setup, and the app factory/test
+  seam make private deployment feasible without a broad business-logic refactor.
+- **SQLite remains an option:** internet access alone does not require Postgres.
+  Keep the database on persistent local storage. The current `BEGIN IMMEDIATE`
+  transaction strategy serializes database transactions and would need review
+  as concurrency grows; switching databases is more than a URL change.
+  See [SQLite's deployment guidance](https://www.sqlite.org/whentouse.html).
+
+#### Potential work for a private web deployment
+
+| Area | High-level change | Likely impact |
+| --- | --- | --- |
+| Data durability | Establish migrations that preserve the existing database; persistent storage; automated backups and a tested restore procedure | Moderate migration setup, mostly operational work for storage/backups |
+| Session storage | Store token digests instead of raw tokens; choose an existing-session rollout policy | Localized backend change; see hashed-token discussion below |
+| Browser authentication | Consider `Secure`, `HttpOnly`, `SameSite` session cookies with appropriate CSRF protection instead of tokens in `localStorage` | Coordinated backend auth, frontend client/session handling, and auth-test changes |
+| Abuse controls | Login/registration rate limits and request-size limits | Targeted proxy or application changes |
+| Account usability | Keep registration closed; add a password-change screen using the existing API | Small frontend addition; decide how household account recovery would be operated |
+| Production serving | Build the frontend; serve frontend routes and `/api` under one HTTPS origin; configure trusted proxy handling | Mostly deployment configuration, with static serving and SPA route fallback to add |
+| Operations | Automatic restarts, production settings/secrets, health monitoring, error reporting, repeatable deployment and rollback | Mostly configuration; existing CI already tests and builds |
+
+Cookie sessions and adopting migrations with existing data deserve the most
+care; neither inherently requires refactoring recipe, inventory, or grocery
+business logic. Cookie handling would need to preserve expiry, logout, and
+password-change revocation behavior. See
+[OWASP session guidance](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)
+and [FastAPI deployment concepts](https://fastapi.tiangolo.com/deployment/concepts/).
+
+One possible package is the built React frontend and FastAPI backend in a
+single service, with SQLite on a persistent volume. This gives one URL and one
+deployment. The current Vite `/api` proxy only supplies development routing.
+
+#### Timing relative to v2 — suggested sequence, not adopted
+
+An option discussed was **migrations/backups → authentication hardening →
+private web deployment → larger v2 features**. The rationale is to preserve
+real data before schema changes and establish operations before uploads,
+outbound URL imports, or OCR add storage, access-control, external-request,
+and processing concerns. Small UI improvements could proceed alongside this.
+Migrations and backups would still be useful before data-changing v2 work even
+if remote deployment is postponed.
+
+A possible readiness milestone: use the app away from home, deploy an update
+without losing data, and recover from a failed deployment. Private access via
+Tailscale is a separate option with a different exposure model from a public
+HTTPS endpoint.
+
+#### Hosting options and free-tier tradeoffs
+
+| Option | Cost/limits checked on 2026-09-04 | Fit and tradeoffs |
+| --- | --- | --- |
+| Railway | Hobby has a $5/month minimum including $5 of resource usage; excess usage costs extra. Free includes $1/month of resources after the initial trial and a 0.5 GB persistent volume | Candidate for straightforward cloud hosting while retaining SQLite. Free usage may not cover continuous operation; measure actual consumption. [Pricing](https://railway.com/pricing), [volumes](https://docs.railway.com/volumes/reference) |
+| Render paid service + persistent disk | Paid compute plus disk charges; persistent disks require a paid service | Another managed-hosting candidate that can retain SQLite. [Persistent disks](https://render.com/docs/disks) |
+| Existing home computer + Tailscale | Personal plan is free for up to six users; hardware, electricity, and home internet are separate | Candidate for free household remote access if an always-on computer is available. Household devices connect through Tailscale; availability depends on the home machine and connection. This provides private access rather than an ordinary publicly reachable website. [Free plan](https://tailscale.com/docs/reference/free-plans-discounts) |
+| Oracle Cloud Always Free VM | Free within eligible compute/storage limits; idle instances may be reclaimed | Can host the whole app with persistent SQLite, but requires Linux administration, updates, HTTPS setup, and backups. Reclamation is relevant to a lightly used household app. [Limits and conditions](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm) |
+
+**Free-hosting storage caveat:** Render's free web service has no persistent
+disk and loses local files, including SQLite, on restart, redeploy, or idle
+shutdown. Its free Postgres database expires after 30 days. It is a demo option,
+not a durable home for the current SQLite app.
+See [Render's free-tier limitations](https://render.com/docs/free).
+
+The preliminary shortlist was Railway for convenient cloud hosting, Tailscale
+for free household access on existing hardware, and Oracle for free cloud
+compute if server administration and free-tier limitations are acceptable.
+This is comparison information only; no provider is selected.
 
 ### Migrations (Alembic)
 
