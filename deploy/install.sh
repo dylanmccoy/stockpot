@@ -31,7 +31,11 @@ while [ $# -gt 0 ]; do
     --adopt-from) adopt_from="${2:?--adopt-from needs a path}"; shift 2 ;;
     --adopt-from=*) adopt_from="${1#*=}"; shift ;;
     --skip-build) skip_build=1; shift ;;
-    -h | --help) sed -n '2,26p' "$0"; exit 0 ;;
+    -h | --help)
+      echo "usage: deploy/install.sh [--adopt-from <sqlite-file>] [--skip-build]"
+      echo "  builds the frontend, creates the persistent data dirs, and (on the"
+      echo "  first run only) adopts an existing database via a live snapshot."
+      exit 0 ;;
     *) _deploy_die "unknown argument: $1" ;;
   esac
 done
@@ -58,15 +62,8 @@ fi
   || _deploy_die "frontend build produced no index.html at $RECIPE_DEPLOY_FRONTEND_DIST"
 
 # --- 3. persistent directories, outside the checkout / disposable build ---
-case "$RECIPE_DEPLOY_DB_FILE" in
-  "$RECIPE_DEPLOY_CHECKOUT"/*)
-    _deploy_die "database $RECIPE_DEPLOY_DB_FILE is inside the checkout — put it on persistent storage outside it" ;;
-esac
-case "$RECIPE_DEPLOY_DB_FILE" in
-  "$RECIPE_DEPLOY_FRONTEND_DIST"/*)
-    _deploy_die "database $RECIPE_DEPLOY_DB_FILE is inside the disposable frontend build" ;;
-esac
-
+# (the "database must be outside the checkout / dist" guard is in lib.sh, so it
+#  applies to every entrypoint, not just this one.)
 echo "-- creating persistent directories"
 mkdir -p "$RECIPE_DEPLOY_DATA_DIR" "$RECIPE_DEPLOY_BACKUP_DIR" "$RECIPE_DEPLOY_RUNTIME_DIR"
 chmod 700 "$RECIPE_DEPLOY_DATA_DIR" "$RECIPE_DEPLOY_BACKUP_DIR" "$RECIPE_DEPLOY_RUNTIME_DIR" 2>/dev/null || true
@@ -81,14 +78,18 @@ else
   if [ -e "$src" ]; then
     echo "-- adopting existing household data from $src"
     echo "   taking a live snapshot into $RECIPE_DEPLOY_BACKUP_DIR first"
-    snap_out="$(cd "$RECIPE_DEPLOY_CHECKOUT/backend" \
+    ( cd "$RECIPE_DEPLOY_CHECKOUT/backend" \
       && "$RECIPE_DEPLOY_UV_BIN" run python scripts/backup.py \
-        --source "$src" --dest-dir "$RECIPE_DEPLOY_BACKUP_DIR")"
-    echo "   $snap_out"
-    snap_path="$(printf '%s\n' "$snap_out" | sed -n 's/^backup ok: //p' | tail -n 1)"
+        --source "$src" --dest-dir "$RECIPE_DEPLOY_BACKUP_DIR" ) \
+      || _deploy_die "snapshot of $src failed"
+    # backup.py writes recipe-<UTC timestamp>.db; the timestamp format sorts
+    # chronologically, so the newest snapshot is the last one lexically. Pick it
+    # from the directory rather than parsing the script's stdout.
+    snap_path="$(printf '%s\n' "$RECIPE_DEPLOY_BACKUP_DIR"/recipe-*.db | sort | tail -n 1)"
     if [ -z "$snap_path" ] || [ ! -f "$snap_path" ]; then
-      _deploy_die "snapshot did not land where expected: $snap_out"
+      _deploy_die "snapshot did not land in $RECIPE_DEPLOY_BACKUP_DIR"
     fi
+    echo "   snapshot: $snap_path"
     tmp="$RECIPE_DEPLOY_DB_FILE.adopt.tmp"
     rm -f "$tmp"
     cp "$snap_path" "$tmp"

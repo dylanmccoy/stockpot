@@ -90,6 +90,11 @@ _run_foreground() {
 
 _status() {
   deploy_print_config
+  if [ -f "$RECIPE_DEPLOY_DB_FILE" ]; then
+    echo "database file    : present ($(wc -c <"$RECIPE_DEPLOY_DB_FILE" | tr -d ' ') bytes)"
+  else
+    echo "database file    : MISSING (created on first start)"
+  fi
   echo
   if pid="$(deploy_pid_if_running)"; then
     echo "state            : running (pid $pid)"

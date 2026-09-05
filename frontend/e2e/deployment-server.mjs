@@ -74,19 +74,9 @@ let cleaned = false;
 function cleanup() {
   if (cleaned) return;
   cleaned = true;
+  // The deployment runs as `control.sh run` — a foreground child in this
+  // process group, with no pidfile — so killing the child is the whole stop.
   currentChild?.kill("SIGTERM");
-  try {
-    execFileSync(
-      "bash",
-      [path.join(repoRoot, "deploy", "control.sh"), "stop"],
-      {
-        env: deployEnv,
-        stdio: "ignore",
-      },
-    );
-  } catch {
-    // best effort — `run` is a foreground child killed above
-  }
   rmSync(workDir, { recursive: true, force: true });
 }
 

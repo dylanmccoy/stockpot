@@ -16,6 +16,7 @@ for the built assets `main.py` requires).
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import subprocess
 import time
@@ -146,11 +147,14 @@ def test_install_without_a_source_defers_database_creation(deploy_env, tmp_path:
     assert "fresh empty database will be created" in result.stdout
 
 
-def test_install_rejects_a_database_inside_the_checkout(deploy_env):
+def test_a_database_inside_the_checkout_is_refused_by_every_entrypoint(deploy_env):
+    # The guard lives in lib.sh, so it fires on `install.sh`, `control.sh start`,
+    # `status`, ... — not just the one script.
     env = {**deploy_env, "RECIPE_DEPLOY_DB_FILE": str(REPO_ROOT / "backend" / "deploy-test.db")}
-    result = _run(INSTALL, "--skip-build", env=env)
-    assert result.returncode != 0
-    assert "inside the checkout" in result.stderr
+    for script, *args in ((INSTALL, "--skip-build"), (CONTROL, "start"), (CONTROL, "status")):
+        result = _run(script, *args, env=env)
+        assert result.returncode != 0
+        assert "inside the checkout" in result.stderr
 
 
 def test_control_lifecycle_uses_one_explicit_db_from_any_cwd(deploy_env, tmp_path: Path):
@@ -175,8 +179,9 @@ def test_control_lifecycle_uses_one_explicit_db_from_any_cwd(deploy_env, tmp_pat
 
     status = _run(CONTROL, "status", env=deploy_env, cwd=tmp_path)
     assert status.returncode == 0
-    assert "state            : running" in status.stdout
+    assert re.search(r"state\s*:\s*running \(pid \d+\)", status.stdout)
     assert str(deployment_db) in status.stdout
+    assert re.search(r"database file\s*:\s*present", status.stdout)
 
     # A second start refuses rather than launching a duplicate.
     dup = _run(CONTROL, "start", env=deploy_env, cwd=elsewhere)
@@ -195,4 +200,4 @@ def test_control_lifecycle_uses_one_explicit_db_from_any_cwd(deploy_env, tmp_pat
     assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
     stopped = _run(CONTROL, "status", env=deploy_env)
     assert stopped.returncode == 3
-    assert "state            : stopped" in stopped.stdout
+    assert re.search(r"state\s*:\s*stopped", stopped.stdout)

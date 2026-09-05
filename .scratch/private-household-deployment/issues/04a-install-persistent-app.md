@@ -78,3 +78,49 @@
 
 - Reviewed with `/code-review` (Standards + Spec axes); findings actioned
   below.
+
+### Review findings actioned
+
+- **DB-outside-checkout guard moved into `deploy/lib.sh`** (was `install.sh`
+  only) so `control.sh start`/`run`/`status` enforce it too — a hand-edited
+  `deploy.env` can't slip a checkout-local database past start. Test now
+  asserts every entrypoint refuses it. (Standards + Spec.)
+- **Adoption no longer parses `scripts/backup.py` stdout** — after a
+  successful snapshot it picks the newest `recipe-*.db` from the backup
+  directory (timestamped names sort chronologically), robust to any `uv`
+  resolver noise on stdout. (Standards + Spec.)
+- **`deploy_wait_health` no longer hard-depends on `curl`** — prefers `curl`,
+  falls back to the configured Python's `urllib`, so the health probe adds no
+  unguarded dependency to `uv run pytest` (the `backend` gate that runs
+  `test_deploy.py`). (Standards.)
+- **`deploy_pid_if_running` rejects a recycled PID** whose
+  `/proc/<pid>/cmdline` is readable and isn't a uvicorn — a cheap stale-pidfile
+  guard. Full anti-duplication remains ticket 06a. (Standards + Spec.)
+- **`control.sh status` reports the database file** (present + size, or
+  MISSING) so a data fault is distinguishable from a process/connectivity one
+  (spec item 37). (Spec.)
+- **`install.sh --help`** prints a fixed usage string instead of slicing its
+  own header comment by line number. (Standards.)
+- Stale/loose test assertions tightened to not depend on `status` column
+  alignment; `deployment-server.mjs` `cleanup()` and the config docstring
+  corrected to `control.sh run` (foreground), dropping the no-op
+  `control.sh stop`. (Standards.)
+
+Deliberately not changed:
+
+- **Separate `deployment` Playwright project + CI job** (rather than folding
+  adoption into the `production` project). It mirrors this repo's
+  one-config-per-concern pattern (visual / integration / production each have
+  their own). Extracting the ~120 lines shared with `production-server.mjs`
+  into a helper would mean editing ticket 01a's merged file — a reasonable
+  follow-up, out of scope here.
+- **`chmod 700`/`600` on the data dir and database.** The database holds
+  password hashes and session tokens; operator-only permissions match
+  `restore.py`'s prior art and spec item 9. Not creep.
+- **No row-for-row snapshot-fidelity assertion in `test_deploy.py`.** The
+  online-backup facility's fidelity is already covered by ticket 02a's tests;
+  adoption reuses it. Re-asserting here would duplicate a domain test the
+  spec's testing decisions say to avoid.
+- **`RECIPE_DEPLOY_WSL_DISTRO` is only recorded/echoed.** Ticket criterion 1
+  names it as an explicit control input; the Windows-side wiring that consumes
+  it is 06b/06c.

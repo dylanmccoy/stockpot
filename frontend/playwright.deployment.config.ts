@@ -14,8 +14,8 @@ import {
  * `e2e/deployment-server.mjs` seeds a throwaway "prior dev" database (one
  * account + one recipe) on a separate port, runs `deploy/install.sh
  * --adopt-from` to snapshot-copy it into the deployment database on
- * persistent storage outside the checkout, then `deploy/control.sh start`
- * from an unrelated working directory. The server under test is the built
+ * persistent storage outside the checkout, then `deploy/control.sh run`
+ * (foreground) from an unrelated working directory. The server under test is the built
  * frontend + API on one origin with registration closed — the actual shape
  * of the household deployment.
  *
