@@ -80,6 +80,13 @@ request, as parallel jobs:
   - Drives the built single-origin deployment (see "Production entry" below).
   - Its own required check: the dev-proxy `integration` suite never exercises
     `RECIPE_FRONTEND_DIST` or single-origin routing.
+- **deployment** — `npm run build && npm run test:e2e:deployment`.
+  - Installs and serves the app through the real `deploy/` scripts
+    (`deploy/install.sh --adopt-from` + `deploy/control.sh`), carrying an
+    existing household database in via a live snapshot (see "WSL deployment
+    install" below). Distinct from `production-smoke`, which seeds a fresh
+    database in place.
+  - On failure uploads the `playwright-deployment-report` artifact.
 
 ## Authentication
 
@@ -105,7 +112,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Seven runbooks, in the order you'll actually need them. All seven are the same
+Eight runbooks, in the order you'll actually need them. Most are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -347,6 +354,60 @@ the `backend` CI job: recover one of two provisioned accounts, then confirm
 through the real auth API that the old password and old token both fail, the
 new password works and sees the same household records, and the other member
 is unaffected.
+
+### 8. WSL deployment install (with existing household data)
+
+Install and run the app inside WSL as the household deployment, keeping your
+existing records (private-household-deployment ticket 04a). This is the
+manual, un-supervised form — automatic process restart is ticket 06a, and
+Windows/WSL start-on-boot is 06b/06c. Private HTTPS ingress (Tailscale) is
+05a; until then the app is reachable only on `127.0.0.1` inside WSL.
+
+```bash
+cp deploy/deploy.env.example deploy/deploy.env
+# edit deploy/deploy.env: RECIPE_DEPLOY_CHECKOUT, RECIPE_DEPLOY_DATA_DIR,
+# the WSL distribution, executables, port — all explicit host inputs.
+
+deploy/install.sh                    # build frontend + create persistent dirs
+                                     #   + adopt backend/recipe.db on first run
+deploy/control.sh start             # background; waits for GET /api/health
+deploy/control.sh status           # resolved config + running/stopped
+deploy/control.sh stop
+```
+
+- **Config** (`deploy/deploy.env`, git-ignored, or the environment). Every
+  value is echoed by `deploy/control.sh status`: WSL distribution,
+  `uv`/`npm` executables, checkout, built-frontend location, loopback port,
+  and the **absolute** database path. `deploy/deploy.env.example` documents
+  each one.
+- **Persistent data** lives under `RECIPE_DEPLOY_DATA_DIR` (default
+  `~/.local/share/recipe-app`) — the SQLite database, the pre-adoption
+  backup directory, and the pidfile/log — outside the checkout and outside
+  the disposable `frontend/dist`. `install.sh` refuses a database path
+  inside either.
+- **Data adoption** happens once. If the deployment database does not exist,
+  `install.sh` takes a live snapshot of the source database (default
+  `backend/recipe.db`, override with `--adopt-from <file>`) via
+  `scripts/backup.py` and copies it into place. If it already exists,
+  `install.sh` leaves it untouched — re-running to pick up a new build never
+  overwrites household data, and it never invokes the dev reset in runbook 3.
+- **One explicit database.** `deploy/control.sh` always starts uvicorn with
+  `RECIPE_DATABASE_URL` set to the configured absolute path, so starting
+  from a different working directory, or restarting, cannot create a second
+  household database. `--reload` and the Vite dev server are not used.
+- **`deploy/control.sh run`** execs uvicorn in the foreground with no
+  pidfile — for running under an external supervisor (ticket 06a) or a test
+  harness that owns the process lifetime.
+- **Diagnostics.** `deploy/control.sh status` reports resolved config plus
+  liveness; application/startup output goes to
+  `RECIPE_DEPLOY_DATA_DIR/run/recipe.log`; a `start` that never becomes
+  healthy prints the tail of that log and exits non-zero.
+
+`backend/tests/test_deploy.py` covers install adoption / non-overwrite and
+the `start`/`stop`/`status` lifecycle against disposable data; the
+`deployment` CI job (`npm run test:e2e:deployment`) drives the installed,
+adopted deployment through a real browser — the seeded account signs in, its
+carried-over recipe is there, and a new write persists.
 
 ## v1 workflows
 

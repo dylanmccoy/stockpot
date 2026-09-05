@@ -103,3 +103,41 @@ jobs:
         working-directory: frontend
       - run: npm run test:e2e:production
         working-directory: frontend
+
+  deployment:
+    # Deployment ticket 04a: install and run the app through the real deploy/
+    # scripts (deploy/install.sh --adopt-from + deploy/control.sh), adopting an
+    # existing household database via a live snapshot and serving the built
+    # frontend + API on one origin. Distinct from production-smoke: that seeds a
+    # fresh database in place; this exercises data adoption through the scripts.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --frozen
+        working-directory: backend
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      - run: npm run test:e2e:deployment
+        working-directory: frontend
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-deployment-report
+          path: |
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
