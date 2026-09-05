@@ -354,19 +354,20 @@ re-archive/PATCH/submit/item-POST of an archived list, `DELETE` on any status.
 
 Spec: `spec.md` §6, §9, §12.
 
-- [ ] Every `spec.md` §6 catalog row exercised by a test (MSW error handler →
-      asserted surface).
-- [ ] A11y sweep across all nine screens: keyboard traversal, focus on route
+- [x] Every `spec.md` §6 catalog row exercised by a test (MSW error handler →
+      asserted surface). — ticket 19a.
+- [x] A11y sweep across all nine screens: keyboard traversal, focus on route
       change, `aria-live` on toasts, contrast in both themes, no color-only
-      status.
-- [ ] Loading / empty / error states present and consistent on every screen
-      (`spec.md` §3).
-- [ ] `src/types.ts` re-diffed against `../spec.md` §5 after any Phase 2–6 spec
-      churn.
-- [ ] React Query defaults reviewed (stale times, retry, refetch-on-focus) for
-      the store-walk case (O-5).
+      status. — ticket 19b.
+- [x] Loading / empty / error states present and consistent on every screen
+      (`spec.md` §3). — ticket 19b.
+- [x] `src/types.ts` re-diffed against `../spec.md` §5 after any Phase 2–6 spec
+      churn. — ticket 19b.
+- [x] React Query defaults reviewed (stale times, retry, refetch-on-focus) for
+      the store-walk case (O-5). — ticket 19a.
 
-**Exit:** `spec.md` §12 checklist complete except deployment docs.
+**Exit:** `spec.md` §12 checklist complete except deployment docs. Met —
+see §12 in `spec.md` (Phase 8 remains, blocked on backend Phase 7).
 
 ---
 
@@ -398,5 +399,5 @@ Depends on backend Phase 7.
 | 4 — Inventory & availability | Complete — built vs MSW (08a, 08b, 09) and integrated against real BE Phase 4 (ticket 16) |
 | 5 — Cook & history | Complete — built vs MSW (10, 11a, 11b) and integrated against real BE Phase 5 (ticket 17) |
 | 6 — Grocery | Complete — built vs MSW (12a, 12b, 13a, 13b, 13c) and integrated against real BE Phase 6 (ticket 18) |
-| 7 — Hardening | Not started |
+| 7 — Hardening | Complete — error-catalog coverage + React Query defaults (ticket 19a) and a11y sweep + state conventions + types re-diff (ticket 19b) |
 | 8 — Deployment docs | Not started — blocked on BE Phase 7 |

@@ -22,6 +22,13 @@
 // `GroceryListItemIn` had a real gap — `quantity`/`unit` were `?:` (omittable)
 // here but the backend schema declares them required-nullable (no default),
 // so a key-omitting POST 422s; fixed to non-optional `| null` above.
+// Final full-file re-diff 2026-09-04 (frontend ticket 19b, DoD §12): every
+// section above re-checked against docs/spec.md §0, §5 as merged. §5.1 (auth)
+// had never gotten its own dated line despite shipping in ticket 14 — checked
+// now: `RegisterRequest`, `LoginRequest`, `TokenResponse`, `UserRead`,
+// `UserMini` match field-for-field; `ChangePasswordRequest` stays
+// intentionally unmirrored (no v1 screen uses it, matching
+// docs/frontend/spec.md §5). No drift found anywhere in the file.
 
 // ── Shared ──────────────────────────────────────────────────────────────────
 
