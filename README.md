@@ -66,8 +66,19 @@ matching the backend defaulting to registration-closed.
 ## CI
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull
-request: the backend `pytest` suite and the frontend `vitest` suite +
-production build.
+request, as parallel jobs:
+
+- **backend** — `uv run pytest`.
+- **frontend** — `npm run lint`, `npm run test:run`, `npm run build`.
+- **integration** — `npm run test:integration`: the real-backend Playwright
+  suite (real SPA + real FastAPI process through the Vite dev proxy, dedicated
+  ports, disposable SQLite DB). Local repro: `cd frontend && npm run test:integration`
+  (needs `uv` on PATH). On failure the Playwright report and `test-results/`
+  traces are uploaded as the `playwright-integration-report` artifact.
+- **production-smoke** — `npm run build && npm run test:e2e:production`: the
+  built single-origin deployment (see "Production entry" below). Kept as its own
+  required check — the dev-proxy `integration` suite does not exercise
+  `RECIPE_FRONTEND_DIST` or single-origin routing.
 
 ## Authentication
 
