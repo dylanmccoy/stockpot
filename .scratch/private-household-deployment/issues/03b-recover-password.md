@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** in-review
+**Status:** done
 
 - [x] Provide a local recovery operation with an explicit target database, using existing password hashing and revoking all sessions for the recovered account.
   - `backend/app/recover.py` + `backend/scripts/recover.py`: `recover_password(database_url, username, new_password)` replaces the account's `password_hash` via `app.security.hash_password` (the same facility `POST /api/auth/change-password` uses) and issues `DELETE FROM sessions WHERE user_id = ...`, returning `RecoverResult(username, sessions_revoked)`.
