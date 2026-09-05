@@ -4,7 +4,7 @@
 
 **Blocked by:** 02a: Take a usable live SQLite snapshot.
 
-**Status:** in-review
+**Status:** done
 
 - [x] Validate a selected snapshot and restore into a new explicit target, refusing an already existing target in this slice. Leave the live database and original snapshot unchanged.
 
@@ -24,6 +24,9 @@
 
 
 ## Comments
+
+- Merged via PR [#82](https://github.com/dylanmccoy/stockpot/pull/82)
+  (squash), CI green (`backend`, `frontend`, `production-smoke`).
 
 - Implemented on branch `feat/private-household-deployment-02b`, worktree
   `.claude/worktrees/private-household-deployment-02b`.
