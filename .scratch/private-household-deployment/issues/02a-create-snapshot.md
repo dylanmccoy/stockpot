@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** in-review
+**Status:** done
 
 - [x] Provide a backup operation with explicit source and destination inputs using SQLite's online backup facility. Store snapshots outside the checkout and served assets with operator-only access.
 
@@ -23,6 +23,9 @@
 - Preserve the parent spec's scope: one private household, existing domain/API behavior and schema, local SQLite and local backups. No public hosting, multi-household work, or authentication redesign.
 
 ## Comments
+
+- Merged via PR [#81](https://github.com/dylanmccoy/stockpot/pull/81)
+  (squash), CI green (`backend`, `frontend`, `production-smoke`).
 
 - Implemented on branch `feat/private-household-deployment-02a`, worktree
   `.claude/worktrees/private-household-deployment-02a`.
