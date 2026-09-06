@@ -1082,22 +1082,25 @@ deploy/wsl-keeper.sh stop     # stop the keeper, the supervisor, and the app
 ```
 
 - **What it does.** While `run` is alive the distribution stays up. It starts
-  `deploy/supervise.sh` if none is running, adopts one that already is (e.g. you
-  started it by hand per runbook 16), and re-launches it on the next heartbeat
+  `deploy/supervise.sh` if none is running (adopting an app you started by hand
+  per runbook 8), and re-launches it on the next heartbeat
   (`RECIPE_DEPLOY_KEEPER_HEARTBEAT`, default 30s) if it ever disappears. The
   supervisor in turn keeps the app process up. Nothing about the database,
   build, or port changes.
+- **Runbook 17 supersedes runbook 16.** The keeper owns the whole lifecycle —
+  don't also run `deploy/supervise.sh` by hand. If a supervisor is already
+  running when the keeper starts it adopts it, but any keeper stop (below)
+  brings the supervisor and app down too.
 - **No duplicate instances.** `run` refuses if a keeper is already running (its
-  own pidfile, `RECIPE_DEPLOY_RUNTIME_DIR/recipe-keeper.pid`); `supervise.sh`
-  still refuses a second supervisor and `control.sh` a second app. A stale
-  pidfile left by an abrupt `wsl --shutdown` names a dead pid and is ignored, so
-  the next launch starts clean — repeated setup or a retried start never
-  double-runs anything.
+  own pidfile, `RECIPE_DEPLOY_RUNTIME_DIR/recipe-keeper.pid`, written under
+  `noclobber`); `supervise.sh` still refuses a second supervisor and
+  `control.sh` a second app. A stale pidfile left by an abrupt `wsl --shutdown`
+  names a dead pid and is ignored, so the next launch starts clean — repeated
+  setup or a retried start never double-runs anything.
 - **Stopping.** `wsl-keeper.sh stop` (or a `SIGTERM` to `run` — Task Scheduler's
-  "End task") stops the keeper, and with it the supervisor it started and the
-  app. A keeper that only *adopted* an operator-started supervisor leaves it
-  running. A clean stop stays stopped; only a non-zero exit (a crash, or
-  `wsl.exe` returning after `wsl --shutdown`) is auto-restarted.
+  "End task") stops the keeper, the supervisor, and the app together. A clean
+  stop stays stopped; only a non-zero exit (a crash, or `wsl.exe` returning
+  after `wsl --shutdown`) is auto-restarted.
 - **Diagnostics.** `wsl-keeper.sh status` prints the keeper state, the tail of
   the keeper log (`RECIPE_DEPLOY_RUNTIME_DIR/recipe-keeper.log` — one heartbeat
   line while healthy, a line whenever it re-launches the supervisor), then
@@ -1111,6 +1114,7 @@ elevated-not-required PowerShell on the Windows host:
 ```powershell
 .\deploy\windows\register-keeper-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe
 # options: -TaskName RecipeAppWslKeeper  -RepetitionMinutes 5  -LogonType S4U|Password
+#          -ConfigurePower   (also set the AC standby/hibernate timeouts to 0)
 .\deploy\windows\register-keeper-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe -Unregister
 .\deploy\windows\register-keeper-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe -ShowCommand
 ```
@@ -1118,12 +1122,15 @@ elevated-not-required PowerShell on the Windows host:
 - Registers a task whose action is
   `wsl.exe -d <Distro> -- bash <Checkout>/deploy/wsl-keeper.sh run`.
 - **Independent of a dev shell.** Principal `LogonType S4U` (no stored
-  password); triggers are **AtLogOn** for the invoking user plus a **5-minute
-  repetition that runs indefinitely**. The repetition is the recovery path
-  after a controlled `wsl --shutdown` while you stay logged in — within five
-  minutes the task re-runs, WSL boots, and the keeper restores the supervisor
-  and app. `MultipleInstances IgnoreNew` makes a tick a no-op while the keeper
-  is up.
+  password); two triggers, each built natively: **AtLogOn** for the invoking
+  user, and a **`-Once` trigger repeating every `-RepetitionMinutes` (default 5)
+  indefinitely**. The repeating trigger is the recovery path after a controlled
+  `wsl --shutdown` while you stay logged in — the task re-runs, WSL boots, and
+  the keeper restores the supervisor and app — and it starts the keeper at once
+  on registration. `MultipleInstances IgnoreNew` makes a tick a no-op while the
+  keeper is up. The script reads the task back and **warns if the repetition did
+  not attach** (Task Scheduler behaviour varies by Windows / PowerShell
+  version — spec item 6); add a repeating trigger by hand if so.
 - **Restart on failure.** `wsl.exe` exiting non-zero (e.g. after
   `wsl --shutdown`) restarts the action after 1 minute, up to 999 times.
   `ExecutionTimeLimit` is 0 — the keeper runs forever.
@@ -1136,13 +1143,15 @@ elevated-not-required PowerShell on the Windows host:
 
 **Host power — this task cannot serve a sleeping machine.** The task starts and
 keeps running on battery and is not stopped when the machine leaves idle, but
-sleep/hibernate still stops everything (spec item 24). Configure the host to
-stay awake during expected availability, e.g. on AC power:
+sleep/hibernate still stops everything (spec item 24). Pass `-ConfigurePower` to
+the script (it runs the first two commands below), or set it by hand on the
+host to stay awake during expected availability:
 
 ```powershell
 powercfg /change standby-timeout-ac 0
 powercfg /change hibernate-timeout-ac 0
 # a laptop also needs Settings > System > Power > "lid close action" = Do nothing (plugged in)
+# battery-power timeouts (…-dc) are left to you
 ```
 
 **Diagnosis.**

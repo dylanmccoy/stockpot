@@ -17,6 +17,20 @@ _deploy_die() {
   exit 2
 }
 
+# UTC ISO-8601 timestamp (e.g. 2026-09-06T12:34:56Z) for log lines.
+_deploy_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# Append "<ts> <msg>" to logfile $1 (best effort — a log we cannot write is not
+# fatal) and echo the same line to stderr. Shared by deploy/supervise.sh (06a)
+# and deploy/wsl-keeper.sh (06b), which each keep their own activity log.
+_deploy_log() {
+  local logfile="$1"; shift
+  local line
+  line="$(_deploy_ts) $*"
+  printf '%s\n' "$line" >>"$logfile" 2>/dev/null || true
+  printf '%s\n' "$line" >&2
+}
+
 _DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 _DEPLOY_DEFAULT_CHECKOUT="$(cd "$_DEPLOY_DIR/.." && pwd)"
 

@@ -34,18 +34,11 @@ _SUPERVISE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTROL="$_SUPERVISE_DIR/control.sh"
 SELF="$_SUPERVISE_DIR/supervise.sh"
 
-_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-
-# One line to the supervisor log (always) and to stderr. When `start` spawns the
-# loop it sends the loop's stdout/stderr to /dev/null, so the background case
-# gets exactly one copy — in the file; `run` under systemd/journald or a
-# terminal gets both.
-_slog() {
-  local line
-  line="$(_ts) $*"
-  printf '%s\n' "$line" >>"$DEPLOY_SUPERVISOR_LOGFILE" 2>/dev/null || true
-  printf '%s\n' "$line" >&2
-}
+# One line to the supervisor log (always) and to stderr, via lib.sh's shared
+# logger. When `start` spawns the loop it sends the loop's stdout/stderr to
+# /dev/null, so the background case gets exactly one copy — in the file; `run`
+# under systemd/journald or a terminal gets both.
+_slog() { _deploy_log "$DEPLOY_SUPERVISOR_LOGFILE" "$@"; }
 
 _write_state() {
   printf 'restarts=%s\nlast_restart=%s\n' "$1" "$2" \
@@ -135,7 +128,7 @@ _watch_loop() {
     _slog "supervisor: app is not running — restart attempt #$restarts"
     # Record the attempt now, so `status` is accurate while control.sh start is
     # still working (its health wait can take tens of seconds on a slow host).
-    _write_state "$restarts" "$(_ts)"
+    _write_state "$restarts" "$(_deploy_ts)"
     if [ -f "$DEPLOY_LOGFILE" ]; then
       tail -n 5 "$DEPLOY_LOGFILE" 2>/dev/null \
         | sed 's/^/  app| /' >>"$DEPLOY_SUPERVISOR_LOGFILE" 2>&1 || true
@@ -147,7 +140,7 @@ _watch_loop() {
     else
       up_since=0
       _slog "supervisor: restart #$restarts failed — see the app log above; will retry"
-      _write_state "$restarts" "$(_ts) (failed)"
+      _write_state "$restarts" "$(_deploy_ts) (failed)"
       _supervised_call sleep "$backoff" || true
       _bump_backoff
     fi

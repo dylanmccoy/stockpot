@@ -11,8 +11,10 @@
 # While `run` is alive the WSL distribution stays up (a distro stops when its
 # last process exits — a systemd service inside WSL cannot hold it open). `run`
 # keeps exactly one deploy/supervise.sh (ticket 06a) above the app: it starts
-# the supervisor if none is running, adopts one that already is, and re-launches
-# it if it later disappears. So:
+# the supervisor if none is running (adopting an app the operator already
+# started by hand), and re-launches it if it later disappears. Runbook 17
+# supersedes runbook 16 — the keeper owns the whole lifecycle, so any keeper
+# stop brings the supervisor and app down with it. So:
 #
 #   * closing the IDE and every development terminal changes nothing — the
 #     keeper is owned by Task Scheduler, not by a shell;
@@ -43,24 +45,18 @@ _KEEPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 SUPERVISE="$_KEEPER_DIR/supervise.sh"
 
-_ts() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+# A keeper "ok" heartbeat line is written to the keeper log about this often;
+# every supervisor re-launch is always logged. Not a config knob — it only
+# affects log verbosity, not behaviour.
+KEEPER_OK_LOG_EVERY_S=300
 
-# One line to the keeper log (always) and to stderr. Task Scheduler discards the
-# `wsl.exe` process output, so the file is the durable record; a terminal or
-# `status` sees stderr too.
-_klog() {
-  local line
-  line="$(_ts) $*"
-  printf '%s\n' "$line" >>"$DEPLOY_KEEPER_LOGFILE" 2>/dev/null || true
-  printf '%s\n' "$line" >&2
-}
+# One line to the keeper log and to stderr, via lib.sh's shared logger. Task
+# Scheduler discards the `wsl.exe` process output, so the file is the durable
+# record; a terminal or `status` sees stderr too.
+_klog() { _deploy_log "$DEPLOY_KEEPER_LOGFILE" "$@"; }
 
 _supervisor_running() { deploy_supervisor_pid_if_running >/dev/null 2>&1; }
 
-# Did this keeper start the supervisor (1), or adopt one already running (0)?
-# Only a supervisor the keeper started is torn down on shutdown — an adopted one
-# belongs to the operator (deploy/supervise.sh start, runbook 16).
-_keeper_owns_supervisor=0
 _keeper_shutting_down=0
 _keeper_child=""
 
@@ -73,34 +69,29 @@ _keeper_sleep() {
   _keeper_child=""
 }
 
+# The keeper owns the whole deployment lifecycle: on any shutdown it stops the
+# supervisor (which stops the app). Runbook 17 supersedes runbook 16 — do not
+# run `deploy/supervise.sh` by hand as well.
 _keeper_shutdown() {
   _keeper_shutting_down=1
   if [ -n "$_keeper_child" ] && kill -0 "$_keeper_child" 2>/dev/null; then
     kill -TERM "$_keeper_child" 2>/dev/null || true
   fi
-  if [ "$_keeper_owns_supervisor" = 1 ] && _supervisor_running; then
-    _klog "keeper: signalled — stopping the supervisor and the app"
-    bash "$SUPERVISE" stop >>"$DEPLOY_KEEPER_LOGFILE" 2>&1 || true
-  else
-    _klog "keeper: signalled — leaving the operator-started supervisor in place"
-  fi
+  _klog "keeper: signalled — stopping the supervisor and the app"
+  bash "$SUPERVISE" stop >>"$DEPLOY_KEEPER_LOGFILE" 2>&1 || true
   rm -f "$DEPLOY_KEEPER_PIDFILE"
   exit 0
 }
 
-# Bring a supervisor up if there is not one already. Sets _keeper_owns_supervisor.
-# Never fails the caller: a supervisor that will not start (bad build, port in
-# use) is logged and retried on the next heartbeat, so a transient fault at boot
-# does not defeat the keeper.
+# Bring a supervisor up if there is not one already (deploy/supervise.sh start
+# adopts an app the operator started by hand per runbook 8, so this is
+# idempotent). Never fails the caller: a supervisor that will not start (bad
+# build, port in use) is logged and retried on the next heartbeat, so a
+# transient fault at boot does not defeat the keeper.
 _ensure_supervisor() {
-  if _supervisor_running; then
-    [ "$_keeper_owns_supervisor" = 1 ] \
-      || _klog "keeper: a supervisor is already running (pid $(deploy_supervisor_pid_if_running)) — adopting it"
-    return 0
-  fi
+  _supervisor_running && return 0
   _klog "keeper: no app supervisor running — starting deploy/supervise.sh"
   if bash "$SUPERVISE" start >>"$DEPLOY_KEEPER_LOGFILE" 2>&1; then
-    _keeper_owns_supervisor=1
     _klog "keeper: supervisor started (pid $(deploy_supervisor_pid_if_running 2>/dev/null || echo '?'))"
   else
     _klog "keeper: supervisor start did not complete — see the log above; will retry"
@@ -110,20 +101,37 @@ _ensure_supervisor() {
 _keeper_loop() {
   trap _keeper_shutdown TERM INT
   mkdir -p "$RECIPE_DEPLOY_RUNTIME_DIR"
-  echo "$$" >"$DEPLOY_KEEPER_PIDFILE"
+  # noclobber so two racing `run` invocations cannot both believe they own the
+  # pidfile (the _run guard catches the common case; Task Scheduler's
+  # MultipleInstances=IgnoreNew the scheduled one). _run has already cleared a
+  # stale file, so an existing file here means a live peer won the race.
+  if ! (set -o noclobber; echo "$$" >"$DEPLOY_KEEPER_PIDFILE") 2>/dev/null; then
+    if pid="$(deploy_keeper_pid_if_running)"; then
+      _deploy_die "another keeper (pid $pid) won the startup race"
+    fi
+    rm -f "$DEPLOY_KEEPER_PIDFILE"
+    echo "$$" >"$DEPLOY_KEEPER_PIDFILE"
+  fi
   trap 'rm -f "$DEPLOY_KEEPER_PIDFILE"' EXIT
 
-  _klog "keeper: holding WSL up (pid $$, heartbeat ${RECIPE_DEPLOY_KEEPER_HEARTBEAT}s)"
+  # Tolerate a hand-edited non-numeric / zero heartbeat rather than dividing by
+  # it or busy-looping on `sleep`.
+  local hb="$RECIPE_DEPLOY_KEEPER_HEARTBEAT"
+  case "$hb" in '' | *[!0-9]*) hb=30 ;; esac
+  [ "$hb" -ge 1 ] || hb=1
+
+  _klog "keeper: holding WSL up (pid $$, heartbeat ${hb}s)"
   _ensure_supervisor
 
-  # Log an "ok" heartbeat about every 5 minutes; always log a re-launch.
+  # Log an "ok" heartbeat roughly every KEEPER_OK_LOG_EVERY_S; always log a
+  # re-launch.
   local ok_every healthy=""
-  ok_every=$(( (300 + RECIPE_DEPLOY_KEEPER_HEARTBEAT - 1) / RECIPE_DEPLOY_KEEPER_HEARTBEAT ))
+  ok_every=$(( (KEEPER_OK_LOG_EVERY_S + hb - 1) / hb ))
   [ "$ok_every" -ge 1 ] || ok_every=1
   local ticks=0
 
   while true; do
-    _keeper_sleep "$RECIPE_DEPLOY_KEEPER_HEARTBEAT"
+    _keeper_sleep "$hb"
     [ "$_keeper_shutting_down" = 1 ] && break
 
     if _supervisor_running; then
@@ -170,8 +178,9 @@ _stop() {
   fi
   rm -f "$DEPLOY_KEEPER_PIDFILE"
 
-  # Sweep: a SIGKILLed keeper (or one that had adopted the supervisor) can leave
-  # the supervisor and app behind. Both stops are no-ops when nothing is up.
+  # Sweep: a SIGKILLed keeper (or one killed before its handler finished) can
+  # leave the supervisor and app behind. Both stops are no-ops when nothing is
+  # up. `stop` therefore always brings the whole deployment down.
   bash "$SUPERVISE" stop
 }
 
