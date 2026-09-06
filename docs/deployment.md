@@ -29,7 +29,8 @@ owns implementation scope and acceptance checks.
    for this private deployment. Delivered by `deploy/tailscale-serve.sh`
    (apply/status/url/reset) and `deploy/net-check.sh` (connectivity
    diagnostics); operator steps and the actual-host acceptance list are
-   README "Operating the server" runbook 11.
+   README "Operating the server" runbook 11. Household phone (iOS / Android)
+   onboarding against that ingress is runbook 12.
 3. Configure Windows/WSL startup, process restart, and host power settings for
    unattended operation. Verify behavior after a full Windows reboot; starting
    an app service inside an already running WSL session is not sufficient.
