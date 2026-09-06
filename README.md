@@ -157,8 +157,8 @@ temp name and renamed to its final `recipe-<UTC timestamp>.db` name only after
 it completes successfully:
 
 - **Success** — prints `backup ok: <path>` and exits 0. The new file is the
-  only observable change; nothing about it is announced elsewhere yet
-  (freshness/retention reporting is ticket 07b).
+  only observable change; `scripts/backup_status.py` (runbook 14) reports
+  whether the latest success is recent enough and prunes old snapshots.
 - **Failure** — a missing source database, an unwritable `--dest-dir`, or a
   copy interrupted partway prints `backup failed: <reason>` to stderr, exits
   1, creates no new file, and leaves every earlier snapshot in `--dest-dir`
@@ -771,9 +771,11 @@ refusals against disposable data in the `backend` CI job.
 ### 14. Scheduled daily backups (unattended)
 
 Run the backup (runbook 2) once a day with no terminal open and no dependence
-on the app process (private-household-deployment ticket 07a). Freshness/age
-reporting and retention pruning are ticket 07b; automatic app start-on-boot is
-**not** a prerequisite for the backup job.
+on the app process (private-household-deployment ticket 07a). After a
+successful snapshot the job also prunes old snapshots to a retained count, and
+`scripts/backup_status.py` reports whether backups are meeting the 24-hour
+recovery target (ticket 07b, below). Automatic app start-on-boot is **not** a
+prerequisite for the backup job.
 
 **The job — `deploy/backup-run.sh`.** This is the one command a scheduler runs:
 
@@ -789,10 +791,15 @@ deploy/backup-run.sh
 - **Bounded.** The snapshot runs under `timeout $RECIPE_DEPLOY_BACKUP_TIMEOUT`
   (default 300s; coreutils `timeout`) so a stuck database lock cannot leave the
   task running forever.
-- **Success** — prints and logs `ok <snapshot path>`, exits 0.
+- **Success** — prints and logs `ok <snapshot path>`, exits 0, then applies
+  retention: keep the newest `RECIPE_DEPLOY_BACKUP_KEEP` valid snapshots
+  (default 14), delete older ones (`scripts/backup_status.py --prune`). A
+  prune problem only warns — the snapshot itself already succeeded.
 - **Failure** — a missing database, an unwritable destination, an interrupted
   copy, or the time limit prints and logs `FAIL <reason>`, exits non-zero,
-  creates no new file, and leaves every earlier snapshot untouched.
+  creates no new file, and leaves every earlier snapshot untouched. A failed
+  run publishes no snapshot, so retention never evicts an earlier success
+  because a later backup failed.
 - **Diagnostics.** One line per run is appended to
   `RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log`
   (`deploy/control.sh status` echoes its path and the time limit):
@@ -827,7 +834,35 @@ PowerShell on the Windows host:
   `backup-runs.log`. `Get-ScheduledTaskInfo -TaskName RecipeAppDailyBackup`
   shows `LastTaskResult` / `NextRunTime`.
 
-**Schedule / destination / permissions summary.**
+**Check freshness & apply retention — `scripts/backup_status.py`.** Run from
+`backend/`; it reads only the snapshot directory and the run log:
+
+```bash
+# freshness report — exit 0 fresh, 1 stale / none on disk, 2 bad input
+uv run python scripts/backup_status.py \
+  --dest-dir "$RECIPE_DEPLOY_BACKUP_DIR" \
+  --log "$RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log"
+
+# apply retention by hand (the scheduled job already does this after each success)
+uv run python scripts/backup_status.py --dest-dir "$RECIPE_DEPLOY_BACKUP_DIR" --keep 14 --prune
+```
+
+- Reports the **latest successful snapshot and its age**, the **latest failed
+  attempt** (from the run log), and the count of valid snapshots.
+- **Flags** — prints `STALE` to stderr and exits non-zero when there is no
+  successful backup on disk, or the latest success is older than
+  `RECIPE_DEPLOY_BACKUP_MAX_AGE_HOURS` (default 24). Run it from a wrapper if
+  you want an unattended check — the exit status is the whole signal, there is
+  no hosted alerting.
+- **Incomplete files** — a hidden `.recipe-*.db.tmp` or a `recipe-*.db` that
+  will not open as an intact SQLite database is listed but never counted as a
+  success and never pruned.
+- `--prune` keeps the newest `--keep` valid snapshots and deletes older ones;
+  `--dry-run` shows what it would delete. A delete that fails (e.g. a
+  read-only directory) is reported and exits non-zero, leaving the retained
+  set intact. `--now <UTC ISO8601>` overrides the clock for a what-if check.
+
+**Schedule / destination / retention summary.**
 
 | | |
 | --- | --- |
@@ -836,6 +871,8 @@ PowerShell on the Windows host:
 | Permissions | `scripts/backup.py` sets `0700` on the directory and `0600` on every snapshot each run (best effort — a `chmod` the operator can't make is skipped; host-verified in acceptance #6) |
 | Run log | `RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log`, one `ok`/`FAIL` line per run |
 | Time limit | `RECIPE_DEPLOY_BACKUP_TIMEOUT` (default 300s) |
+| Retention | `RECIPE_DEPLOY_BACKUP_KEEP` newest valid snapshots (default 14); count-based, so a failed run never evicts an earlier success |
+| Freshness target | `RECIPE_DEPLOY_BACKUP_MAX_AGE_HOURS` (default 24) — `scripts/backup_status.py` flags no success / an older success |
 
 **Diagnosis.**
 
@@ -846,18 +883,31 @@ PowerShell on the Windows host:
   `Get-ScheduledTaskInfo` `LastRunTime` / `LastTaskResult`, that the task is
   Enabled, and that `wsl.exe -d <Distro> -- bash <Checkout>/deploy/backup-run.sh`
   (`-ShowCommand`) runs by hand.
-- Earlier snapshots are always left intact on failure — a `FAIL` line is not
-  data loss, but a snapshot older than 24h is past the recovery target (07b
-  reports this).
+- `scripts/backup_status.py` says `STALE` — the newest good snapshot is past
+  the 24-hour target. Fix the cause of the last `FAIL` (above), then re-run
+  the job by hand (`deploy/backup-run.sh`, or `Start-ScheduledTask`) and
+  re-check; a `FAIL` line is not data loss (earlier snapshots are always kept)
+  but it does mean the recovery point is aging.
+- `scripts/backup_status.py` warns during `deploy/backup-run.sh` about a
+  retention prune problem — the snapshot itself succeeded. Run
+  `scripts/backup_status.py --dest-dir "$RECIPE_DEPLOY_BACKUP_DIR"` for the
+  detail (usually a snapshot file the operator account cannot delete); fix the
+  directory permissions and re-run with `--prune`.
 
-`backend/tests/test_deploy.py` covers the deterministic half in the `backend`
-CI job — `deploy/backup-run.sh` driven as a subprocess against disposable
-data: a snapshot with the app running and with it stopped, the run log lines,
-failure leaving earlier snapshots intact (missing database, uncreatable
-destination), and the time limit terminating a stuck snapshot. Real Windows
-Task Scheduler registration and the reboot-without-interactive-login check are
-the actual-host acceptance gate — results recorded in
-`.scratch/private-household-deployment/host-acceptance-07a.md`.
+`backend/tests/test_deploy.py` and `backend/tests/test_backup_status.py` cover
+the deterministic half in the `backend` CI job — `deploy/backup-run.sh` driven
+as a subprocess against disposable data (a snapshot with the app running and
+with it stopped, the run log lines, failure leaving earlier snapshots intact,
+the time limit terminating a stuck snapshot, and retention pruning after a
+success), plus `app.backup_status` / `scripts/backup_status.py` against
+disposable snapshot directories with an injected clock (latest-success age,
+the no-success and older-than-target flags, incomplete files never counted,
+count-based retention, and a failed delete reported without touching the
+retained set). Real Windows Task Scheduler registration and the
+reboot-without-interactive-login check are the actual-host acceptance gate —
+results recorded in
+`.scratch/private-household-deployment/host-acceptance-07a.md` and
+`host-acceptance-07b.md`.
 
 ## v1 workflows
 
