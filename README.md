@@ -112,7 +112,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Thirteen runbooks, in the order you'll actually need them. Most are the same
+Fourteen runbooks, in the order you'll actually need them. Most are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -167,8 +167,7 @@ it completes successfully:
 There are no migrations in v1, so this is the only thing standing between a
 `models.py` schema change (or any other data-affecting maintenance) and total
 data loss. Take a backup before every schema change and on whatever cadence
-your deployment needs — ticket 07a covers running it unattended on a
-schedule.
+your deployment needs — runbook 14 runs it unattended on a daily schedule.
 
 ### 3. Schema reset / restore
 
@@ -769,6 +768,96 @@ acceptance gate. `backend/tests/test_replace.py` /
 `backend/tests/test_restore_cli.py` run the preserve/prepare/validate/swap
 path and its invalid-snapshot, failed-preservation, and failed-preparation
 refusals against disposable data in the `backend` CI job.
+### 14. Scheduled daily backups (unattended)
+
+Run the backup (runbook 2) once a day with no terminal open and no dependence
+on the app process (private-household-deployment ticket 07a). Freshness/age
+reporting and retention pruning are ticket 07b; automatic app start-on-boot is
+**not** a prerequisite for the backup job.
+
+**The job — `deploy/backup-run.sh`.** This is the one command a scheduler runs:
+
+```bash
+deploy/backup-run.sh
+```
+
+- Takes **one** live `recipe-<UTC timestamp>.db` snapshot of
+  `RECIPE_DEPLOY_DB_FILE` into `RECIPE_DEPLOY_BACKUP_DIR`, via
+  `scripts/backup.py` (runbook 2) — SQLite's online backup facility, safe
+  whether or not the app is running. It talks to no app, supervisor, or
+  Tailscale.
+- **Bounded.** The snapshot runs under `timeout $RECIPE_DEPLOY_BACKUP_TIMEOUT`
+  (default 300s; coreutils `timeout`) so a stuck database lock cannot leave the
+  task running forever.
+- **Success** — prints and logs `ok <snapshot path>`, exits 0.
+- **Failure** — a missing database, an unwritable destination, an interrupted
+  copy, or the time limit prints and logs `FAIL <reason>`, exits non-zero,
+  creates no new file, and leaves every earlier snapshot untouched.
+- **Diagnostics.** One line per run is appended to
+  `RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log`
+  (`deploy/control.sh status` echoes its path and the time limit):
+
+  ```
+  2026-09-05T03:30:01Z ok /home/you/.local/share/recipe-app/backups/recipe-20260905T033001Z.db
+  2026-09-06T03:30:00Z FAIL deployment database ... does not exist ...
+  ```
+
+**Schedule it — Windows Task Scheduler.** From an elevated-not-required
+PowerShell on the Windows host:
+
+```powershell
+.\deploy\windows\register-backup-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe
+# options: -Time 03:30  -TaskName RecipeAppDailyBackup  -LogonType S4U|Password
+.\deploy\windows\register-backup-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe -Unregister
+.\deploy\windows\register-backup-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe -ShowCommand
+```
+
+- Registers a task that runs, daily at `-Time` (host local time),
+  `wsl.exe -d <Distro> -- bash <Checkout>/deploy/backup-run.sh`.
+- **Whether or not a user is signed in.** Principal `LogonType S4U` (no stored
+  password). If WSL will not start under S4U on your host, re-run with
+  `-LogonType Password` (prompts once).
+- **Survives a reboot / catches up.** `-StartWhenAvailable` takes a run missed
+  while the machine was off; `MultipleInstances IgnoreNew` and a 1h
+  `ExecutionTimeLimit` keep runs from piling up.
+- **Idempotent.** Re-running replaces the task of the same name — repeated
+  setup never leaves duplicates.
+- **Verify:** `Start-ScheduledTask -TaskName RecipeAppDailyBackup`, then check
+  the newest file in `RECIPE_DEPLOY_BACKUP_DIR` and the last line of
+  `backup-runs.log`. `Get-ScheduledTaskInfo -TaskName RecipeAppDailyBackup`
+  shows `LastTaskResult` / `NextRunTime`.
+
+**Schedule / destination / permissions summary.**
+
+| | |
+| --- | --- |
+| Schedule | daily at `-Time`, `StartWhenAvailable`, 1h limit, no-pile-up |
+| Destination | `RECIPE_DEPLOY_BACKUP_DIR` (default `RECIPE_DEPLOY_DATA_DIR/backups`), outside the checkout and served assets |
+| Permissions | `scripts/backup.py` sets `0700` on the directory and `0600` on every snapshot each run (best effort — a `chmod` the operator can't make is skipped; host-verified in acceptance #6) |
+| Run log | `RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log`, one `ok`/`FAIL` line per run |
+| Time limit | `RECIPE_DEPLOY_BACKUP_TIMEOUT` (default 300s) |
+
+**Diagnosis.**
+
+- No new snapshot and a `FAIL` line — read the reason. Missing database: start
+  the deployment at least once (runbook 8). Unwritable destination: check the
+  backup directory's owner/permissions and free disk.
+- No new snapshot and **no** new log line — the task did not fire. Check
+  `Get-ScheduledTaskInfo` `LastRunTime` / `LastTaskResult`, that the task is
+  Enabled, and that `wsl.exe -d <Distro> -- bash <Checkout>/deploy/backup-run.sh`
+  (`-ShowCommand`) runs by hand.
+- Earlier snapshots are always left intact on failure — a `FAIL` line is not
+  data loss, but a snapshot older than 24h is past the recovery target (07b
+  reports this).
+
+`backend/tests/test_deploy.py` covers the deterministic half in the `backend`
+CI job — `deploy/backup-run.sh` driven as a subprocess against disposable
+data: a snapshot with the app running and with it stopped, the run log lines,
+failure leaving earlier snapshots intact (missing database, uncreatable
+destination), and the time limit terminating a stuck snapshot. Real Windows
+Task Scheduler registration and the reboot-without-interactive-login check are
+the actual-host acceptance gate — results recorded in
+`.scratch/private-household-deployment/host-acceptance-07a.md`.
 
 ## v1 workflows
 

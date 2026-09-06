@@ -41,9 +41,14 @@ owns implementation scope and acceptance checks.
 5. Schedule daily timestamped SQLite online backups into a dedicated local
    backup directory outside the application checkout. Record backup failures
    and document how to restore while the app is stopped. Test a restore into a
-   separate database before relying on the procedure. Operator steps are README
-   "Operating the server" runbook 5 (isolated rehearsal) and runbook 13
-   (replace the live database in place, writers stopped).
+   separate database before relying on the procedure. The unattended job is
+   `deploy/backup-run.sh` (one bounded online-backup snapshot, `ok`/`FAIL`
+   line per run in the backup run log, earlier snapshots kept on failure),
+   scheduled on the Windows host by `deploy/windows/register-backup-task.ps1`
+   (daily, runs with no interactive logon); its operator steps and actual-host
+   acceptance list are README "Operating the server" runbook 14. Restore steps
+   are runbook 5 (isolated rehearsal) and runbook 13 (replace the live database
+   in place, writers stopped).
 6. Document account provisioning, operator password recovery, updates, logs,
    restart, and restore so ongoing use does not depend on a development shell.
 

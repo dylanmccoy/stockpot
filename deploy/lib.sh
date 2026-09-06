@@ -69,6 +69,12 @@ RECIPE_DEPLOY_FRONTEND_DIST="${RECIPE_DEPLOY_FRONTEND_DIST:-$RECIPE_DEPLOY_CHECK
 RECIPE_DEPLOY_BUILD_ARCHIVE="${RECIPE_DEPLOY_BUILD_ARCHIVE:-$RECIPE_DEPLOY_DATA_DIR/builds}"
 RECIPE_DEPLOY_BUILD_KEEP="${RECIPE_DEPLOY_BUILD_KEEP:-5}"
 
+# Wall-clock ceiling (seconds) for one unattended backup job (private-household-
+# deployment ticket 07a). deploy/backup-run.sh runs the snapshot under `timeout`
+# so a stuck database lock cannot leave the scheduled task running forever; the
+# job then reports failure and the prior snapshots are left in place.
+RECIPE_DEPLOY_BACKUP_TIMEOUT="${RECIPE_DEPLOY_BACKUP_TIMEOUT:-300}"
+
 # Absolutise the paths so they never resolve against the caller's CWD.
 _deploy_abs() {
   case "$1" in
@@ -86,6 +92,13 @@ RECIPE_DEPLOY_BUILD_ARCHIVE="$(_deploy_abs "$RECIPE_DEPLOY_BUILD_ARCHIVE")"
 DEPLOY_PIDFILE="$RECIPE_DEPLOY_RUNTIME_DIR/recipe.pid"
 # shellcheck disable=SC2034  # used by control.sh, which sources this file
 DEPLOY_LOGFILE="$RECIPE_DEPLOY_RUNTIME_DIR/recipe.log"
+# Append-only diagnostics for the unattended backup job (ticket 07a): one line
+# per run, `<UTC ISO8601> ok <snapshot>` / `<UTC ISO8601> FAIL <reason>`. Kept
+# with the operational logs, distinct from the snapshot files themselves so a
+# data problem reads apart from a serving one (spec item 37). Freshness and
+# retention reporting on top of this is ticket 07b.
+# shellcheck disable=SC2034  # used by deploy/backup-run.sh, which sources this file
+DEPLOY_BACKUP_LOG="$RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log"
 
 # sqlite:/// + an absolute path is four slashes. This is the single explicit
 # database location every start uses.
@@ -113,6 +126,8 @@ frontend build   : $RECIPE_DEPLOY_FRONTEND_DIST
 database (abs)   : $RECIPE_DEPLOY_DB_FILE
 database url     : $DEPLOY_DATABASE_URL
 backup directory : $RECIPE_DEPLOY_BACKUP_DIR
+backup run log   : $DEPLOY_BACKUP_LOG
+backup job limit : ${RECIPE_DEPLOY_BACKUP_TIMEOUT}s
 runtime directory: $RECIPE_DEPLOY_RUNTIME_DIR
 build archive    : $RECIPE_DEPLOY_BUILD_ARCHIVE (keep $RECIPE_DEPLOY_BUILD_KEEP)
 EOF
