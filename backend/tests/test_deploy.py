@@ -1460,3 +1460,77 @@ def test_keeper_stop_is_clean_when_nothing_is_running(keeper_env):
     result = _run(KEEPER, "stop", env=keeper_env)
     assert result.returncode == 0
     assert "no keeper running" in result.stdout
+
+
+# --- boot-before-login + unattended ingress (ticket 06c) -------------------
+#
+# The Windows boot trigger (register-keeper-task.ps1 AtStartup) and the
+# reboot-without-login acceptance run are the actual-host gate recorded in
+# .scratch/private-household-deployment/host-acceptance-06c.md. What is
+# deterministic here: with RECIPE_DEPLOY_KEEPER_SERVE set, the keeper re-asserts
+# the private Tailscale ingress (05a) itself once the app is up, so nobody has
+# to run deploy/tailscale-serve.sh by hand after a reboot — driven against the
+# same stub Tailscale CLI as the 05a tests.
+
+
+def test_keeper_asserts_the_private_tailscale_ingress_when_enabled(
+    keeper_env, ts_stub, tmp_path: Path
+):
+    env_patch, ts_log, ts_state = ts_stub
+    env = {**keeper_env, **env_patch, "RECIPE_DEPLOY_KEEPER_SERVE": "1"}
+    assert _run(INSTALL, "--skip-build", env=env).returncode == 0
+
+    with _keeper_run(env):
+        assert _wait_health(30, SUPERVISE_PORT)
+        # Once it is holding the app up, the keeper points Serve at the local
+        # origin over background HTTPS — no logged-in operator involved.
+        assert _wait_for(
+            lambda: ts_state.exists()
+            and ts_state.read_text().strip() == f"http://127.0.0.1:{SUPERVISE_PORT}",
+            timeout=20,
+        )
+        assert (
+            f"serve --bg --https=443 http://127.0.0.1:{SUPERVISE_PORT}"
+            in ts_log.read_text()
+        )
+        assert "Tailscale ingress is up" in tmp_path.joinpath(*KEEPER_LOG).read_text()
+
+
+def test_keeper_leaves_the_tailscale_ingress_to_windows_by_default(
+    keeper_env, ts_stub, tmp_path: Path
+):
+    env_patch, ts_log, _state = ts_stub
+    # RECIPE_DEPLOY_KEEPER_SERVE unset: a host that drives Serve from the Windows
+    # side must not have the keeper touch the Tailscale CLI at all.
+    env = {**keeper_env, **env_patch}
+    assert _run(INSTALL, "--skip-build", env=env).returncode == 0
+
+    with _keeper_run(env):
+        assert _wait_health(30, SUPERVISE_PORT)
+        assert _wait_for(
+            lambda: _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)), timeout=15
+        )
+        time.sleep(3)  # several keeper heartbeats at the 1s test cadence
+        assert not ts_log.exists()
+
+
+def test_keeper_does_not_re_apply_an_ingress_that_is_already_mapped(
+    keeper_env, ts_stub, tmp_path: Path
+):
+    env_patch, ts_log, _state = ts_stub
+    env = {**keeper_env, **env_patch, "RECIPE_DEPLOY_KEEPER_SERVE": "1"}
+    assert _run(INSTALL, "--skip-build", env=env).returncode == 0
+
+    with _keeper_run(env):
+        assert _wait_health(30, SUPERVISE_PORT)
+        # First heartbeat maps Serve.
+        assert _wait_for(
+            lambda: ts_log.exists() and "serve --bg" in ts_log.read_text(), timeout=20
+        )
+        applies = ts_log.read_text().count("serve --bg")
+        assert applies == 1
+        # Repeated setup / later heartbeats see it already mapped (a `serve
+        # status` grep) and never issue a second `apply` — no duplicate ingress.
+        assert _run(KEEPER, "run", env=env).returncode != 0  # a retried start
+        time.sleep(4)
+        assert ts_log.read_text().count("serve --bg") == 1
