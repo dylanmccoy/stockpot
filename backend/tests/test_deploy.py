@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -38,6 +40,7 @@ from sqlalchemy import create_engine, insert
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL = REPO_ROOT / "deploy" / "install.sh"
 CONTROL = REPO_ROOT / "deploy" / "control.sh"
+SUPERVISE = REPO_ROOT / "deploy" / "supervise.sh"
 PORT = "8988"
 
 
@@ -99,6 +102,9 @@ def deploy_env(tmp_path: Path):
         "RECIPE_DEPLOY_ENV_FILE": str(tmp_path / "nonexistent.env"),
     }
     yield env
+    # Stop the supervisor first (so it cannot restart the app during teardown),
+    # then the app. Both are no-ops if the test never started them.
+    subprocess.run(["bash", str(SUPERVISE), "stop"], env=env, capture_output=True, text=True)
     subprocess.run(["bash", str(CONTROL), "stop"], env=env, capture_output=True, text=True)
 
 
@@ -113,11 +119,13 @@ def _run(script: Path, *args: str, env: dict, cwd: Path | str | None = None):
     )
 
 
-def _wait_health(timeout: float = 30.0) -> bool:
+def _wait_health(timeout: float = 30.0, port: str = PORT) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/api/health", timeout=2) as r:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/api/health", timeout=2
+            ) as r:
                 if r.status == 200:
                     return True
         except (urllib.error.URLError, ConnectionError, OSError):
@@ -833,13 +841,20 @@ RECOVERY_CODE = "recovery-rehearsal-code"
 MEMBER_PW = "correct horse battery staple"
 
 
-def _api(method: str, path: str, *, token: str | None = None, body: dict | None = None):
+def _api(
+    method: str,
+    path: str,
+    port: str = PORT,
+    *,
+    token: str | None = None,
+    body: dict | None = None,
+):
     """One JSON call to the running deployment. Returns (status, parsed body|None)."""
     headers = {"Content-Type": "application/json"}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(
-        f"http://127.0.0.1:{PORT}{path}",
+        f"http://127.0.0.1:{port}{path}",
         method=method,
         data=json.dumps(body).encode() if body is not None else None,
         headers=headers,
@@ -1016,3 +1031,271 @@ def test_recovery_selects_the_newest_good_scheduled_snapshot(deploy_env, tmp_pat
     # The replaced database is kept as a recovery point — the divergence is not lost.
     (preserved,) = preserve_dir.glob("recipe-*.db")
     assert "Post-snapshot Pie" in _recipe_titles(preserved)
+# --- deploy/supervise.sh (private-household-deployment ticket 06a) ----------
+#
+# Automatic app-process recovery: a watch loop around deploy/control.sh that
+# restarts the app if it exits while the WSL distribution stays up. Driven the
+# way an operator runs it — subprocesses against disposable data, this harness
+# owning every process it starts (the `deploy_env` teardown stops the
+# supervisor before the app). These cases run on their own port so a detached
+# watch loop cannot collide with the other deployment tests (or a parallel
+# worktree) on the shared PORT. Real Windows/WSL process-recovery is the
+# actual-host acceptance gate recorded in
+# .scratch/private-household-deployment/host-acceptance-06a.md.
+
+SUPERVISE_PORT = "8763"
+RUN_DIR = ("data", "run")
+APP_PIDFILE = (*RUN_DIR, "recipe.pid")
+SUPERVISOR_PIDFILE = (*RUN_DIR, "recipe-supervisor.pid")
+SUPERVISOR_LOG = (*RUN_DIR, "recipe-supervisor.log")
+
+
+@pytest.fixture
+def supervise_env(deploy_env):
+    """`deploy_env` on its own port and with a snappy supervision cadence, so
+    restart assertions neither wait on the production 3s poll nor share the
+    fixed PORT with the other deployment tests."""
+    return {
+        **deploy_env,
+        "RECIPE_DEPLOY_PORT": SUPERVISE_PORT,
+        "RECIPE_DEPLOY_SUPERVISE_INTERVAL": "1",
+        "RECIPE_DEPLOY_SUPERVISE_BACKOFF_MAX": "3",
+    }
+
+
+def _read_pid(path: Path) -> int | None:
+    try:
+        return int(path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for(predicate, timeout: float = 30.0, interval: float = 0.3) -> bool:
+    """Poll `predicate` until it returns truthy or `timeout` elapses. A
+    predicate that raises (e.g. reads a file the supervisor has not created
+    yet) counts as not-ready, not as a test error."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if predicate():
+                return True
+        except Exception:
+            pass
+        time.sleep(interval)
+    return False
+
+
+def _provision_account(db_path: Path, username: str, password: str) -> None:
+    """Create one household login directly in a stopped deployment's database
+    (the operator path from ticket 03a) so a supervise test can sign in through
+    the restarted origin."""
+    result = subprocess.run(
+        ["uv", "run", "python", "scripts/provision.py",
+         "--database-url", f"sqlite:///{db_path}", "--accounts", "-"],
+        cwd=str(REPO_ROOT / "backend"),
+        input=f"{username} {password}\n",
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+
+
+def _new_app_pid(tmp_path: Path, previous: int, timeout: float = 30) -> int:
+    """Wait until recipe.pid names a live process other than `previous`; return it."""
+    assert _wait_for(
+        lambda: (p := _read_pid(tmp_path.joinpath(*APP_PIDFILE))) not in (None, previous)
+        and _pid_alive(p),
+        timeout=timeout,
+    )
+    return _read_pid(tmp_path.joinpath(*APP_PIDFILE))
+
+
+def test_supervise_restarts_a_terminated_app_and_records_stay_usable(
+    supervise_env, tmp_path: Path
+):
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["SUPERVISED RECORD"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=supervise_env).returncode == 0
+
+    deployment_db = tmp_path / "data" / "recipe.db"
+    _provision_account(deployment_db, "chef", "cook-the-books-2026")
+
+    assert _run(SUPERVISE, "start", env=supervise_env).returncode == 0
+    assert _wait_health(30, SUPERVISE_PORT)
+    first_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
+    assert first_pid and _pid_alive(first_pid)
+
+    # A household member is signed in and using the app through the origin.
+    st, payload = _api(
+        "POST", "/api/auth/login", SUPERVISE_PORT,
+        body={"username": "chef", "password": "cook-the-books-2026"},
+    )
+    assert st == 200, payload
+    token = payload["token"]
+    st, recipes = _api("GET", "/api/recipes", SUPERVISE_PORT, token=token)
+    assert st == 200 and [r["title"] for r in recipes] == ["SUPERVISED RECORD"]
+
+    # Simulate a process failure: kill the whole app process group.
+    os.killpg(first_pid, signal.SIGKILL)
+    assert _wait_for(lambda: not _pid_alive(first_pid), timeout=10)
+
+    # The supervisor brings it back unaided — a new process, health restored.
+    second_pid = _new_app_pid(tmp_path, first_pid)
+    assert _wait_health(30, SUPERVISE_PORT)
+    assert second_pid != first_pid
+
+    # Local API access is back on the same explicit database: the saved record is
+    # still readable, the existing session still works, and a new write persists.
+    st, recipes = _api("GET", "/api/recipes", SUPERVISE_PORT, token=token)
+    assert st == 200 and [r["title"] for r in recipes] == ["SUPERVISED RECORD"]
+    st, _ = _api(
+        "POST", "/api/recipes", SUPERVISE_PORT, token=token,
+        body={"title": "ADDED AFTER RESTART"},
+    )
+    assert st == 201
+    assert _recipe_titles(deployment_db) == ["ADDED AFTER RESTART", "SUPERVISED RECORD"]
+
+    status = _run(SUPERVISE, "status", env=supervise_env)
+    assert status.returncode == 0
+    assert re.search(r"supervisor\s*:\s*running \(pid \d+\)", status.stdout)
+    assert re.search(r"app restarts\s*:\s*[1-9]", status.stdout)
+
+    # stop takes the supervisor and the app down together.
+    assert _run(SUPERVISE, "stop", env=supervise_env).returncode == 0
+    assert _run(CONTROL, "status", env=supervise_env).returncode == 3
+    assert re.search(
+        r"supervisor\s*:\s*stopped", _run(SUPERVISE, "status", env=supervise_env).stdout
+    )
+
+
+def test_supervise_start_refuses_a_second_supervisor_and_never_duplicates_the_app(
+    supervise_env, tmp_path: Path
+):
+    assert _run(INSTALL, "--skip-build", env=supervise_env).returncode == 0
+    assert _run(SUPERVISE, "start", env=supervise_env).returncode == 0
+    assert _wait_health(port=SUPERVISE_PORT)
+    app_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
+    sup_pid = _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE))
+    assert sup_pid and _pid_alive(sup_pid)
+
+    dup = _run(SUPERVISE, "start", env=supervise_env)
+    assert dup.returncode != 0
+    assert "already supervising" in dup.stderr
+
+    # Same single supervisor loop, same app pid — nothing was duplicated.
+    assert _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)) == sup_pid
+    assert _read_pid(tmp_path.joinpath(*APP_PIDFILE)) == app_pid
+    assert _wait_health(5, SUPERVISE_PORT)
+
+    assert _run(SUPERVISE, "stop", env=supervise_env).returncode == 0
+
+
+def test_supervise_adopts_an_already_running_app_without_restarting_it(
+    supervise_env, tmp_path: Path
+):
+    assert _run(INSTALL, "--skip-build", env=supervise_env).returncode == 0
+    # Operator started the app manually first (e.g. from runbook 8).
+    assert _run(CONTROL, "start", env=supervise_env).returncode == 0
+    assert _wait_health(port=SUPERVISE_PORT)
+    manual_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
+
+    started = _run(SUPERVISE, "start", env=supervise_env)
+    assert started.returncode == 0, started.stderr + started.stdout
+    assert "supervising it in place" in started.stdout
+    # Not restarted: same pid, zero restarts recorded.
+    assert _read_pid(tmp_path.joinpath(*APP_PIDFILE)) == manual_pid
+    assert re.search(
+        r"app restarts\s*:\s*0", _run(SUPERVISE, "status", env=supervise_env).stdout
+    )
+
+    # It is genuinely supervising: kill the adopted app, it returns.
+    os.killpg(manual_pid, signal.SIGKILL)
+    _new_app_pid(tmp_path, manual_pid)
+    assert _wait_health(30, SUPERVISE_PORT)
+
+    assert _run(SUPERVISE, "stop", env=supervise_env).returncode == 0
+
+
+def test_supervise_stop_is_clean_when_nothing_is_supervised(supervise_env):
+    assert _run(INSTALL, "--skip-build", env=supervise_env).returncode == 0
+    result = _run(SUPERVISE, "stop", env=supervise_env)
+    assert result.returncode == 0
+    assert "no supervisor running" in result.stdout
+
+
+def test_supervise_run_foreground_supervises_until_signalled(supervise_env, tmp_path: Path):
+    assert _run(INSTALL, "--skip-build", env=supervise_env).returncode == 0
+    proc = subprocess.Popen(
+        ["bash", str(SUPERVISE), "run"],
+        env=supervise_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        assert _wait_health(30, SUPERVISE_PORT)
+        # `run` starts the app synchronously *before* the watch loop takes over.
+        # Wait for the loop to own its pidfile before killing the app, so the
+        # kill can't race that initial `control.sh start`'s own health check.
+        assert _wait_for(
+            lambda: _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)), timeout=10
+        )
+        app_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
+        assert app_pid
+
+        os.killpg(app_pid, signal.SIGKILL)
+        _new_app_pid(tmp_path, app_pid)
+        assert _wait_health(30, SUPERVISE_PORT)
+
+        # SIGTERM to the foreground supervisor stops the app with it.
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=30) == 0
+        assert _run(CONTROL, "status", env=supervise_env).returncode == 3
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=10)
+        _run(SUPERVISE, "stop", env=supervise_env)
+        _run(CONTROL, "stop", env=supervise_env)
+
+
+def test_supervise_keeps_retrying_a_failed_restart_then_recovers(supervise_env, tmp_path: Path):
+    assert _run(INSTALL, "--skip-build", env=supervise_env).returncode == 0
+    assert _run(SUPERVISE, "start", env=supervise_env).returncode == 0
+    assert _wait_health(port=SUPERVISE_PORT)
+    app_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
+    assert app_pid
+
+    # Break the next start by moving the build away, then kill the app.
+    dist = Path(supervise_env["RECIPE_DEPLOY_FRONTEND_DIST"])
+    stashed = tmp_path / "stashed-dist"
+    shutil.move(str(dist), str(stashed))
+    os.killpg(app_pid, signal.SIGKILL)
+
+    log_path = tmp_path.joinpath(*SUPERVISOR_LOG)
+    # The supervisor reports the failed restart and does not give up.
+    assert _wait_for(
+        lambda: "restart #" in log_path.read_text() and "failed" in log_path.read_text(),
+        timeout=20,
+    )
+    down = _run(SUPERVISE, "status", env=supervise_env)
+    assert down.returncode == 3  # app still down (control.sh status exit code)
+    assert re.search(r"supervisor\s*:\s*running", down.stdout)
+
+    # Restore the build; the supervisor recovers on its own (backoff is capped).
+    shutil.move(str(stashed), str(dist))
+    assert _wait_health(30, SUPERVISE_PORT)
+    assert _read_pid(tmp_path.joinpath(*APP_PIDFILE)) not in (None, app_pid)
+
+    assert _run(SUPERVISE, "stop", env=supervise_env).returncode == 0

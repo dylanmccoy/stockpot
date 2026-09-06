@@ -36,6 +36,20 @@ RECIPE_DEPLOY_UV_BIN="${RECIPE_DEPLOY_UV_BIN:-uv}"
 RECIPE_DEPLOY_NPM_BIN="${RECIPE_DEPLOY_NPM_BIN:-npm}"
 RECIPE_DEPLOY_PORT="${RECIPE_DEPLOY_PORT:-8000}"
 
+# Process supervision (private-household-deployment ticket 06a). deploy/supervise.sh
+# runs a lightweight watch loop that restarts the app process if it exits while
+# the WSL distribution stays up. It supervises the app process ONLY — keeping WSL
+# alive is ticket 06b and starting after Windows boot is 06c.
+#   RECIPE_DEPLOY_SUPERVISE_INTERVAL    — seconds between liveness checks (default 3)
+#   RECIPE_DEPLOY_SUPERVISE_BACKOFF_MAX — cap, in seconds, on the delay the loop
+#                                        inserts before a restart when the app is
+#                                        crash-looping (a restart that failed, or
+#                                        an app that stayed up less than one
+#                                        interval). The delay doubles each time
+#                                        and resets once the app holds. (default 60)
+RECIPE_DEPLOY_SUPERVISE_INTERVAL="${RECIPE_DEPLOY_SUPERVISE_INTERVAL:-3}"
+RECIPE_DEPLOY_SUPERVISE_BACKOFF_MAX="${RECIPE_DEPLOY_SUPERVISE_BACKOFF_MAX:-60}"
+
 # Private HTTPS ingress (private-household-deployment ticket 05a). Tailscale
 # Serve runs on the *Windows* host and proxies its localhost:$RECIPE_DEPLOY_PORT
 # — which WSL2 forwards to this app — out onto the tailnet over HTTPS, private
@@ -110,6 +124,17 @@ DEPLOY_LOGFILE="$RECIPE_DEPLOY_RUNTIME_DIR/recipe.log"
 # shellcheck disable=SC2034  # used by deploy/backup-run.sh, which sources this file
 DEPLOY_BACKUP_LOG="$RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log"
 
+# deploy/supervise.sh (private-household-deployment ticket 06a): the watch loop's
+# own pidfile — distinct from DEPLOY_PIDFILE above so the supervisor and the app
+# never share a file — plus an activity log and a small state file it rewrites
+# with the running restart count and last-restart timestamp.
+# shellcheck disable=SC2034  # used by supervise.sh, which sources this file
+DEPLOY_SUPERVISOR_PIDFILE="$RECIPE_DEPLOY_RUNTIME_DIR/recipe-supervisor.pid"
+# shellcheck disable=SC2034
+DEPLOY_SUPERVISOR_LOGFILE="$RECIPE_DEPLOY_RUNTIME_DIR/recipe-supervisor.log"
+# shellcheck disable=SC2034
+DEPLOY_SUPERVISOR_STATEFILE="$RECIPE_DEPLOY_RUNTIME_DIR/recipe-supervisor.state"
+
 # sqlite:/// + an absolute path is four slashes. This is the single explicit
 # database location every start uses.
 DEPLOY_DATABASE_URL="sqlite:///$RECIPE_DEPLOY_DB_FILE"
@@ -145,24 +170,35 @@ build archive    : $RECIPE_DEPLOY_BUILD_ARCHIVE (keep $RECIPE_DEPLOY_BUILD_KEEP)
 EOF
 }
 
-# Echoes the live leader pid and returns 0, or returns 1 if not running.
-# Not a full anti-duplication guard (that is ticket 06a) — but a stale pidfile
-# whose pid has been recycled by an unrelated process is rejected when
-# /proc/<pid>/cmdline is readable and doesn't look like our uvicorn.
-deploy_pid_if_running() {
-  [ -f "$DEPLOY_PIDFILE" ] || return 1
-  local pid
-  pid="$(cat "$DEPLOY_PIDFILE" 2>/dev/null || true)"
+# Echo the live pid recorded in pidfile $1 and return 0, or return 1 if it is
+# absent / malformed / dead. A stale pidfile whose pid has been recycled by an
+# unrelated process is rejected when /proc/<pid>/cmdline is readable and does
+# not contain the marker $2 (the command the process should be running).
+_deploy_pid_from_file() {
+  local pidfile="$1" marker="$2" pid
+  [ -f "$pidfile" ] || return 1
+  pid="$(cat "$pidfile" 2>/dev/null || true)"
   case "$pid" in
     '' | *[!0-9]*) return 1 ;;
   esac
   kill -0 "$pid" 2>/dev/null || return 1
   if [ -r "/proc/$pid/cmdline" ] \
-    && ! tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q "uvicorn"; then
+    && ! tr '\0' ' ' <"/proc/$pid/cmdline" | grep -q "$marker"; then
     return 1
   fi
   printf '%s\n' "$pid"
   return 0
+}
+
+# Echoes the live app leader pid and returns 0, or returns 1 if not running.
+# Not a full anti-duplication guard (that is ticket 06a's supervisor) — but a
+# recycled stale pidfile is rejected (see _deploy_pid_from_file).
+deploy_pid_if_running() { _deploy_pid_from_file "$DEPLOY_PIDFILE" "uvicorn"; }
+
+# Echoes the live supervisor-loop pid and returns 0, or returns 1 if no
+# supervisor is running.
+deploy_supervisor_pid_if_running() {
+  _deploy_pid_from_file "$DEPLOY_SUPERVISOR_PIDFILE" "supervise.sh"
 }
 
 # HTTP liveness probe: prefer curl, fall back to the configured Python so the

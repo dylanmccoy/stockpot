@@ -34,6 +34,10 @@ owns implementation scope and acceptance checks.
 3. Configure Windows/WSL startup, process restart, and host power settings for
    unattended operation. Verify behavior after a full Windows reboot; starting
    an app service inside an already running WSL session is not sufficient.
+   App-process restart (only, while WSL stays up) is delivered by
+   `deploy/supervise.sh` (start/stop/status/restart/run); operator steps and
+   the actual-host recovery check are README "Operating the server" runbook 15.
+   Keeping WSL alive and starting after a Windows boot remain separate.
 4. Keep SQLite on persistent WSL Linux storage, outside disposable build
    output. Carry existing household data forward and use an explicit database
    path. Establish data-preserving migrations before any schema-changing

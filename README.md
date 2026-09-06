@@ -112,7 +112,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Fourteen runbooks, in the order you'll actually need them. Most are the same
+Fifteen runbooks, in the order you'll actually need them. Most are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -358,11 +358,12 @@ is unaffected.
 
 Install and run the app inside WSL as the household deployment, keeping your
 existing records (private-household-deployment ticket 04a). This is the
-manual, un-supervised form — automatic process restart is ticket 06a, and
-Windows/WSL start-on-boot is 06b/06c. Private HTTPS ingress for household
-devices is runbook 11 (Tailscale Serve); without it the app is reachable only
-on `127.0.0.1` inside WSL. Household phones enrol against that ingress in
-runbook 12.
+manual, un-supervised form — automatic app-process restart is runbook 15
+(`deploy/supervise.sh`); keeping WSL itself alive after terminals close is
+ticket 06b and starting after a Windows boot is 06c. Private HTTPS ingress for
+household devices is runbook 11 (Tailscale Serve);
+without it the app is reachable only on `127.0.0.1` inside WSL. Household
+phones enrol against that ingress in runbook 12.
 
 ```bash
 cp deploy/deploy.env.example deploy/deploy.env
@@ -994,6 +995,71 @@ snapshot's records, the pre-restore session is `401`, and the post-snapshot
 change is gone. The **actual-host rehearsal within the one-day target** — real
 browser, real deployment, timed — is the acceptance gate recorded in
 `.scratch/private-household-deployment/host-acceptance-07c.md`.
+
+### 15. WSL app process supervision (auto-restart)
+
+Keep the app process alive while the WSL distribution is up: if it exits, a
+watch loop restarts it (private-household-deployment ticket 06a). This slice
+supervises the **app process only** — keeping WSL itself alive is ticket 06b,
+and starting it after a Windows boot without an interactive login is 06c. Run
+`deploy/supervise.sh` under whatever brings WSL up.
+
+```bash
+deploy/supervise.sh start     # start the app if needed, then watch it (background)
+deploy/supervise.sh status    # supervisor state + restart count, then control.sh status
+deploy/supervise.sh stop      # stop the watch loop, then the app
+deploy/supervise.sh restart
+deploy/supervise.sh run       # watch loop in the FOREGROUND (for a systemd unit /
+                              # a test harness that owns the process lifetime)
+```
+
+- **What it does.** A loop around `deploy/control.sh`: every
+  `RECIPE_DEPLOY_SUPERVISE_INTERVAL` seconds (default 3) it checks the app pid;
+  if the process is gone it runs `deploy/control.sh start`, which brings the app
+  back on the one configured absolute `RECIPE_DATABASE_URL`. Nothing about the
+  database, build, or port changes on a restart.
+- **No duplicate instances.** `supervise.sh start` refuses if a supervisor is
+  already running (its own pidfile, `RECIPE_DEPLOY_RUNTIME_DIR/recipe-supervisor.pid`),
+  and it never launches a second app — it adopts an app that is already running
+  (e.g. started via runbook 8) and supervises it in place. `control.sh start`
+  itself still refuses a second app, so a repeated `install`/`start` cannot
+  double-run the deployment.
+- **Crash-loop damping.** A one-off crash is restarted immediately. But if
+  `control.sh start` fails (bad build, port in use), or the app comes back and
+  then exits again within `RECIPE_DEPLOY_SUPERVISE_BACKOFF_MAX` seconds
+  (default 60), the loop waits a delay that doubles each time — capped at that
+  value — before the next restart, and resets once the app holds. It never
+  gives up, and recovers on its own once the fault is fixed.
+- **Diagnostics.** `supervise.sh status` prints the supervisor state, the
+  running restart count and last-restart time, and the tail of the supervisor
+  log (`RECIPE_DEPLOY_RUNTIME_DIR/recipe-supervisor.log`), then defers to
+  `deploy/control.sh status` (its exit code — `3` when the app is stopped — is
+  the command's exit code). Application/startup output is still
+  `RECIPE_DEPLOY_RUNTIME_DIR/recipe.log`.
+- **Stopping.** `supervise.sh stop` (or a `SIGTERM` to `supervise.sh run`) stops
+  the watch loop *and* the app together. Use it instead of a bare
+  `deploy/control.sh stop`, which the supervisor would immediately undo.
+
+**Verify** (on the target host — do this while WSL stays up):
+
+```bash
+deploy/supervise.sh start
+deploy/control.sh status                       # healthy on 127.0.0.1:<port>
+kill "$(cat "$RECIPE_DEPLOY_DATA_DIR/run/recipe.pid")"   # simulate a crash
+sleep 5
+deploy/supervise.sh status                     # app restarts >= 1, health OK again
+# open the app / re-read a recipe — previously saved records are still there
+deploy/supervise.sh stop
+```
+
+`backend/tests/test_deploy.py` covers the mechanism deterministically in the
+`backend` CI job: a terminated app is restarted and pre-existing records stay
+usable, a second `supervise.sh start` is refused and never duplicates the app,
+an already-running app is adopted without a restart, `run` supervises until it
+is signalled, and a failed restart is retried and then recovers. Real
+Windows/WSL process recovery (with the actual WSL distribution and no
+interactive shell) is the actual-host acceptance gate — results recorded in
+`.scratch/private-household-deployment/host-acceptance-06a.md`.
 
 ## v1 workflows
 
