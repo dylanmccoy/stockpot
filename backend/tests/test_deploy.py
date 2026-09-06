@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import os
 import re
+import socket
 import sqlite3
 import subprocess
+import textwrap
 import time
 import urllib.error
 import urllib.request
@@ -398,3 +400,230 @@ def test_rollback_list_reports_retained_builds(deploy_env, tmp_path: Path):
     assert retained[0].name in listed.stdout
 
     assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
+
+
+# --- private HTTPS ingress (private-household-deployment ticket 05a) --------
+#
+# deploy/tailscale-serve.sh configures Windows Tailscale Serve to proxy the
+# deployment's local origin over tailnet HTTPS; deploy/net-check.sh is the
+# repeatable connectivity check. Real Tailscale needs a tailnet and Windows,
+# so these drive both scripts against a STUB `tailscale` CLI (argv logged, a
+# tiny state file for the serve mapping) — no credentials, fully deterministic,
+# runs in the `backend` CI job. Real-host behaviour is the separate acceptance
+# gate recorded in .scratch/private-household-deployment/host-acceptance-05a.md.
+
+TAILSCALE_SERVE = REPO_ROOT / "deploy" / "tailscale-serve.sh"
+NET_CHECK = REPO_ROOT / "deploy" / "net-check.sh"
+
+
+@pytest.fixture
+def ts_stub(tmp_path: Path):
+    """A stub Tailscale CLI. Returns (env_patch, log_path, state_path); the
+    caller merges env_patch into a deploy env. Behaviour knobs, via env:
+      TS_STUB_FUNNEL=on      -> `funnel status` reports an active funnel
+      TS_STUB_FUNNEL=err     -> `funnel status` exits non-zero (unknowable)
+      TS_STUB_STOPPED=1      -> `status` reports Tailscale stopped
+      TS_STUB_DNSNAME=<name> -> `status --json` .Self.DNSName
+    `status --json` also emits a decoy .Peer with a different DNSName, so a
+    test proves .Self is the one picked. `serve --bg ... <target>` records
+    <target> in the state file; `serve status` reads it back; `serve reset`
+    clears it."""
+    stub = tmp_path / "tailscale-stub"
+    log = tmp_path / "ts-argv.log"
+    state = tmp_path / "ts-serve-state"
+    stub.write_text(
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env bash
+            echo "$*" >> "{log}"
+            sub="${{1:-}}"; shift || true
+            case "$sub" in
+              funnel)
+                case "${{TS_STUB_FUNNEL:-}}" in
+                  on)  echo "Funnel on:"; echo "  https://host.example.ts.net (Funnel)" ;;
+                  err) echo "stub: funnel unavailable" >&2; exit 1 ;;
+                  *)   echo "No serve config" ;;
+                esac ;;
+              status)
+                if [ "${{1:-}}" = "--json" ]; then
+                  printf '{{"Peer":{{"nkey:decoy":{{"DNSName":"other-peer.tailnet-abc.ts.net."}}}},"Self":{{"DNSName":"%s"}}}}\\n' "${{TS_STUB_DNSNAME:-recipe-host.tailnet-abc.ts.net.}}"
+                elif [ "${{TS_STUB_STOPPED:-}}" = "1" ]; then
+                  echo "Tailscale is stopped."
+                else
+                  echo "100.64.0.1  recipe-host  someone@example.com  linux  -"
+                fi ;;
+              serve)
+                case "${{1:-}}" in
+                  status)
+                    t="$(cat "{state}" 2>/dev/null || true)"
+                    if [ -n "$t" ]; then
+                      echo "https://recipe-host.tailnet-abc.ts.net (tailnet only)"
+                      echo "|-- / proxy $t"
+                    else
+                      echo "No serve config"
+                    fi ;;
+                  reset) : > "{state}" ;;
+                  --bg)
+                    for a in "$@"; do target="$a"; done
+                    printf '%s\\n' "$target" > "{state}"
+                    echo "Serve started." ;;
+                  *) echo "stub: unknown serve args: $*" >&2; exit 1 ;;
+                esac ;;
+              *) echo "stub: unknown command: $sub $*" >&2; exit 1 ;;
+            esac
+            """
+        )
+    )
+    stub.chmod(0o755)
+    return (
+        {"RECIPE_DEPLOY_TAILSCALE_BIN": str(stub), "TS_STUB_DNSNAME": "recipe-host.tailnet-abc.ts.net."},
+        log,
+        state,
+    )
+
+
+def test_net_check_passes_for_a_loopback_deployment_and_a_clean_tailnet(deploy_env, ts_stub):
+    env_patch, _log, _state = ts_stub
+    env = {**deploy_env, **env_patch}
+    assert _run(INSTALL, "--skip-build", env=env).returncode == 0
+    assert _run(CONTROL, "start", env=env).returncode == 0
+    assert _wait_health()
+    # Serve is configured through the script the operator runs.
+    assert _run(TAILSCALE_SERVE, "apply", env=env).returncode == 0
+
+    result = _run(NET_CHECK, env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"app answers on 127.0.0.1:{PORT}" in result.stdout
+    assert "bound on loopback only" in result.stdout
+    assert f"Serve proxies the tailnet to http://127.0.0.1:{PORT}" in result.stdout
+    assert "Funnel is off" in result.stdout
+    assert "https://recipe-host.tailnet-abc.ts.net/" in result.stdout
+    assert "all ingress checks passed" in result.stdout
+
+    assert _run(CONTROL, "stop", env=env).returncode == 0
+
+
+def test_net_check_fails_when_funnel_is_on(deploy_env, ts_stub):
+    env_patch, _log, _state = ts_stub
+    env = {**deploy_env, **env_patch, "TS_STUB_FUNNEL": "on"}
+    assert _run(INSTALL, "--skip-build", env=env).returncode == 0
+    assert _run(CONTROL, "start", env=env).returncode == 0
+    assert _wait_health()
+
+    result = _run(NET_CHECK, env=env)
+    assert result.returncode != 0
+    assert "Funnel is ON" in result.stdout
+    assert "ingress checks FAILED" in result.stdout
+
+    assert _run(CONTROL, "stop", env=env).returncode == 0
+
+
+def test_net_check_fails_when_funnel_state_is_unknowable(deploy_env, ts_stub):
+    # `funnel status` erroring is not "off" — check 5 must fail rather than
+    # report no public exposure it could not confirm.
+    env_patch, _log, _state = ts_stub
+    env = {**deploy_env, **env_patch, "TS_STUB_FUNNEL": "err"}
+    assert _run(INSTALL, "--skip-build", env=env).returncode == 0
+    assert _run(CONTROL, "start", env=env).returncode == 0
+    assert _wait_health()
+
+    result = _run(NET_CHECK, env=env)
+    assert result.returncode != 0
+    assert "could not determine Funnel state" in result.stdout
+
+    assert _run(CONTROL, "stop", env=env).returncode == 0
+
+
+def test_net_check_flags_a_non_loopback_listener_on_the_app_port(deploy_env, ts_stub):
+    # A listener bound to 0.0.0.0 on the app port is a LAN/public bypass of the
+    # Tailscale ingress — net-check must catch it. No app is started here; the
+    # bind itself is what the check inspects.
+    env_patch, _log, _state = ts_stub
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("0.0.0.0", 0))
+    srv.listen(1)
+    bypass_port = srv.getsockname()[1]
+    try:
+        env = {**deploy_env, **env_patch, "RECIPE_DEPLOY_PORT": str(bypass_port)}
+        result = _run(NET_CHECK, "--local-only", env=env)
+        assert result.returncode != 0
+        assert f"non-loopback listener on port {bypass_port}" in result.stdout
+    finally:
+        srv.close()
+
+
+def test_net_check_local_only_skips_tailscale_and_needs_no_cli(deploy_env, tmp_path: Path):
+    env = {
+        **deploy_env,
+        "RECIPE_DEPLOY_TAILSCALE_BIN": str(tmp_path / "no-such-tailscale"),
+    }
+    assert _run(INSTALL, "--skip-build", env=env).returncode == 0
+    assert _run(CONTROL, "start", env=env).returncode == 0
+    assert _wait_health()
+
+    result = _run(NET_CHECK, "--local-only", env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "bound on loopback only" in result.stdout
+    assert "Tailscale checks skipped" in result.stdout
+    assert "Serve proxies" not in result.stdout
+
+    assert _run(CONTROL, "stop", env=env).returncode == 0
+
+
+def test_tailscale_serve_apply_points_serve_at_the_local_origin(deploy_env, ts_stub):
+    env_patch, log, _state = ts_stub
+    env = {**deploy_env, **env_patch}
+    assert _run(INSTALL, "--skip-build", env=env).returncode == 0
+    assert _run(CONTROL, "start", env=env).returncode == 0
+    assert _wait_health()
+
+    result = _run(TAILSCALE_SERVE, "apply", env=env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    # HTTPS on the tailnet, background/persistent, pointed at the loopback origin.
+    argv = log.read_text()
+    assert f"serve --bg --https=443 http://127.0.0.1:{PORT}" in argv
+    # apply echoes the resulting mapping and the tailnet URL.
+    assert f"127.0.0.1:{PORT}" in result.stdout
+    assert "https://recipe-host.tailnet-abc.ts.net/" in result.stdout
+
+    # The mapping is now visible through `status`.
+    status = _run(TAILSCALE_SERVE, "status", env=env)
+    assert status.returncode == 0
+    assert f"127.0.0.1:{PORT}" in status.stdout
+    assert "Funnel           : off" in status.stdout
+
+    assert _run(CONTROL, "stop", env=env).returncode == 0
+
+
+def test_tailscale_serve_apply_refuses_when_funnel_is_on(deploy_env, ts_stub):
+    env_patch, log, _state = ts_stub
+    env = {**deploy_env, **env_patch, "TS_STUB_FUNNEL": "on"}
+    assert _run(INSTALL, "--skip-build", env=env).returncode == 0
+    assert _run(CONTROL, "start", env=env).returncode == 0
+    assert _wait_health()
+
+    result = _run(TAILSCALE_SERVE, "apply", env=env)
+    assert result.returncode != 0
+    assert "Funnel is active" in result.stderr
+    assert "serve --bg" not in log.read_text()  # nothing was configured
+
+    assert _run(CONTROL, "stop", env=env).returncode == 0
+
+
+def test_tailscale_serve_apply_refuses_without_a_local_origin(deploy_env, ts_stub):
+    # No deployment started: apply must not configure an ingress to a dead port.
+    env_patch, log, _state = ts_stub
+    env = {**deploy_env, **env_patch}
+    result = _run(TAILSCALE_SERVE, "apply", env=env)
+    assert result.returncode != 0
+    assert "not answering /api/health" in result.stderr
+    assert not log.exists() or "serve --bg" not in log.read_text()
+
+
+def test_tailscale_serve_url_prints_the_magicdns_https_url(deploy_env, ts_stub):
+    env_patch, _log, _state = ts_stub
+    env = {**deploy_env, **env_patch, "TS_STUB_DNSNAME": "recipe-host.tailnet-9zzz.ts.net."}
+    result = _run(TAILSCALE_SERVE, "url", env=env)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "https://recipe-host.tailnet-9zzz.ts.net/"

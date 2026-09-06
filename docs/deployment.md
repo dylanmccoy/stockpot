@@ -26,7 +26,10 @@ owns implementation scope and acceptance checks.
 2. Expose that origin through private Tailscale Serve with HTTPS. Keep backend
    services bound locally, restrict tailnet access to household devices, and
    retain application login. Funnel and router port forwarding are unnecessary
-   for this private deployment.
+   for this private deployment. Delivered by `deploy/tailscale-serve.sh`
+   (apply/status/url/reset) and `deploy/net-check.sh` (connectivity
+   diagnostics); operator steps and the actual-host acceptance list are
+   README "Operating the server" runbook 11.
 3. Configure Windows/WSL startup, process restart, and host power settings for
    unattended operation. Verify behavior after a full Windows reboot; starting
    an app service inside an already running WSL session is not sufficient.
