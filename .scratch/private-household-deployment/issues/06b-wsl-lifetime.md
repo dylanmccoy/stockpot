@@ -4,7 +4,7 @@
 
 **Blocked by:** 06a: Restart a failed app inside a running WSL distribution.
 
-**Status:** in-review
+**Status:** done
 
 - [x] Provide a Windows-side lifetime arrangement for the intended WSL workload, independent of an interactive development shell. Do not rely on a WSL systemd service alone to keep the distribution alive. — `deploy/wsl-keeper.sh run` (the long-lived foreground process) + `deploy/windows/register-keeper-task.ps1` (Task Scheduler task running it via `wsl.exe`, AtLogOn + 5-min repetition, restart-on-failure, S4U). The runbook states outright that a WSL systemd service cannot hold the distro open.
 
