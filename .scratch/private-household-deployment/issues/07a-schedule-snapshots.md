@@ -4,7 +4,7 @@
 
 **Blocked by:** 04a: Install the WSL app with existing household data.
 
-**Status:** in-review
+**Status:** done
 
 - [ ] Schedule the existing real backup operation at least daily for the explicit deployed database and local backup destination. The task can invoke the intended WSL distribution for a bounded backup job independently of app supervision.
       — **built:** `deploy/windows/register-backup-task.ps1` registers a daily Windows Scheduled Task running `wsl.exe -d <distro> -- bash <checkout>/deploy/backup-run.sh` against the explicit `RECIPE_DEPLOY_DB_FILE` → `RECIPE_DEPLOY_BACKUP_DIR`. `deploy/backup-run.sh` is bounded (`timeout $RECIPE_DEPLOY_BACKUP_TIMEOUT`) and touches no app/supervisor/Tailscale — CI proves it snapshots with the app stopped.
@@ -19,7 +19,7 @@
       — **host-pending:** the reboot-without-login run and recorded results — `host-acceptance-07a.md` #9–#12.
 
 - [x] Document schedule, destination, local permissions, and execution diagnostics. Backup freshness reporting and retention controls are added in 07b; automatic app boot is not a blocker.
-      — README "Operating the server" runbook 12 (schedule / destination / permissions / run-log table + diagnosis); `deploy.env.example` and `deploy/control.sh status` carry the new inputs; `docs/deployment.md` outline item 5 and `backend/CLAUDE.md` updated.
+      — README "Operating the server" runbook 14 (schedule / destination / permissions / run-log table + diagnosis); `deploy.env.example` and `deploy/control.sh status` carry the new inputs; `docs/deployment.md` outline item 5 and `backend/CLAUDE.md` updated.
 
 ## Delivery constraints
 
@@ -30,6 +30,11 @@
 - Preserve the parent spec's scope: one private household, existing domain/API behavior and schema, local SQLite and local backups. No public hosting, multi-household work, or authentication redesign.
 
 ## Comments
+
+- Merged via PR [#92](https://github.com/dylanmccoy/stockpot/pull/92)
+  (squash `fd8d688`), CI green (`backend`, `frontend`, `integration`,
+  `production-smoke`, `deployment`). Branch rebased onto `main` past tickets
+  05b/02c first (README runbook renumber 12 → 14).
 
 - Implemented on branch `feat/private-household-deployment-07a`, worktree
   `.claude/worktrees/private-household-deployment-07a`.
@@ -61,11 +66,11 @@
   (sleeper `uv` stub), and `status` echoing the new inputs. No new CI job —
   deterministic, no Windows/Task Scheduler.
 
-- **Docs** — README "Operating the server" **runbook 12 · Scheduled daily
-  backups (unattended)** (runbook count 11 → 12; runbook 2 forward-ref
-  updated); `deploy/deploy.env.example` documents `RECIPE_DEPLOY_BACKUP_TIMEOUT`
-  and the present-tense backup-dir use; `docs/deployment.md` outline item 5 and
-  `backend/CLAUDE.md` `backup.py` row point at the new scripts.
+- **Docs** — README "Operating the server" **runbook 14 · Scheduled daily
+  backups (unattended)** (runbook 2 forward-ref updated); `deploy/deploy.env.example`
+  documents `RECIPE_DEPLOY_BACKUP_TIMEOUT` and the present-tense backup-dir use;
+  `docs/deployment.md` outline item 5 and `backend/CLAUDE.md` `backup.py` row
+  point at the new scripts.
 
 - **Host acceptance** — `.scratch/private-household-deployment/host-acceptance-07a.md`
   (new): 12-row checklist for the real Task Scheduler registration, the
