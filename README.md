@@ -112,7 +112,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Seventeen runbooks, in the order you'll actually need them. Most are the same
+Eighteen runbooks, in the order you'll actually need them. Most are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -571,8 +571,9 @@ admin, not this host):
 host running with no user signed in, enable Tailscale's
 [unattended mode](https://tailscale.com/docs/how-to/run-unattended) on
 Windows (Tailscale tray → Preferences → **Run unattended**, or install it as
-a system service). Verify after a full reboot without interactive login
-(that whole-path check is runbook / ticket 06c).
+a system service). Verify after a full reboot without interactive login —
+that whole-path check, plus having the keeper re-assert Serve unattended, is
+runbook 18.
 
 **5 — verify.**
 
@@ -1070,8 +1071,9 @@ alive with no development shell open, and bring it back after a controlled
 `wsl --shutdown` (private-household-deployment ticket 06b). A WSL distro stops
 when its last process exits, so a systemd service *inside* WSL cannot hold it
 open; the lifetime owner has to be on the Windows side. Starting this before an
-interactive Windows login (a full reboot) and running Tailscale ingress
-unattended are ticket 06c.
+interactive Windows login (a full reboot) and keeping the private HTTPS ingress
+unattended are **runbook 18** — the same Scheduled Task, plus an at-boot
+trigger.
 
 **The keeper — `deploy/wsl-keeper.sh`.** One long-lived foreground process:
 
@@ -1114,7 +1116,8 @@ elevated-not-required PowerShell on the Windows host:
 ```powershell
 .\deploy\windows\register-keeper-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe
 # options: -TaskName RecipeAppWslKeeper  -RepetitionMinutes 5  -LogonType S4U|Password
-#          -ConfigurePower   (also set the AC standby/hibernate timeouts to 0)
+#          -ConfigurePower    (also set the AC standby/hibernate timeouts to 0)
+#          -NoBootTrigger     (omit the at-boot start — runbook 18 wants it on)
 .\deploy\windows\register-keeper-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe -Unregister
 .\deploy\windows\register-keeper-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe -ShowCommand
 ```
@@ -1122,15 +1125,16 @@ elevated-not-required PowerShell on the Windows host:
 - Registers a task whose action is
   `wsl.exe -d <Distro> -- bash <Checkout>/deploy/wsl-keeper.sh run`.
 - **Independent of a dev shell.** Principal `LogonType S4U` (no stored
-  password); two triggers, each built natively: **AtLogOn** for the invoking
-  user, and a **`-Once` trigger repeating every `-RepetitionMinutes` (default 5)
+  password); triggers, each built natively: **AtStartup** (boot before login —
+  runbook 18; drop with `-NoBootTrigger`), **AtLogOn** for the invoking user,
+  and a **`-Once` trigger repeating every `-RepetitionMinutes` (default 5)
   indefinitely**. The repeating trigger is the recovery path after a controlled
   `wsl --shutdown` while you stay logged in — the task re-runs, WSL boots, and
   the keeper restores the supervisor and app — and it starts the keeper at once
-  on registration. `MultipleInstances IgnoreNew` makes a tick a no-op while the
-  keeper is up. The script reads the task back and **warns if the repetition did
-  not attach** (Task Scheduler behaviour varies by Windows / PowerShell
-  version — spec item 6); add a repeating trigger by hand if so.
+  on registration. `MultipleInstances IgnoreNew` makes any later trigger a no-op
+  while the keeper is up. The script reads the task back and **warns if the
+  repetition or the boot trigger did not attach** (Task Scheduler behaviour
+  varies by Windows / PowerShell version — spec item 6); add it by hand if so.
 - **Restart on failure.** `wsl.exe` exiting non-zero (e.g. after
   `wsl --shutdown`) restarts the action after 1 minute, up to 999 times.
   `ExecutionTimeLimit` is 0 — the keeper runs forever.
@@ -1183,6 +1187,87 @@ Windows task and its power settings, closing the IDE/terminals and idling, and
 recovery across a real `wsl --shutdown` are the actual-host acceptance gate —
 results recorded in
 `.scratch/private-household-deployment/host-acceptance-06b.md`.
+
+### 18. Restore private access after a Windows reboot (no login)
+
+Bring the whole private deployment — WSL, the app, and the household's HTTPS
+address — back after a **full Windows reboot**, with nobody signing in and no
+terminal opened (private-household-deployment ticket 06c). This is runbook 17's
+keeper plus two things: an **at-boot** Task Scheduler trigger, and the private
+Tailscale ingress (runbook 11) kept up unattended.
+
+**1 — register the keeper task with its boot trigger.** On the Windows host:
+
+```powershell
+.\deploy\windows\register-keeper-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe
+```
+
+- The task now carries an **AtStartup** trigger alongside AtLogOn and the
+  repetition. With the `LogonType S4U` principal it runs before any interactive
+  logon, so `wsl.exe -d <Distro> -- bash <Checkout>/deploy/wsl-keeper.sh run`
+  starts at boot; the keeper brings the supervisor and app up under it.
+- The script reads the task back and **warns if the boot trigger did not
+  attach** (it varies by Windows / PowerShell version — spec item 6). If warned,
+  add an *At startup* trigger to `RecipeAppWslKeeper` by hand in Task Scheduler.
+- Registering the boot trigger may need an **elevated** PowerShell on some
+  hosts; re-run the command from an admin shell if registration is refused.
+- `-NoBootTrigger` opts out (logon-only, the runbook 17 behaviour).
+
+**2 — make the Tailscale ingress unattended.** The app coming back is not enough
+— the tailnet HTTPS proxy has to return too, with no one logged in:
+
+- Enable Tailscale **Run unattended** on Windows (runbook 11 §4).
+- Set `RECIPE_DEPLOY_KEEPER_SERVE=1` in `deploy/deploy.env`. The keeper then
+  runs `deploy/tailscale-serve.sh apply` itself once it is holding the app up,
+  and retries each heartbeat until Serve is mapped — closing the boot race where
+  the keeper starts before the Windows Tailscale service is ready. It only acts
+  when Serve is *not* already pointing at the local origin (the `--bg` mapping is
+  persistent), so a normal reboot is a no-op check.
+- Leave `RECIPE_DEPLOY_KEEPER_SERVE` unset if this host has no `tailscale.exe` on
+  its WSL `PATH`; drive Serve from the Windows side instead.
+
+**3 — keep the machine awake.** A sleeping or hibernating host serves nobody
+(spec items 7, 24). Pair the task with the power settings from runbook 17
+(`-ConfigurePower`, or `powercfg /change standby-timeout-ac 0` +
+`hibernate-timeout-ac 0`, plus lid-close = *Do nothing* on a laptop).
+
+**4 — acceptance: reboot and verify before signing in.** On the target host,
+recorded in `.scratch/private-household-deployment/host-acceptance-06c.md`:
+
+1. `shutdown /r /t 0`, then **wait at the Windows sign-in screen — do not log
+   in**.
+2. From a **permitted client** (phone on cellular, or another tailnet device),
+   open `deploy/tailscale-serve.sh url`: the app loads over valid HTTPS, a
+   household account signs in, a previously saved recipe reads back, and a new
+   edit persists across a reload.
+3. From a device **off** the tailnet the name does not resolve — no LAN or
+   public bypass appeared across the reboot.
+4. Only now sign in to Windows. `wsl.exe -d <Distro> -- bash
+   <Checkout>/deploy/wsl-keeper.sh status` shows the keeper running and the app
+   healthy; `recipe-keeper.log` shows the boot-time start (and, with
+   `RECIPE_DEPLOY_KEEPER_SERVE=1`, `Tailscale ingress is up`). The AtLogOn
+   trigger firing now is a no-op — `deploy/net-check.sh` still shows exactly one
+   app and one Serve mapping (retries and repeated setup never double-run
+   anything — runbook 17).
+
+**Diagnosis / manual recovery.**
+
+| Symptom | Check | Manual recovery |
+| --- | --- | --- |
+| Address unreachable before login, reachable after signing in | boot trigger missing or `wsl.exe` needs a console session on this host | add the *At startup* trigger by hand; if WSL will not start under S4U, re-run with `-LogonType Password` |
+| `wsl-keeper.sh status` = `keeper : stopped` after boot | `Get-ScheduledTaskInfo -TaskName RecipeAppWslKeeper` (`LastRunTime` / `LastTaskResult`); task Enabled? | `Start-ScheduledTask -TaskName RecipeAppWslKeeper`; read `recipe-keeper.log` / `recipe.log` |
+| Keeper up, app healthy on `127.0.0.1`, but the tailnet address is down | `deploy/net-check.sh` from WSL; is Tailscale in unattended mode? `RECIPE_DEPLOY_KEEPER_SERVE` set? | `deploy/tailscale-serve.sh apply` by hand (runbook 11 §2); enable Run unattended |
+| Access lost minutes/hours after boot | did the machine sleep? (`powercfg`) | wake it; apply the power settings in step 3 |
+| Everything down and unrecoverable remotely | — | the fallback is always: sign in to Windows and run runbook 17's `wsl-keeper.sh status` / `start` |
+
+The at-boot Task Scheduler trigger, `wsl.exe` starting WSL before an interactive
+logon, real Tailscale unattended mode, and the reboot-without-login check itself
+cannot be exercised in CI — they are the actual-host acceptance gate above. What
+`backend/tests/test_deploy.py` covers deterministically in the `backend` job:
+with `RECIPE_DEPLOY_KEEPER_SERVE` set the keeper re-asserts Serve against the
+local origin itself (stub Tailscale CLI), and with it unset it never touches the
+Tailscale CLI; the no-duplicate-instances guarantees are the runbook 17 keeper
+cases.
 
 ## v1 workflows
 

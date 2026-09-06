@@ -2,7 +2,8 @@
 .SYNOPSIS
   Register (or remove) the Windows Scheduled Task that keeps the household
   deployment's WSL distribution and app alive independently of any interactive
-  development shell — private-household-deployment ticket 06b.
+  development shell (private-household-deployment ticket 06b), and starts it
+  after a Windows boot with nobody signed in (ticket 06c).
 
 .DESCRIPTION
   The task runs one long-lived foreground command:
@@ -19,16 +20,23 @@
     * Principal  : the invoking user, LogonType S4U (no interactive logon, no
                    stored password). If WSL refuses to start under S4U on your
                    host, re-run with -LogonType Password (prompts once).
-    * Triggers   : two, built natively — AtLogOn for this user, and a -Once
-                   trigger (at registration time) repeating every
-                   -RepetitionMinutes forever. The repeating trigger is the
-                   recovery path after a controlled `wsl --shutdown` while you
-                   stay logged in: the task re-runs `wsl.exe`, WSL boots, and
-                   the keeper brings the supervisor and app back; it also starts
-                   the keeper immediately on registration. MultipleInstances =
-                   IgnoreNew, so a repeat tick is a no-op while the keeper runs.
-                   The script reads the task back and warns if the repetition
-                   did not attach (it varies by Windows / PowerShell version).
+    * Triggers   : three, built natively —
+                     - AtStartup: starts the keeper when Windows boots, before
+                       any interactive logon (ticket 06c). Paired with the S4U
+                       principal below it needs nobody signed in. Omit with
+                       -NoBootTrigger.
+                     - AtLogOn for this user.
+                     - a -Once trigger (at registration time) repeating every
+                       -RepetitionMinutes forever: the recovery path after a
+                       controlled `wsl --shutdown` while you stay logged in (the
+                       task re-runs `wsl.exe`, WSL boots, the keeper brings the
+                       supervisor and app back), and it starts the keeper
+                       immediately on registration.
+                   MultipleInstances = IgnoreNew, so a second trigger firing
+                   while the keeper already runs is a no-op (the keeper's own
+                   pidfile refuses a duplicate too). The script reads the task
+                   back and warns if the repetition did not attach (it varies by
+                   Windows / PowerShell version).
     * Restart    : if the action process exits non-zero (e.g. `wsl.exe` returns
                    after `wsl --shutdown`), Task Scheduler restarts it after one
                    minute, up to 999 times. A clean stop (SIGTERM to the keeper,
@@ -42,11 +50,13 @@
     * Idempotent : re-running replaces the task of the same name (-Force), so
                    repeated setup never leaves a duplicate keeper.
 
-  Starting this before an interactive Windows login (a full reboot) and running
-  Tailscale ingress unattended are ticket 06c, which adds an AtStartup trigger
-  onto this same task. This script only configures Task Scheduler; lifetime
+  Running the private Tailscale ingress unattended (so the household's HTTPS
+  origin also returns after a reboot) is the other half of ticket 06c: enable
+  Tailscale's "run unattended" mode on Windows, and set RECIPE_DEPLOY_KEEPER_SERVE
+  in deploy/deploy.env so the keeper re-asserts Serve itself. This script only
+  configures Task Scheduler; the boot-before-login walk-through, lifetime
   controls, diagnostics, and host power settings are documented in README
-  "Operating the server" runbook 17.
+  "Operating the server" runbooks 17-18.
 
 .PARAMETER Distro
   The WSL distribution the deployment runs in (wsl.exe -d value). Match
@@ -62,6 +72,11 @@
 .PARAMETER RepetitionMinutes
   Minutes between repetition ticks (the post-`wsl --shutdown` recovery path).
   Default 5.
+
+.PARAMETER NoBootTrigger
+  Omit the AtStartup trigger, leaving only AtLogOn + the repetition (the
+  ticket 06b behaviour). Use this only if the deployment must not come up until
+  the owner signs in.
 
 .PARAMETER Bash
   The shell inside WSL. Default "bash".
@@ -103,6 +118,7 @@ param(
   [string] $Bash = "bash",
   [string] $WslPath = "wsl.exe",
   [ValidateSet("S4U", "Password")] [string] $LogonType = "S4U",
+  [switch] $NoBootTrigger,
   [switch] $ConfigurePower,
   [switch] $Unregister,
   [switch] $ShowCommand
@@ -134,20 +150,24 @@ if ($Unregister) {
 
 $action = New-ScheduledTaskAction -Execute $WslPath -Argument $wslArgs
 
-# Two independent triggers, each built natively (no copying .Repetition between
+# Independent triggers, each built natively (no copying .Repetition between
 # trigger objects — that assignment is inconsistent across PowerShell versions):
+#   * AtStartup — starts the keeper when Windows boots, before any interactive
+#     logon (ticket 06c). Dropped by -NoBootTrigger.
 #   * AtLogOn for this user — starts the keeper when the owner signs in.
 #   * -Once at registration time, repeating every $RepetitionMinutes forever —
 #     the recovery path after a controlled `wsl --shutdown` while the owner
 #     stays logged in, and it also starts the keeper immediately on register.
-# MultipleInstances = IgnoreNew (below) makes a repeat tick a no-op while the
-# keeper is still running.
-$triggers = @(
-  (New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"),
-  (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+# MultipleInstances = IgnoreNew (below) makes any later trigger firing a no-op
+# while the keeper is still running.
+$triggers = @()
+if (-not $NoBootTrigger) {
+  $triggers += (New-ScheduledTaskTrigger -AtStartup)
+}
+$triggers += (New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME")
+$triggers += (New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes $RepetitionMinutes) `
     -RepetitionDuration ([TimeSpan]::MaxValue))
-)
 
 # ExecutionTimeLimit 0 = run indefinitely. Restart the action if it exits
 # non-zero (e.g. wsl.exe returning after `wsl --shutdown`); a clean keeper stop
@@ -177,11 +197,12 @@ $principal = New-ScheduledTaskPrincipal @principalArgs
 
 Register-ScheduledTask -TaskName $TaskName `
   -Action $action -Trigger $triggers -Settings $settings -Principal $principal `
-  -Description "Keeps the recipe household deployment's WSL '$Distro' distribution and app alive independent of an interactive shell (ticket 06b). Runs deploy/wsl-keeper.sh run via wsl.exe." `
+  -Description "Keeps the recipe household deployment's WSL '$Distro' distribution and app alive independent of an interactive shell (ticket 06b), and starts it at boot before login (ticket 06c). Runs deploy/wsl-keeper.sh run via wsl.exe." `
   -Force | Out-Null
 
+$bootDesc = if ($NoBootTrigger) { "at logon" } else { "at boot (before login), at logon" }
 Write-Host "registered scheduled task '$TaskName'"
-Write-Host "  triggers : at logon of $env:USERDOMAIN\$env:USERNAME, then every $RepetitionMinutes min"
+Write-Host "  triggers : $bootDesc of $env:USERDOMAIN\$env:USERNAME, then every $RepetitionMinutes min"
 Write-Host "  restart  : on non-zero exit, after 1 min, up to 999 times; no execution time limit"
 Write-Host "  logon    : $LogonType"
 Write-Host "  command  : $WslPath $wslArgs"
@@ -204,6 +225,19 @@ else {
     'Scheduler, or see runbook 17.')
 }
 
+if (-not $NoBootTrigger) {
+  $hasBoot = [bool]($registered.Triggers |
+    Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' })
+  if ($hasBoot) {
+    Write-Host "  verified : at-boot trigger is in force (starts before interactive login)"
+  }
+  else {
+    Write-Warning ("no at-boot trigger attached to '$TaskName' on this host. " +
+      'The deployment will not come back until the owner signs in. Add an ' +
+      '"At startup" trigger by hand in Task Scheduler, or see runbook 18.')
+  }
+}
+
 if ($ConfigurePower) {
   Write-Host ""
   Write-Host "configuring host power (AC): no standby, no hibernate"
@@ -223,7 +257,13 @@ Write-Host ""
 Write-Host "start it now:  Start-ScheduledTask -TaskName '$TaskName'"
 Write-Host "check it:      wsl.exe -d $Distro -- $Bash '$scriptPath' status"
 Write-Host ""
-Write-Host "Boot-before-login start and unattended Tailscale ingress are ticket 06c."
-Write-Host ""
+if (-not $NoBootTrigger) {
+  Write-Host "Boot-before-login (ticket 06c): also make the private HTTPS ingress unattended —"
+  Write-Host "  1. enable Tailscale 'run unattended' on Windows (tray > Preferences), and"
+  Write-Host "  2. set RECIPE_DEPLOY_KEEPER_SERVE=1 in deploy/deploy.env so the keeper"
+  Write-Host "     re-asserts Serve after a reboot with nobody logged in."
+  Write-Host "Then reboot and verify from a permitted client before signing in (runbook 18)."
+  Write-Host ""
+}
 Get-ScheduledTaskInfo -TaskName $TaskName |
   Format-List TaskName, LastRunTime, LastTaskResult, NextRunTime

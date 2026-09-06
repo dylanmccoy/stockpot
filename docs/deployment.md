@@ -41,8 +41,12 @@ owns implementation scope and acceptance checks.
    bringing it back after a controlled `wsl --shutdown`, is `deploy/wsl-keeper.sh`
    run unattended by a Windows Scheduled Task
    (`deploy/windows/register-keeper-task.ps1`) — README runbook 17, with host
-   power settings paired alongside. Starting before an interactive Windows login
-   (full reboot) and unattended Tailscale ingress remain separate (ticket 06c).
+   power settings paired alongside. Restoring the whole deployment — WSL, the
+   app, and the private HTTPS ingress — after a full Windows reboot with nobody
+   signed in is the same task's at-boot trigger plus `RECIPE_DEPLOY_KEEPER_SERVE`
+   (the keeper re-asserts Tailscale Serve itself) — README runbook 18, with the
+   reboot-without-login acceptance recorded in
+   `.scratch/private-household-deployment/host-acceptance-06c.md`.
 4. Keep SQLite on persistent WSL Linux storage, outside disposable build
    output. Carry existing household data forward and use an explicit database
    path. Establish data-preserving migrations before any schema-changing
