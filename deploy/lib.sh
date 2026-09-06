@@ -74,15 +74,15 @@ RECIPE_DEPLOY_SUPERVISE_BACKOFF_MAX="${RECIPE_DEPLOY_SUPERVISE_BACKOFF_MAX:-60}"
 #   RECIPE_DEPLOY_KEEPER_HEARTBEAT — seconds between keeper liveness checks of the
 #                                   supervisor (it re-launches a supervisor that
 #                                   has gone). Default 30.
-#   RECIPE_DEPLOY_KEEPER_SERVE     — when set (1/true/yes/on), the keeper also
-#                                   re-asserts the private Tailscale ingress
+#   RECIPE_DEPLOY_KEEPER_SERVE     — set to 1 to have the keeper also re-assert
+#                                   the private Tailscale ingress
 #                                   (deploy/tailscale-serve.sh apply, ticket 05a)
-#                                   once it is holding the app up, so the
+#                                   while it is holding the app up, so the
 #                                   household's HTTPS origin returns after a
-#                                   reboot with nobody logged in. Leave unset on
-#                                   a host whose Tailscale CLI is not reachable
-#                                   from WSL and drive Serve from Windows
-#                                   instead. Default off. (ticket 06c)
+#                                   reboot with nobody logged in. Leave unset
+#                                   (0) on a host whose Tailscale CLI is not
+#                                   reachable from WSL and drive Serve from
+#                                   Windows instead. Default 0. (ticket 06c)
 RECIPE_DEPLOY_KEEPER_HEARTBEAT="${RECIPE_DEPLOY_KEEPER_HEARTBEAT:-30}"
 RECIPE_DEPLOY_KEEPER_SERVE="${RECIPE_DEPLOY_KEEPER_SERVE:-0}"
 

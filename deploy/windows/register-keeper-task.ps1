@@ -200,9 +200,14 @@ Register-ScheduledTask -TaskName $TaskName `
   -Description "Keeps the recipe household deployment's WSL '$Distro' distribution and app alive independent of an interactive shell (ticket 06b), and starts it at boot before login (ticket 06c). Runs deploy/wsl-keeper.sh run via wsl.exe." `
   -Force | Out-Null
 
-$bootDesc = if ($NoBootTrigger) { "at logon" } else { "at boot (before login), at logon" }
+$whoTriggers = if ($NoBootTrigger) {
+  "at logon of $env:USERDOMAIN\$env:USERNAME"
+}
+else {
+  "at boot (before login) and at logon of $env:USERDOMAIN\$env:USERNAME"
+}
 Write-Host "registered scheduled task '$TaskName'"
-Write-Host "  triggers : $bootDesc of $env:USERDOMAIN\$env:USERNAME, then every $RepetitionMinutes min"
+Write-Host "  triggers : $whoTriggers, then every $RepetitionMinutes min"
 Write-Host "  restart  : on non-zero exit, after 1 min, up to 999 times; no execution time limit"
 Write-Host "  logon    : $LogonType"
 Write-Host "  command  : $WslPath $wslArgs"

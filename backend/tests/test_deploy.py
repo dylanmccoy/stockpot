@@ -1512,3 +1512,25 @@ def test_keeper_leaves_the_tailscale_ingress_to_windows_by_default(
         )
         time.sleep(3)  # several keeper heartbeats at the 1s test cadence
         assert not ts_log.exists()
+
+
+def test_keeper_does_not_re_apply_an_ingress_that_is_already_mapped(
+    keeper_env, ts_stub, tmp_path: Path
+):
+    env_patch, ts_log, _state = ts_stub
+    env = {**keeper_env, **env_patch, "RECIPE_DEPLOY_KEEPER_SERVE": "1"}
+    assert _run(INSTALL, "--skip-build", env=env).returncode == 0
+
+    with _keeper_run(env):
+        assert _wait_health(30, SUPERVISE_PORT)
+        # First heartbeat maps Serve.
+        assert _wait_for(
+            lambda: ts_log.exists() and "serve --bg" in ts_log.read_text(), timeout=20
+        )
+        applies = ts_log.read_text().count("serve --bg")
+        assert applies == 1
+        # Repeated setup / later heartbeats see it already mapped (a `serve
+        # status` grep) and never issue a second `apply` — no duplicate ingress.
+        assert _run(KEEPER, "run", env=env).returncode != 0  # a retried start
+        time.sleep(4)
+        assert ts_log.read_text().count("serve --bg") == 1

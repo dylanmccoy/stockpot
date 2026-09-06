@@ -1218,13 +1218,15 @@ Tailscale ingress (runbook 11) kept up unattended.
 
 - Enable Tailscale **Run unattended** on Windows (runbook 11 §4).
 - Set `RECIPE_DEPLOY_KEEPER_SERVE=1` in `deploy/deploy.env`. The keeper then
-  runs `deploy/tailscale-serve.sh apply` itself once it is holding the app up,
-  and retries each heartbeat until Serve is mapped — closing the boot race where
-  the keeper starts before the Windows Tailscale service is ready. It only acts
-  when Serve is *not* already pointing at the local origin (the `--bg` mapping is
-  persistent), so a normal reboot is a no-op check.
-- Leave `RECIPE_DEPLOY_KEEPER_SERVE` unset if this host has no `tailscale.exe` on
-  its WSL `PATH`; drive Serve from the Windows side instead.
+  runs `deploy/tailscale-serve.sh apply` itself once it is holding the app up.
+  It checks every heartbeat and only calls `apply` when Serve is *not* already
+  pointing at the local origin, so it closes the boot race where the keeper
+  starts before the Windows Tailscale service is ready **and** re-asserts a
+  mapping later lost to a Tailscale restart, while a healthy reboot is just a
+  cheap `serve status` check.
+- Leave `RECIPE_DEPLOY_KEEPER_SERVE` unset (0) if this host has no `tailscale.exe`
+  on its WSL `PATH` — drive Serve from the Windows side instead. (If it is set
+  anyway with no CLI on `PATH`, the keeper logs one line and stops trying.)
 
 **3 — keep the machine awake.** A sleeping or hibernating host serves nobody
 (spec items 7, 24). Pair the task with the power settings from runbook 17
@@ -1265,9 +1267,10 @@ logon, real Tailscale unattended mode, and the reboot-without-login check itself
 cannot be exercised in CI — they are the actual-host acceptance gate above. What
 `backend/tests/test_deploy.py` covers deterministically in the `backend` job:
 with `RECIPE_DEPLOY_KEEPER_SERVE` set the keeper re-asserts Serve against the
-local origin itself (stub Tailscale CLI), and with it unset it never touches the
-Tailscale CLI; the no-duplicate-instances guarantees are the runbook 17 keeper
-cases.
+local origin itself (stub Tailscale CLI); it does **not** issue a second `apply`
+once Serve is mapped, even across a retried `run`; and with the flag unset it
+never touches the Tailscale CLI. The keeper/supervisor/app no-duplicate-instances
+guarantees are the runbook 17 cases.
 
 ## v1 workflows
 

@@ -65,10 +65,9 @@ _supervisor_running() { deploy_supervisor_pid_if_running >/dev/null 2>&1; }
 _keeper_shutting_down=0
 _keeper_child=""
 
-# Set once deploy/tailscale-serve.sh reports the ingress mapped, so the keeper
-# stops re-checking it (the `--bg` Serve mapping is persistent — tailscaled
-# owns it — and returns on its own after a Tailscale restart).
-_ingress_asserted=0
+# Set when RECIPE_DEPLOY_KEEPER_SERVE is on but the Tailscale CLI is not on this
+# host's PATH: log once and stop retrying (drive Serve from Windows instead).
+_ingress_giveup=0
 
 # pid of the in-flight `sleep`, so a signal during the heartbeat wait interrupts
 # it at once (bash defers a trap until the foreground command returns).
@@ -108,31 +107,34 @@ _ensure_supervisor() {
   fi
 }
 
-# Opt-in: keep the private Tailscale ingress (ticket 05a) up unattended, so a
-# reboot restores the household's HTTPS origin with nobody logged in.
-_keeper_serve_enabled() {
-  case "${RECIPE_DEPLOY_KEEPER_SERVE:-0}" in
-    1 | true | yes | on | TRUE | YES | ON) return 0 ;;
-    *) return 1 ;;
-  esac
-}
+# Opt-in (RECIPE_DEPLOY_KEEPER_SERVE=1): keep the private Tailscale ingress
+# (ticket 05a) up unattended, so a reboot restores the household's HTTPS origin
+# with nobody logged in. Strict 1/0 like every other deploy/ flag.
+_keeper_serve_enabled() { [ "${RECIPE_DEPLOY_KEEPER_SERVE:-0}" = 1 ]; }
 
-# Re-assert Tailscale Serve if it is not already pointing at this deployment's
-# local origin. Best effort: a keeper that starts before the Windows Tailscale
-# service is ready just logs and retries on the next heartbeat, and a host with
-# no WSL-side Tailscale CLI (RECIPE_DEPLOY_KEEPER_SERVE left unset) never gets
-# here. Never fails the caller. Sets _ingress_asserted once it is mapped.
+# Re-assert Tailscale Serve whenever it is not pointing at this deployment's
+# local origin — on every heartbeat, so the mapping self-heals after a Tailscale
+# restart as well as a boot. Cheap when already mapped (one `serve status`
+# grep). Best effort: a keeper that starts before the Windows Tailscale service
+# is ready logs and retries next heartbeat. If RECIPE_DEPLOY_KEEPER_SERVE is set
+# on a host whose Tailscale CLI is not even on PATH, log once and give up (that
+# host drives Serve from Windows). Never fails the caller.
 _ensure_ingress() {
   _keeper_serve_enabled || return 0
-  [ "$_ingress_asserted" = 1 ] && return 0
-  if deploy_tailscale serve status 2>/dev/null \
-    | grep -q "127.0.0.1:$RECIPE_DEPLOY_PORT"; then
-    _ingress_asserted=1
+  [ "$_ingress_giveup" = 1 ] && return 0
+  if ! command -v "$RECIPE_DEPLOY_TAILSCALE_BIN" >/dev/null 2>&1; then
+    _ingress_giveup=1
+    _klog "keeper: RECIPE_DEPLOY_KEEPER_SERVE is set but '$RECIPE_DEPLOY_TAILSCALE_BIN' is not on PATH — leaving the Tailscale ingress to the Windows side"
+    return 0
+  fi
+  local target hostport
+  target="$(deploy_serve_target)"          # http://127.0.0.1:$RECIPE_DEPLOY_PORT
+  hostport="${target#http://}"
+  if deploy_tailscale serve status 2>/dev/null | grep -qF "$hostport"; then
     return 0
   fi
   _klog "keeper: private Tailscale ingress not mapped — running tailscale-serve.sh apply"
   if bash "$TAILSCALE_SERVE" apply >>"$DEPLOY_KEEPER_LOGFILE" 2>&1; then
-    _ingress_asserted=1
     _klog "keeper: Tailscale ingress is up"
   else
     _klog "keeper: Tailscale ingress not up yet — see the log above; will retry"
@@ -193,8 +195,8 @@ _keeper_loop() {
       _klog "keeper: app supervisor has gone — re-launching it"
       _ensure_supervisor
     fi
-    # Cheap once mapped (a single early return); closes the boot race where the
-    # keeper started before the Windows Tailscale service was ready.
+    # Closes the boot race where the keeper started before the Windows Tailscale
+    # service was ready, and re-asserts a mapping lost to a Tailscale restart.
     _ensure_ingress
     ticks=$((ticks + 1))
   done
