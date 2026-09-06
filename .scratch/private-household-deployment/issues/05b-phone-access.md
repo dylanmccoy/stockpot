@@ -4,7 +4,7 @@
 
 **Blocked by:** 05a: Reach the app from a permitted private-network client.
 
-**Status:** in-review
+**Status:** done
 
 The one deterministic AC (iOS + Android onboarding docs) is written. The
 other three each require a real household phone on a real tailnet against
