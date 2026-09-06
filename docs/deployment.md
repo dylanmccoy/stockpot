@@ -53,7 +53,9 @@ owns implementation scope and acceptance checks.
    recovery target with a non-zero exit, no hosted alerting. Operator steps and
    actual-host acceptance lists are README "Operating the server" runbook 14.
    Restore steps are runbook 5 (isolated rehearsal) and runbook 13 (replace the
-   live database in place, writers stopped).
+   live database in place, writers stopped); runbook 15 is the end-to-end
+   recovery from a scheduled snapshot within the one-day target (ticket 07c),
+   with a timed actual-host rehearsal as its acceptance gate.
 6. Document account provisioning, operator password recovery, updates, logs,
    restart, and restore so ongoing use does not depend on a development shell.
 

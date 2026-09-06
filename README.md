@@ -717,7 +717,9 @@ disconnect/reconnect are the actual-host acceptance gate — results recorded in
 Recover a snapshot **over** the configured household database after a data
 loss (private-household-deployment ticket 02c). Unlike runbook 5, this touches
 the real database — so the application's writers must be **stopped** for the
-whole procedure, and the database being replaced is preserved first.
+whole procedure, and the database being replaced is preserved first. The
+end-to-end recovery that picks a **scheduled** snapshot (runbook 14) and adds
+the restart / access checks and the one-day target is runbook 15.
 
 **stop → preserve → restore → restart:**
 
@@ -908,6 +910,91 @@ reboot-without-interactive-login check are the actual-host acceptance gate —
 results recorded in
 `.scratch/private-household-deployment/host-acceptance-07a.md` and
 `host-acceptance-07b.md`.
+
+### 15. Recover the deployment from a scheduled snapshot
+
+The whole-deployment recovery procedure after a data loss: take the newest
+good **scheduled** snapshot (runbook 14), replace the live database in place
+(runbook 13), restart, and confirm household access — inside the one-day
+recovery target (private-household-deployment ticket 07c).
+
+**Depends on** a usable local snapshot and a surviving host disk. Off-machine
+backups and recovery from disk or machine loss are out of scope (spec items
+13, 30). A snapshot older than 24h is already past the accepted data-loss
+target (runbook 14; freshness reporting is 07b).
+
+**Rehearse in isolation first.** Before running this against the live
+database, run it once against a separate database and app instance (runbook 5,
+or the `test_deploy.py` recovery tests) so the steps and the chosen snapshot
+are known-good.
+
+**select → stop → preserve → restore → restart → verify:**
+
+```bash
+cd "$RECIPE_DEPLOY_CHECKOUT/backend"
+
+# 1. select — the newest `ok` line in the backup run log is the freshest
+#    recovery point; confirm it is < 24h old (runbook 14).
+tail -n 5 "$RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log"
+snapshot=$(awk '$2 == "ok" { p = $3 } END { print p }' \
+  "$RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log")
+echo "restoring from $snapshot"
+
+# 2. stop writers.
+deploy/control.sh stop
+
+# 3 + 4. preserve the current database, then replace it with the snapshot.
+uv run python scripts/restore.py --replace \
+  --snapshot "$snapshot" \
+  --target   "$RECIPE_DEPLOY_DB_FILE" \
+  --preserve-dir "$RECIPE_DEPLOY_DATA_DIR/pre-restore"
+
+# 5. restart against the same explicit database.
+deploy/control.sh start
+deploy/control.sh status          # resolved config + GET /api/health
+deploy/net-check.sh --local-only  # listener still loopback-only
+
+# 6. verify household access — a fresh login and a representative read
+#    (do this in a browser on a permitted device too — the host rehearsal):
+curl -fsS "http://127.0.0.1:$RECIPE_DEPLOY_PORT/api/health"
+curl -fsS -X POST "http://127.0.0.1:$RECIPE_DEPLOY_PORT/api/auth/login" \
+  -H 'content-type: application/json' \
+  -d '{"username":"<member>","password":"<password>"}'
+```
+
+- **Selecting the snapshot.** `backup-runs.log` carries one `ok <path>` /
+  `FAIL <reason>` line per scheduled run (runbook 14). Take the newest `ok`
+  path. If it is older than 24h, or the latest lines are `FAIL`, you are
+  restoring past the accepted data-loss window — note it and continue with the
+  best snapshot you have.
+- **stop → preserve → restore → restart** is runbook 13 unchanged: `--target`
+  must be the existing live database; the current database is snapshotted into
+  `--preserve-dir` and validated *before* anything is replaced, and the
+  command refuses (live database byte-for-byte unchanged) if that fails. A
+  copy of what you replaced is always kept, so a bad snapshot choice can be
+  undone.
+- **Sessions.** Every session in the restored snapshot is cleared before the
+  app serves it — a login session from before the restore is refused (`401`)
+  and a session revoked before the snapshot is not revived. Household members
+  sign in again after the restart.
+- **What you lose.** Every change committed after the snapshot's timestamp —
+  recipes, inventory, cooking history, grocery edits, password changes — is
+  rolled back. That is the accepted ≤24h data-loss target (spec item 35);
+  completing the restore inside a day is item 36.
+- **Verify in a browser** (on a permitted device — this is the host
+  rehearsal): fresh login succeeds; a representative recipe / inventory record
+  from before the snapshot reads back; a change known to have been made
+  *after* the snapshot is absent; an old session returns to the login screen.
+
+`backend/tests/test_deploy.py` runs this whole procedure in the `backend` CI
+job against the isolated `deploy_env` deployment — its own port and
+data/backup/runtime dirs and app process, so live data is never touched: seed
+records, `deploy/backup-run.sh` for the scheduled snapshot, diverge,
+`restore.py --replace`, restart, then over real HTTP a fresh login sees the
+snapshot's records, the pre-restore session is `401`, and the post-snapshot
+change is gone. The **actual-host rehearsal within the one-day target** — real
+browser, real deployment, timed — is the acceptance gate recorded in
+`.scratch/private-household-deployment/host-acceptance-07c.md`.
 
 ## v1 workflows
 
