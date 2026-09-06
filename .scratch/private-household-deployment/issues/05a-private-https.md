@@ -4,7 +4,7 @@
 
 **Blocked by:** 04a: Install the WSL app with existing household data; 01b: Reload bookmarked pages without breaking API errors.
 
-**Status:** in-review
+**Status:** done
 
 Every AC below has a host-dependent verification step ("verify… on a permitted
 client", "inspect…", "record actual-host results") that cannot be met without
