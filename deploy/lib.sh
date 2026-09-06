@@ -89,6 +89,16 @@ RECIPE_DEPLOY_BUILD_KEEP="${RECIPE_DEPLOY_BUILD_KEEP:-5}"
 # job then reports failure and the prior snapshots are left in place.
 RECIPE_DEPLOY_BACKUP_TIMEOUT="${RECIPE_DEPLOY_BACKUP_TIMEOUT:-300}"
 
+# Local backup retention + freshness target (private-household-deployment ticket
+# 07b). After a successful snapshot deploy/backup-run.sh keeps the newest
+# RECIPE_DEPLOY_BACKUP_KEEP valid snapshots and drops older ones;
+# `scripts/backup_status.py` reports the latest success, its age, and the latest
+# failure, flagging no success or a success older than
+# RECIPE_DEPLOY_BACKUP_MAX_AGE_HOURS. Retention is count-based on purpose: a
+# failed run publishes no snapshot, so it can never evict an earlier success.
+RECIPE_DEPLOY_BACKUP_KEEP="${RECIPE_DEPLOY_BACKUP_KEEP:-14}"
+RECIPE_DEPLOY_BACKUP_MAX_AGE_HOURS="${RECIPE_DEPLOY_BACKUP_MAX_AGE_HOURS:-24}"
+
 # Absolutise the paths so they never resolve against the caller's CWD.
 _deploy_abs() {
   case "$1" in
@@ -153,6 +163,8 @@ database url     : $DEPLOY_DATABASE_URL
 backup directory : $RECIPE_DEPLOY_BACKUP_DIR
 backup run log   : $DEPLOY_BACKUP_LOG
 backup job limit : ${RECIPE_DEPLOY_BACKUP_TIMEOUT}s
+backup retention : keep newest $RECIPE_DEPLOY_BACKUP_KEEP valid snapshots
+backup freshness : flag no success / success older than ${RECIPE_DEPLOY_BACKUP_MAX_AGE_HOURS}h
 runtime directory: $RECIPE_DEPLOY_RUNTIME_DIR
 build archive    : $RECIPE_DEPLOY_BUILD_ARCHIVE (keep $RECIPE_DEPLOY_BUILD_KEEP)
 EOF

@@ -49,10 +49,17 @@ owns implementation scope and acceptance checks.
    `deploy/backup-run.sh` (one bounded online-backup snapshot, `ok`/`FAIL`
    line per run in the backup run log, earlier snapshots kept on failure),
    scheduled on the Windows host by `deploy/windows/register-backup-task.ps1`
-   (daily, runs with no interactive logon); its operator steps and actual-host
-   acceptance list are README "Operating the server" runbook 14. Restore steps
-   are runbook 5 (isolated rehearsal) and runbook 13 (replace the live database
-   in place, writers stopped).
+   (daily, runs with no interactive logon). After a successful snapshot the job
+   prunes to the newest `RECIPE_DEPLOY_BACKUP_KEEP` valid snapshots (count-based,
+   so a failed run never evicts an earlier success), and
+   `scripts/backup_status.py` reports the latest success, its age, and the
+   latest failure — flagging no success or a success older than the 24-hour
+   recovery target with a non-zero exit, no hosted alerting. Operator steps and
+   actual-host acceptance lists are README "Operating the server" runbook 14.
+   Restore steps are runbook 5 (isolated rehearsal) and runbook 13 (replace the
+   live database in place, writers stopped); runbook 15 is the end-to-end
+   recovery from a scheduled snapshot within the one-day target (ticket 07c),
+   with a timed actual-host rehearsal as its acceptance gate.
 6. Document account provisioning, operator password recovery, updates, logs,
    restart, and restore so ongoing use does not depend on a development shell.
 

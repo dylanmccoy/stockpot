@@ -23,6 +23,7 @@ import signal
 import socket
 import sqlite3
 import subprocess
+import sys
 import textwrap
 import time
 import urllib.error
@@ -43,19 +44,27 @@ SUPERVISE = REPO_ROOT / "deploy" / "supervise.sh"
 PORT = "8988"
 
 
+def _recipe_row(title: str) -> dict:
+    """Column values for one `recipes` row with the given title."""
+    now = datetime.now(timezone.utc)
+    return {
+        "title": title,
+        "notes": "",
+        "tags": [],
+        "steps": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
 def _seed_db(path: Path, titles: list[str]) -> None:
     """Create a real app-schema SQLite database at `path` with one recipe row
     per title."""
     engine = create_engine(f"sqlite:///{path}")
     Base.metadata.create_all(engine)
-    now = datetime.now(timezone.utc)
     with engine.begin() as conn:
         for title in titles:
-            conn.execute(
-                insert(models.Recipe).values(
-                    title=title, notes="", tags=[], steps=[], created_at=now, updated_at=now
-                )
-            )
+            conn.execute(insert(models.Recipe).values(**_recipe_row(title)))
     engine.dispose()
 
 
@@ -777,11 +786,251 @@ def test_backup_run_is_time_bounded(deploy_env, tmp_path: Path):
     assert _backup_log_lines(tmp_path)[-1].split()[1] == "FAIL"
 
 
+def test_backup_run_applies_retention_after_a_successful_snapshot(deploy_env, tmp_path: Path):
+    # 07b: once the new snapshot is safely published, the job keeps the newest
+    # RECIPE_DEPLOY_BACKUP_KEEP valid snapshots and drops older ones.
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["RETAINED"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    _clear_snapshots(tmp_path)
+
+    backups = tmp_path / "data" / "backups"
+    older = [
+        backups / "recipe-20200101T000000Z.db",
+        backups / "recipe-20200102T000000Z.db",
+        backups / "recipe-20200103T000000Z.db",
+    ]
+    for path in older:
+        _seed_db(path, ["OLD"])
+
+    env = {**deploy_env, "RECIPE_DEPLOY_BACKUP_KEEP": "2"}
+    result = _run(BACKUP_RUN, env=env)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    remaining = {p.name for p in backups.glob("recipe-*.db")}
+    assert len(remaining) == 2  # the fresh snapshot + the newest pre-existing one
+    assert "recipe-20200103T000000Z.db" in remaining
+    assert not older[0].exists() and not older[1].exists()
+    assert _backup_log_lines(tmp_path)[-1].split()[1] == "ok"
+
+
 def test_status_reports_the_backup_schedule_inputs(deploy_env):
     assert _run(INSTALL, "--skip-build", env=deploy_env).returncode == 0
     status = _run(CONTROL, "status", env=deploy_env)
     assert "backup run log   :" in status.stdout
     assert "backup job limit :" in status.stdout
+    assert "backup retention :" in status.stdout
+    assert "backup freshness :" in status.stdout
+
+
+# --- recover the deployment from a scheduled snapshot (private-household-
+#     deployment ticket 07c) ----------------------------------------------------
+#
+# Runbook 15 ties the unattended snapshot job (07a) and the in-place database
+# replace (02c) into one deployment-recovery procedure: select the newest good
+# scheduled snapshot, stop writers, preserve the live database, replace it,
+# restart, and confirm household access. Driven here end to end against the
+# isolated `deploy_env` deployment — its own port, data/backup/runtime dirs, and
+# app process — so live household data is never touched. Registration is opened
+# only to seed records, then closed for the recovery assertions. The timed
+# actual-host rehearsal (real browser, within the one-day target) is the
+# acceptance gate in host-acceptance-07c.md.
+
+RESTORE_PY = REPO_ROOT / "backend" / "scripts" / "restore.py"
+RECOVERY_CODE = "recovery-rehearsal-code"
+MEMBER_PW = "correct horse battery staple"
+
+
+def _api(
+    method: str,
+    path: str,
+    port: str = PORT,
+    *,
+    token: str | None = None,
+    body: dict | None = None,
+):
+    """One JSON call to the running deployment. Returns (status, parsed body|None)."""
+    headers = {"Content-Type": "application/json"}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        method=method,
+        data=json.dumps(body).encode() if body is not None else None,
+        headers=headers,
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            raw = r.read()
+            return r.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as exc:
+        return exc.code, None
+
+
+def _register(username: str) -> str:
+    status, data = _api(
+        "POST",
+        "/api/auth/register",
+        body={"username": username, "password": MEMBER_PW, "code": RECOVERY_CODE},
+    )
+    assert status == 201, (status, data)
+    return data["token"]
+
+
+def _create_recipe(token: str, title: str) -> None:
+    status, _ = _api(
+        "POST",
+        "/api/recipes",
+        token=token,
+        body={"title": title, "tags": [], "steps": [], "ingredients": []},
+    )
+    assert status == 201, status
+
+
+def _titles_via_http(token: str) -> list[str]:
+    status, data = _api("GET", "/api/recipes", token=token)
+    assert status == 200, status
+    return sorted(r["title"] for r in data)
+
+
+def _restore_replace(snapshot: Path, target: Path, preserve_dir: Path, env: dict):
+    return subprocess.run(
+        [
+            sys.executable,
+            str(RESTORE_PY),
+            "--replace",
+            "--snapshot", str(snapshot),
+            "--target", str(target),
+            "--preserve-dir", str(preserve_dir),
+        ],
+        cwd=str(REPO_ROOT / "backend"),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+
+
+def _add_recipe_row(path: Path, title: str) -> None:
+    """Append one recipe straight to an app-schema database (a divergence that
+    needs no running app)."""
+    engine = create_engine(f"sqlite:///{path}")
+    with engine.begin() as conn:
+        conn.execute(insert(models.Recipe).values(**_recipe_row(title)))
+    engine.dispose()
+
+
+def test_recover_deployment_from_a_scheduled_snapshot(deploy_env, tmp_path: Path):
+    # Registration is opened only to seed household records through the API,
+    # then closed for the recovery assertions.
+    reg_env = {
+        **deploy_env,
+        "RECIPE_ALLOW_REGISTRATION": "1",
+        "RECIPE_REGISTRATION_CODE": RECOVERY_CODE,
+    }
+    assert _run(INSTALL, "--skip-build", env=reg_env).returncode == 0
+    assert _run(CONTROL, "start", env=reg_env).returncode == 0
+    assert _wait_health()
+
+    token = _register("alice")
+    _create_recipe(token, "Pre-snapshot Stew")
+
+    assert _snapshot_count(tmp_path) == 0  # no adoption snapshot without --adopt-from
+    assert _run(BACKUP_RUN, env=deploy_env).returncode == 0
+    assert _backup_log_lines(tmp_path)[-1].split()[1] == "ok"
+    scheduled = _only_snapshot(tmp_path)
+    scheduled_before = scheduled.read_bytes()
+
+    # A change committed after the snapshot — recovery must roll it back.
+    _create_recipe(token, "Post-snapshot Pie")
+
+    # stop writers -> preserve + replace -> restart, registration now closed.
+    assert _run(CONTROL, "stop", env=reg_env).returncode == 0
+    deployment_db = tmp_path / "data" / "recipe.db"
+    result = _restore_replace(
+        scheduled, deployment_db, tmp_path / "pre-restore", deploy_env
+    )
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "restore ok: replaced" in result.stdout
+    assert "preserved prior database:" in result.stdout
+
+    assert _run(CONTROL, "start", env=deploy_env).returncode == 0
+    assert _wait_health()
+    # Runbook 15 step 5: the listener is still loopback-only after the restart.
+    assert _run(NET_CHECK, "--local-only", env=deploy_env).returncode == 0
+
+    # Household access: a fresh login works and sees the snapshot's world.
+    status, data = _api(
+        "POST", "/api/auth/login", body={"username": "alice", "password": MEMBER_PW}
+    )
+    assert status == 200, (status, data)
+    assert _titles_via_http(data["token"]) == ["Pre-snapshot Stew"]  # no Post-snapshot Pie
+
+    # The session captured before recovery is dead — restored sessions cleared.
+    assert _api("GET", "/api/auth/me", token=token)[0] == 401
+
+    # Registration really is closed again on the recovered deployment.
+    assert (
+        _api(
+            "POST",
+            "/api/auth/register",
+            body={"username": "mallory", "password": MEMBER_PW, "code": RECOVERY_CODE},
+        )[0]
+        == 403
+    )
+
+    # The scheduled snapshot restored from is only read; live data was never in
+    # reach (the isolated deployment owns every path).
+    assert scheduled.read_bytes() == scheduled_before
+    assert not (REPO_ROOT / "backend" / "recipe.db").exists()
+
+    assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
+
+
+def test_recovery_selects_the_newest_good_scheduled_snapshot(deploy_env, tmp_path: Path):
+    # Runbook 15 step 1: pick the newest `ok` line from backup-runs.log even when
+    # a later scheduled run FAILed, then replace in place from it. No running app.
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["Pre-snapshot Stew"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    deployment_db = tmp_path / "data" / "recipe.db"
+    _clear_snapshots(tmp_path)  # drop the adoption snapshot
+
+    # One good scheduled run...
+    assert _run(BACKUP_RUN, env=deploy_env).returncode == 0
+    good = _only_snapshot(tmp_path)
+
+    # ...then a later run that FAILs — the database is moved aside for it, so the
+    # log ends `ok <good>` then `FAIL <reason>`.
+    deployment_db.rename(tmp_path / "recipe.db.moved")
+    assert _run(BACKUP_RUN, env=deploy_env).returncode != 0
+    (tmp_path / "recipe.db.moved").rename(deployment_db)
+    tail = [line.split()[1] for line in _backup_log_lines(tmp_path)[-2:]]
+    assert tail == ["ok", "FAIL"], _backup_log_lines(tmp_path)
+
+    # The runbook's selection command picks the newest good snapshot.
+    picked = subprocess.run(
+        [
+            "awk",
+            '$2 == "ok" { p = $3 } END { print p }',
+            str(tmp_path / "data" / "run" / "backup-runs.log"),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert Path(picked) == good
+
+    # Diverge, then restore in place from the picked snapshot.
+    _add_recipe_row(deployment_db, "Post-snapshot Pie")
+    preserve_dir = tmp_path / "pre-restore"
+    result = _restore_replace(Path(picked), deployment_db, preserve_dir, deploy_env)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    assert _recipe_titles(deployment_db) == ["Pre-snapshot Stew"]  # divergence rolled back
+    # The replaced database is kept as a recovery point — the divergence is not lost.
+    (preserved,) = preserve_dir.glob("recipe-*.db")
+    assert "Post-snapshot Pie" in _recipe_titles(preserved)
 # --- deploy/supervise.sh (private-household-deployment ticket 06a) ----------
 #
 # Automatic app-process recovery: a watch loop around deploy/control.sh that
@@ -860,20 +1109,6 @@ def _provision_account(db_path: Path, username: str, password: str) -> None:
         timeout=90,
     )
     assert result.returncode == 0, result.stderr + result.stdout
-
-
-def _api(method: str, path: str, port: str, token: str | None = None, body=None):
-    """One JSON request to the deployed origin. Returns (status, parsed-body|None)."""
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data, method=method)
-    req.add_header("content-type", "application/json")
-    if token:
-        req.add_header("authorization", f"Bearer {token}")
-    try:
-        with urllib.request.urlopen(req, timeout=5) as r:
-            return r.status, json.load(r)
-    except urllib.error.HTTPError as e:
-        return e.code, None
 
 
 def _new_app_pid(tmp_path: Path, previous: int, timeout: float = 30) -> int:
