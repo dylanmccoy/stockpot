@@ -627,3 +627,149 @@ def test_tailscale_serve_url_prints_the_magicdns_https_url(deploy_env, ts_stub):
     result = _run(TAILSCALE_SERVE, "url", env=env)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "https://recipe-host.tailnet-9zzz.ts.net/"
+
+
+# --- deploy/backup-run.sh (private-household-deployment ticket 07a) ---------
+#
+# The command a scheduler runs for an unattended daily snapshot. On the target
+# host that is Windows Task Scheduler, via
+#   wsl.exe -d <distro> -- bash <checkout>/deploy/backup-run.sh
+# registered by deploy/windows/register-backup-task.ps1. Driven here exactly as
+# the scheduler would — as a subprocess, no terminal, and (in one case) no
+# running app — against disposable data. Real Task Scheduler registration and
+# the reboot-without-login check are the actual-host acceptance gate recorded in
+# .scratch/private-household-deployment/host-acceptance-07a.md.
+
+BACKUP_RUN = REPO_ROOT / "deploy" / "backup-run.sh"
+
+
+def _backup_log_lines(tmp_path: Path) -> list[str]:
+    log = tmp_path / "data" / "run" / "backup-runs.log"
+    return log.read_text().splitlines() if log.is_file() else []
+
+
+def _clear_snapshots(tmp_path: Path) -> None:
+    """Drop the adoption snapshot so a following backup-run leaves exactly one
+    file — avoids depending on the wall clock to disambiguate same-second
+    snapshot names (`create_backup` names to the second)."""
+    for p in (tmp_path / "data" / "backups").glob("recipe-*.db"):
+        p.unlink()
+
+
+def _only_snapshot(tmp_path: Path) -> Path:
+    (snap,) = (tmp_path / "data" / "backups").glob("recipe-*.db")
+    return snap
+
+
+def test_backup_run_snapshots_a_running_deployment(deploy_env, tmp_path: Path):
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["SCHEDULED SNAPSHOT"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert _run(CONTROL, "start", env=deploy_env).returncode == 0
+    assert _wait_health()
+    _clear_snapshots(tmp_path)
+
+    result = _run(BACKUP_RUN, env=deploy_env)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    # One new timestamped snapshot, a usable copy of the live database.
+    assert _snapshot_count(tmp_path) == 1
+    assert _recipe_titles(_only_snapshot(tmp_path)) == ["SCHEDULED SNAPSHOT"]
+
+    # The run is recorded for diagnostics (07b builds freshness reporting on it).
+    lines = _backup_log_lines(tmp_path)
+    assert len(lines) == 1
+    assert re.match(
+        r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ok .*/recipe-\d{8}T\d{6}Z\.db$", lines[0]
+    ), lines[0]
+    assert str(_only_snapshot(tmp_path)) in lines[0]
+
+    assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
+
+
+def test_backup_run_works_with_the_app_stopped(deploy_env, tmp_path: Path):
+    # Independent of app supervision: no `control.sh start`, no server process.
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["SNAPSHOT WITHOUT A SERVER"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    _clear_snapshots(tmp_path)
+
+    result = _run(BACKUP_RUN, env=deploy_env)
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "app supervision not required" in result.stdout
+
+    assert _snapshot_count(tmp_path) == 1
+    assert _recipe_titles(_only_snapshot(tmp_path)) == ["SNAPSHOT WITHOUT A SERVER"]
+    assert _backup_log_lines(tmp_path)[-1].split()[1] == "ok"
+
+
+def test_backup_run_fails_without_a_database_and_preserves_earlier_snapshots(
+    deploy_env, tmp_path: Path
+):
+    backups = tmp_path / "data" / "backups"
+    backups.mkdir(parents=True)
+    prior = backups / "recipe-20200101T000000Z.db"
+    prior.write_bytes(b"earlier good snapshot")
+
+    # Install with no source database: none is created (deferred to first start).
+    assert _run(
+        INSTALL, "--skip-build", "--adopt-from", str(tmp_path / "missing.db"), env=deploy_env
+    ).returncode == 0
+    assert not (tmp_path / "data" / "recipe.db").exists()
+
+    result = _run(BACKUP_RUN, env=deploy_env)
+    assert result.returncode != 0
+    assert "does not exist" in result.stderr
+
+    # The earlier snapshot is untouched; nothing new was published.
+    assert prior.read_bytes() == b"earlier good snapshot"
+    assert list(backups.glob("recipe-*.db")) == [prior]
+    assert _backup_log_lines(tmp_path)[-1].split()[1] == "FAIL"
+
+
+def test_backup_run_fails_when_the_destination_cannot_be_written(deploy_env, tmp_path: Path):
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["KEPT"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+
+    # A backup directory whose parent is a regular file: it cannot be created.
+    (tmp_path / "blocker").write_text("not a directory")
+    env = {**deploy_env, "RECIPE_DEPLOY_BACKUP_DIR": str(tmp_path / "blocker" / "backups")}
+
+    result = _run(BACKUP_RUN, env=env)
+    assert result.returncode != 0
+    assert _backup_log_lines(tmp_path)[-1].split()[1] == "FAIL"
+
+
+def test_backup_run_is_time_bounded(deploy_env, tmp_path: Path):
+    # A snapshot that never returns must not wedge the scheduled task. Stub the
+    # snapshot's `uv` with a sleeper and set a 1s ceiling.
+    backups = tmp_path / "data" / "backups"
+    backups.mkdir(parents=True)
+    prior = backups / "recipe-20200101T000000Z.db"
+    prior.write_bytes(b"earlier good snapshot")
+    (tmp_path / "data" / "recipe.db").write_bytes(b"SQLite format 3\x00")  # the -f check passes
+
+    sleeper = tmp_path / "uv-sleeper"
+    sleeper.write_text("#!/usr/bin/env bash\nsleep 10\n")
+    sleeper.chmod(0o755)
+    env = {
+        **deploy_env,
+        "RECIPE_DEPLOY_UV_BIN": str(sleeper),
+        "RECIPE_DEPLOY_BACKUP_TIMEOUT": "1",
+    }
+
+    start = time.time()
+    result = _run(BACKUP_RUN, env=env)
+    assert time.time() - start < 8  # it did not wait out the sleeper
+    assert result.returncode != 0
+    assert "time limit" in result.stderr
+    assert prior.read_bytes() == b"earlier good snapshot"
+    assert _backup_log_lines(tmp_path)[-1].split()[1] == "FAIL"
+
+
+def test_status_reports_the_backup_schedule_inputs(deploy_env):
+    assert _run(INSTALL, "--skip-build", env=deploy_env).returncode == 0
+    status = _run(CONTROL, "status", env=deploy_env)
+    assert "backup run log   :" in status.stdout
+    assert "backup job limit :" in status.stdout
