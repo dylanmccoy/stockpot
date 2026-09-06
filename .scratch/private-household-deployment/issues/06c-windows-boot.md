@@ -4,7 +4,7 @@
 
 **Blocked by:** 06b: Keep WSL serving after terminals close; 05a: Reach the app from a permitted private-network client.
 
-**Status:** in-review
+**Status:** done
 
 - [x] Add repeatable Windows boot startup for the intended user/distribution and existing WSL lifetime arrangement. Ensure private Tailscale ingress also runs unattended.
   - `deploy/windows/register-keeper-task.ps1` gains an `AtStartup` trigger (with `AtLogOn` + the repetition), so the same S4U-principal `RecipeAppWslKeeper` task starts `wsl.exe -d <distro> -- bash <checkout>/deploy/wsl-keeper.sh run` before any interactive logon. `-Force` re-registration and `-NoBootTrigger` keep it repeatable; the script reads the task back and warns if the boot trigger did not attach.
