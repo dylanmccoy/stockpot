@@ -112,7 +112,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Ten runbooks, in the order you'll actually need them. Most are the same
+Eleven runbooks, in the order you'll actually need them. Most are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -360,8 +360,9 @@ is unaffected.
 Install and run the app inside WSL as the household deployment, keeping your
 existing records (private-household-deployment ticket 04a). This is the
 manual, un-supervised form — automatic process restart is ticket 06a, and
-Windows/WSL start-on-boot is 06b/06c. Private HTTPS ingress (Tailscale) is
-05a; until then the app is reachable only on `127.0.0.1` inside WSL.
+Windows/WSL start-on-boot is 06b/06c. Private HTTPS ingress for household
+devices is runbook 11 (Tailscale Serve); without it the app is reachable only
+on `127.0.0.1` inside WSL.
 
 ```bash
 cp deploy/deploy.env.example deploy/deploy.env
@@ -500,6 +501,118 @@ deploy/rollback.sh --to /path/to/build     # a build directory you identified yo
 `backend/tests/test_deploy.py` covers the select / validate / snapshot / abort
 logic against disposable data; the `deployment-update` CI run also drives a
 browser through update → rollback (above).
+
+### 11. Private HTTPS ingress (Tailscale Serve)
+
+Give household devices one HTTPS address that reaches the deployment, private
+to the tailnet — nothing on the LAN or the public internet can connect
+(private-household-deployment ticket 05a). The app keeps listening on
+`127.0.0.1` only; Tailscale Serve on the **Windows** host proxies its
+`localhost:<port>` (which WSL2 forwards to the app) out onto the tailnet over
+HTTPS. Funnel and router port-forwarding are never used.
+
+**Prerequisites**
+
+- The deployment is installed and running (runbook 8): `deploy/control.sh
+  status` shows it healthy on `127.0.0.1:<port>`.
+- Tailscale is installed and signed in on the Windows host, on the household
+  tailnet.
+- `deploy/deploy.env` sets `RECIPE_DEPLOY_TAILSCALE_BIN` (from WSL:
+  `tailscale.exe`) and, if not 443, `RECIPE_DEPLOY_HTTPS_PORT`.
+
+**1 — confirm Windows can reach the WSL app.** WSL2 forwards Windows
+`localhost` to listeners inside the distro (`localhostForwarding`, on by
+default). From a Windows PowerShell:
+
+```powershell
+curl.exe http://127.0.0.1:8000/api/health      # expect {"status":"ok"}
+```
+
+If that fails, the localhost forward is off — set `localhostForwarding=true`
+in `%UserProfile%\.wslconfig` under `[wsl2]` and `wsl --shutdown`. See
+Microsoft's [WSL networking](https://learn.microsoft.com/en-us/windows/wsl/networking).
+
+**2 — configure Serve.** From the WSL checkout:
+
+```bash
+deploy/tailscale-serve.sh apply      # tailnet :443 (HTTPS) -> http://127.0.0.1:<port>
+deploy/tailscale-serve.sh status     # current mapping + node state + Funnel (must be off)
+deploy/tailscale-serve.sh url        # the address household devices open
+deploy/tailscale-serve.sh reset      # clear this node's Serve config
+```
+
+- `apply` runs `tailscale serve --bg --https=<https-port> http://127.0.0.1:<port>`.
+  `--bg` persists the mapping in tailscaled state, so it returns on its own
+  after a Tailscale or Windows restart.
+- It **refuses** if Funnel is active on the node, or if the local origin is
+  not answering `/api/health` — it never fronts a dead port or a public
+  exposure.
+- It is idempotent: re-running re-asserts the same mapping, which is also how
+  you restore the ingress if the persistent config is ever lost.
+
+**3 — restrict the tailnet to household devices.** Serve makes the app
+reachable to *every* node on the tailnet; narrowing that to intended
+household identities/devices is an admin-console policy step (it needs tailnet
+admin, not this host):
+
+- In the [ACL policy](https://login.tailscale.com/admin/acls), grant only the
+  household users/devices access to this node (e.g. tag the deployment host
+  `tag:recipe` and write a rule allowing only `group:household` → `tag:recipe`
+  on `tcp:443`).
+- Keep the tailnet's device-approval / sharing settings closed so an
+  unrelated device cannot join and reach the tag.
+- Tailscale membership and app login are **separate** requirements — a
+  permitted device still signs in with its own account, and registration
+  stays closed (runbook 6).
+
+**4 — unattended Tailscale operation.** So the ingress survives the Windows
+host running with no user signed in, enable Tailscale's
+[unattended mode](https://tailscale.com/docs/how-to/run-unattended) on
+Windows (Tailscale tray → Preferences → **Run unattended**, or install it as
+a system service). Verify after a full reboot without interactive login
+(that whole-path check is runbook / ticket 06c).
+
+**5 — verify.**
+
+```bash
+deploy/net-check.sh          # 6 checks, exits non-zero on any hard failure
+```
+
+- app answers on `127.0.0.1:<port>`; **nothing** is listening on that port on
+  a non-loopback address; Tailscale up; Serve points at the local origin;
+  Funnel off; the tailnet HTTPS URL resolves.
+- `deploy/net-check.sh --local-only` runs just the first two (useful from
+  inside WSL where the Windows CLI may be off PATH).
+
+From a **permitted client** with Tailscale connected, open the `url` address
+and confirm, per the ticket's acceptance list:
+
+- valid HTTPS (no certificate warning — Tailscale provisions the cert), login,
+  read **and** write, and direct-link reload of a nested route (`/recipes/<id>`);
+- `curl https://<host>.<tailnet>.ts.net/api/recipes` → `401` (auth still
+  required); a direct `POST /api/auth/register` → `403`;
+- from a device **not** on the tailnet, the name does not resolve and the
+  host cannot be reached — there is no LAN or public listener bypassing this
+  ingress.
+
+**6 — recovery after a Tailscale restart.** With `--bg` the mapping is
+restored automatically; run `deploy/net-check.sh` to confirm, and
+`deploy/tailscale-serve.sh apply` if anything is missing. Restarting Tailscale
+with the app running must not require touching the deployment itself.
+
+**Never:** `tailscale funnel` (public), router port-forwarding, or binding the
+app to `0.0.0.0` — each is a public/LAN exposure this deployment explicitly
+excludes. `deploy/net-check.sh` fails on all three.
+
+`backend/tests/test_deploy.py` covers the deterministic half in the `backend`
+CI job — `deploy/net-check.sh` and `deploy/tailscale-serve.sh` driven against
+a healthy loopback deployment and a **stub** Tailscale CLI (no credentials):
+Serve is pointed at the local origin over background HTTPS, `apply` refuses on
+an active Funnel or a dead origin, and `net-check` fails on a non-loopback
+listener or an active Funnel. Real Tailscale, Windows-to-WSL forwarding,
+tailnet ACLs, and off-tailnet unreachability are the actual-host acceptance
+gate — results recorded in
+`.scratch/private-household-deployment/host-acceptance-05a.md`.
 
 ## v1 workflows
 

@@ -36,6 +36,22 @@ RECIPE_DEPLOY_UV_BIN="${RECIPE_DEPLOY_UV_BIN:-uv}"
 RECIPE_DEPLOY_NPM_BIN="${RECIPE_DEPLOY_NPM_BIN:-npm}"
 RECIPE_DEPLOY_PORT="${RECIPE_DEPLOY_PORT:-8000}"
 
+# Private HTTPS ingress (private-household-deployment ticket 05a). Tailscale
+# Serve runs on the *Windows* host and proxies its localhost:$RECIPE_DEPLOY_PORT
+# — which WSL2 forwards to this app — out onto the tailnet over HTTPS, private
+# to permitted household devices. deploy/tailscale-serve.sh and
+# deploy/net-check.sh source this file for these values.
+#
+#   RECIPE_DEPLOY_TAILSCALE_BIN — the Tailscale CLI. From inside WSL this is
+#     `tailscale.exe` (the Windows client owns the tailnet node and the
+#     localhost proxy); on the Windows side it is `tailscale`. An absolute
+#     path works too. Default: tailscale.exe (the documented WSL topology).
+#   RECIPE_DEPLOY_HTTPS_PORT — the tailnet port Serve listens on. 443 is the
+#     only port a browser reaches without an explicit ":port", so it is the
+#     default. App listeners stay on 127.0.0.1 regardless.
+RECIPE_DEPLOY_TAILSCALE_BIN="${RECIPE_DEPLOY_TAILSCALE_BIN:-tailscale.exe}"
+RECIPE_DEPLOY_HTTPS_PORT="${RECIPE_DEPLOY_HTTPS_PORT:-443}"
+
 [ -d "$RECIPE_DEPLOY_CHECKOUT/backend" ] \
   || _deploy_die "RECIPE_DEPLOY_CHECKOUT=$RECIPE_DEPLOY_CHECKOUT is not a recipe checkout (no backend/)"
 RECIPE_DEPLOY_CHECKOUT="$(cd "$RECIPE_DEPLOY_CHECKOUT" && pwd)"
@@ -91,6 +107,8 @@ checkout         : $RECIPE_DEPLOY_CHECKOUT
 uv executable    : $RECIPE_DEPLOY_UV_BIN
 npm executable   : $RECIPE_DEPLOY_NPM_BIN
 loopback address : 127.0.0.1:$RECIPE_DEPLOY_PORT
+tailscale cli    : $RECIPE_DEPLOY_TAILSCALE_BIN
+tailnet https    : :$RECIPE_DEPLOY_HTTPS_PORT -> http://127.0.0.1:$RECIPE_DEPLOY_PORT
 frontend build   : $RECIPE_DEPLOY_FRONTEND_DIST
 database (abs)   : $RECIPE_DEPLOY_DB_FILE
 database url     : $DEPLOY_DATABASE_URL
@@ -261,4 +279,58 @@ deploy_switch_build() {
     bash "$_DEPLOY_DIR/control.sh" start || true
   fi
   return 1
+}
+
+# --- private HTTPS ingress helpers (ticket 05a) ----------------------------
+# Shared by deploy/tailscale-serve.sh and deploy/net-check.sh. The Tailscale
+# CLI is invoked exactly as configured; nothing here needs tailnet credentials,
+# so a stub on PATH makes the whole path testable in CI.
+
+# The one local origin Serve proxies: the deployment's loopback listener.
+# Every other site derives host:port from this rather than re-inlining it.
+deploy_serve_target() {
+  printf 'http://127.0.0.1:%s\n' "$RECIPE_DEPLOY_PORT"
+}
+
+# Run the configured Tailscale CLI. Returns its exit status; output passes
+# through untouched. `command -v` first so a missing CLI is one clear message
+# rather than a bare shell "not found".
+deploy_tailscale() {
+  command -v "$RECIPE_DEPLOY_TAILSCALE_BIN" >/dev/null 2>&1 \
+    || { echo "deploy: Tailscale CLI not found: $RECIPE_DEPLOY_TAILSCALE_BIN (set RECIPE_DEPLOY_TAILSCALE_BIN)" >&2; return 127; }
+  "$RECIPE_DEPLOY_TAILSCALE_BIN" "$@"
+}
+
+# Echo the Funnel state as one word, always exit 0:
+#   on      — `tailscale funnel status` reports an active public mapping
+#   off     — it ran and reported no funnel
+#   unknown — the query could not run (CLI missing, errored, or too old)
+# Funnel is never part of this deployment. `apply` refuses on "on"; net-check
+# treats "unknown" as a failure too — a safety check that cannot confirm its
+# invariant must not pass.
+deploy_funnel_state() {
+  local out
+  if ! out="$(deploy_tailscale funnel status 2>/dev/null)"; then
+    echo unknown
+    return 0
+  fi
+  if printf '%s\n' "$out" | grep -Eqi '(Funnel on|https://[^ ]+ \(Funnel\)|:[0-9]+ *\(Funnel\))'; then
+    echo on
+  else
+    echo off
+  fi
+}
+
+# Echo the tailnet HTTPS base URL for this node (https://<magicdns-name>/),
+# from `tailscale status --json` .Self.DNSName. Parsed with the configured
+# Python (as deploy_http_ok's fallback does) rather than a text scrape: the
+# JSON carries a DNSName for .Self and every .Peer, so a grep + `head -1`
+# would depend on Go's field order. Returns non-zero if the CLI or the field
+# is unavailable.
+deploy_tailnet_url() {
+  local name py
+  py='import sys, json; d = json.load(sys.stdin); print((d.get("Self") or {}).get("DNSName", "").rstrip("."))'
+  name="$(deploy_tailscale status --json 2>/dev/null | "$RECIPE_DEPLOY_UV_BIN" run python -c "$py" 2>/dev/null)" || return 1
+  [ -n "$name" ] || return 1
+  printf 'https://%s/\n' "$name"
 }
