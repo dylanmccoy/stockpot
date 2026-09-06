@@ -112,7 +112,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Eleven runbooks, in the order you'll actually need them. Most are the same
+Twelve runbooks, in the order you'll actually need them. Most are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -362,7 +362,8 @@ existing records (private-household-deployment ticket 04a). This is the
 manual, un-supervised form — automatic process restart is ticket 06a, and
 Windows/WSL start-on-boot is 06b/06c. Private HTTPS ingress for household
 devices is runbook 11 (Tailscale Serve); without it the app is reachable only
-on `127.0.0.1` inside WSL.
+on `127.0.0.1` inside WSL. Household phones enrol against that ingress in
+runbook 12.
 
 ```bash
 cp deploy/deploy.env.example deploy/deploy.env
@@ -613,6 +614,104 @@ listener or an active Funnel. Real Tailscale, Windows-to-WSL forwarding,
 tailnet ACLs, and off-tailnet unreachability are the actual-host acceptance
 gate — results recorded in
 `.scratch/private-household-deployment/host-acceptance-05a.md`.
+
+### 12. Household phone onboarding (iOS / Android)
+
+Get a household member's phone onto the tailnet and into the app, so they can
+use it over cellular while away from home
+(private-household-deployment ticket 05b). Nothing new runs on the deployment —
+this is commissioning the phone against the runbook 11 ingress. The app is the
+same responsive browser app; there is no native app, no install step, and **no
+offline mode** — the phone always needs working internet (cellular or Wi-Fi)
+for Tailscale to carry the connection.
+
+**Two separate things.** Joining the tailnet and signing into the app are
+independent:
+
+1. **Tailscale** decides whether the phone can *reach* the private HTTPS
+   address at all. The owner adds the person's Tailscale identity/device to the
+   household tailnet and it must fall inside the ACL rule from runbook 11 §3.
+2. **The app account** is the person's own username/password (runbook 6 to
+   provision, runbook 7 for a forgotten password). Registration stays closed —
+   there is no sign-up on the phone.
+
+A phone on the tailnet with no app account still cannot read anything; an app
+account on a phone that is not on the tailnet cannot load the page.
+
+**Prerequisites**
+
+- Runbook 11 is done and verified: `deploy/tailscale-serve.sh url` prints the
+  address, and `deploy/net-check.sh` passes.
+- The owner has invited the household member to the tailnet (Tailscale admin
+  console → **Users** → invite) and their devices are covered by the
+  `group:household` → `tag:recipe` rule.
+- The member has an app account.
+
+**1 — install Tailscale on the phone.**
+
+- **iOS:** App Store → *Tailscale* → install. Open it, **Sign in**, choose the
+  household tailnet, and accept the "Tailscale would like to add VPN
+  configurations" prompt. Toggle the connection **on** (or enable **Connect on
+  demand** in the app's settings so it reconnects itself).
+- **Android:** Play Store → *Tailscale* → install. Open it, **Sign in**, choose
+  the household tailnet, accept the "connection request" (VPN) prompt, and
+  toggle the connection **on**. **Settings → Always-on VPN** (Android system
+  settings) keeps it connected.
+
+Confirm the phone shows as connected and appears in the tailnet device list.
+
+**2 — open the app.** In **Safari (iOS)** or **Chrome (Android)** go to the
+address from `deploy/tailscale-serve.sh url`
+(`https://<host>.<tailnet>.ts.net/`). Expect valid HTTPS with **no certificate
+warning** — Tailscale provisions the certificate for that name. Add it to the
+home screen / bookmarks for convenience; it is a normal browser tab, not an
+installed app.
+
+**3 — sign in and use it.** Log in with the member's own app account. From
+there the phone behaves exactly like a desktop browser:
+
+- read a recipe, edit and save — writes hit the same household database and are
+  visible to every other member;
+- a saved direct link to a nested route (`…/recipes/<id>`) opens and reloads
+  without a server error page;
+- the login session survives a page reload; **Log out** ends it; an expired or
+  invalid session returns to the login screen through the normal flow;
+- ordinary API errors still render as in-app errors, not a web server page.
+
+**4 — cellular check.** Turn the phone's **Wi-Fi off** so it is on cellular
+only, then repeat step 3 — reach the address, log in, read, save, reload a
+nested route. Toggle Tailscale **off**: the address stops resolving and the app
+is unreachable. Toggle it back **on**: the app loads again and the existing
+login session is still there (no re-login needed unless it had genuinely
+expired). With **both** cellular data and Wi-Fi off, Tailscale cannot connect
+at all — confirming there is no offline capability.
+
+**Troubleshooting**
+
+- *Address does not resolve / "server not found":* Tailscale is off, the phone
+  is off the tailnet, or the device is outside the ACL rule (runbook 11 §3).
+- *Certificate warning:* not expected — check the host name in the URL matches
+  `deploy/tailscale-serve.sh url` exactly; do not bypass the warning.
+- *Loads but every API call fails / immediate logout:* the app account or
+  session is the problem, not the network — sign in again, or use runbook 7 for
+  a forgotten password.
+
+This runbook is phone commissioning of the existing browser app; it has no
+CI-provable surface of its own. The app behaviour it exercises is already
+covered against the one-origin production serving (no dev proxy) by two
+Playwright projects:
+
+- **`deployment`** (`e2e/smoke.deployment.spec.ts`, ticket 04a) — login with
+  an adopted account, a write that persists across a reload, `401` without a
+  token, registration `403`;
+- **`production`** (`e2e/smoke.production.spec.ts`, tickets 01a / 01b) —
+  direct load / reload of a nested route (`/inventory`, `/recipes/<id>`),
+  session hydration across a full reload, an invalid stored session redirected
+  to login, wrong-password inline, logout, and API 404s that stay 404s.
+
+Real iOS/Android hardware on cellular, Tailscale enrolment, and
+disconnect/reconnect are the actual-host acceptance gate — results recorded in
+`.scratch/private-household-deployment/host-acceptance-05b.md`.
 
 ## v1 workflows
 
