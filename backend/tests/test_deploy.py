@@ -1245,6 +1245,12 @@ def test_supervise_run_foreground_supervises_until_signalled(supervise_env, tmp_
     )
     try:
         assert _wait_health(30, SUPERVISE_PORT)
+        # `run` starts the app synchronously *before* the watch loop takes over.
+        # Wait for the loop to own its pidfile before killing the app, so the
+        # kill can't race that initial `control.sh start`'s own health check.
+        assert _wait_for(
+            lambda: _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)), timeout=10
+        )
         app_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
         assert app_pid
 

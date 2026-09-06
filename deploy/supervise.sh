@@ -258,7 +258,13 @@ _run_foreground() {
   fi
   if ! _app_running; then
     echo "-- starting the app"
-    bash "$CONTROL" start
+    # A failed first start must not abort `run` (set -e) before the loop is even
+    # watching. The watch loop retries a down app with capped backoff and never
+    # gives up, so hand off to it rather than exiting here — e.g. when the app
+    # comes up healthy but is killed again before this returns. (`start`, by
+    # contrast, deliberately surfaces a bad build to the operator right away.)
+    bash "$CONTROL" start \
+      || echo "-- initial start did not complete; the watch loop will keep retrying" >&2
   fi
   _own_and_watch
 }
