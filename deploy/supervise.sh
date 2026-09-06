@@ -133,6 +133,9 @@ _watch_loop() {
 
     restarts=$((restarts + 1))
     _slog "supervisor: app is not running — restart attempt #$restarts"
+    # Record the attempt now, so `status` is accurate while control.sh start is
+    # still working (its health wait can take tens of seconds on a slow host).
+    _write_state "$restarts" "$(_ts)"
     if [ -f "$DEPLOY_LOGFILE" ]; then
       tail -n 5 "$DEPLOY_LOGFILE" 2>/dev/null \
         | sed 's/^/  app| /' >>"$DEPLOY_SUPERVISOR_LOGFILE" 2>&1 || true
@@ -141,7 +144,6 @@ _watch_loop() {
     if _supervised_call bash "$CONTROL" start >>"$DEPLOY_SUPERVISOR_LOGFILE" 2>&1; then
       up_since="$(date +%s)"
       _slog "supervisor: app restarted (#$restarts)"
-      _write_state "$restarts" "$(_ts)"
     else
       up_since=0
       _slog "supervisor: restart #$restarts failed — see the app log above; will retry"
