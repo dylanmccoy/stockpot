@@ -4,7 +4,7 @@
 
 **Blocked by:** 02b: Recover a snapshot into a separate database.
 
-**Status:** in-review
+**Status:** done
 
 - [x] Extend recovery to an explicitly selected existing database with application writers stopped. Preserve a valid copy of the current database before replacement and refuse to replace it if preservation or validation fails.
 
@@ -55,13 +55,18 @@
   not; snapshot-era + pre-snapshot-revoked sessions are dead, fresh login
   works; earlier snapshots + source untouched; replaced file is `0600`;
   invalid-snapshot / failed-preservation / failed-preparation / corrupt-target
-  all leave the usable target intact. `test_restore_cli.py` gains 5 subprocess
-  cases for `--replace`.
+  all leave the usable target intact. `test_restore_cli.py` gains 6 subprocess
+  cases (5 for `--replace`, 1 for the `--preserve-dir` guard).
 
-- Docs: root `README.md` runbook 12 "Restore in place (replace the live
+- Docs: root `README.md` runbook 13 "Restore in place (replace the live
   database)" documents stop -> preserve -> restore -> restart; runbook 5
   cross-links it; `backend/CLAUDE.md` file map and `docs/deployment.md`
   outline item 5 updated.
+
+- Merged via PR [#91](https://github.com/dylanmccoy/stockpot/pull/91)
+  (squash), CI green (`backend`, `frontend`, `integration`, `production-smoke`,
+  `deployment`). Rebased onto `main` past #90 (05b); the new runbook is **13**
+  (05b took 12).
 
 - Reviewed with `/code-review` (Standards + Spec).
   - Actioned: dropped an untested `now=` passthrough param on
