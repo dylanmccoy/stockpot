@@ -112,7 +112,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Twelve runbooks, in the order you'll actually need them. Most are the same
+Thirteen runbooks, in the order you'll actually need them. Most are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -231,8 +231,8 @@ for how the two-boot seed sequence works.
 
 Recover a snapshot into a **throwaway** database and inspect it with a
 separate app instance, without touching live data (private-household-deployment
-ticket 02b; replacing the live database in place, with writers stopped, is
-ticket 02c):
+ticket 02b). Replacing the live database in place, with writers stopped, is
+runbook 13:
 
 ```bash
 cd backend
@@ -712,6 +712,63 @@ Playwright projects:
 Real iOS/Android hardware on cellular, Tailscale enrolment, and
 disconnect/reconnect are the actual-host acceptance gate — results recorded in
 `.scratch/private-household-deployment/host-acceptance-05b.md`.
+
+### 13. Restore in place (replace the live database)
+
+Recover a snapshot **over** the configured household database after a data
+loss (private-household-deployment ticket 02c). Unlike runbook 5, this touches
+the real database — so the application's writers must be **stopped** for the
+whole procedure, and the database being replaced is preserved first.
+
+**stop → preserve → restore → restart:**
+
+```bash
+cd backend
+
+# 1. stop writers — nothing may be writing the target database.
+deploy/control.sh stop          # or however this host runs the app (runbook 8);
+                                # deployment process control is runbook 6 onward.
+
+# 2 + 3. preserve the current database, then replace it with the snapshot.
+uv run python scripts/restore.py --replace \
+  --snapshot /path/outside/the/checkout/recipe-20260904T153000Z.db \
+  --target   "$RECIPE_DEPLOY_DATA_DIR/recipe.db" \
+  --preserve-dir /path/outside/the/checkout/pre-restore
+
+# 4. restart against the same explicit database and health-check.
+deploy/control.sh start
+deploy/control.sh status        # resolved config + GET /api/health
+```
+
+- **`--target` must already exist** — it is the live database. Recovering into
+  a fresh path is runbook 5; `--replace` is refused without an existing target.
+- **Preserve first.** Before anything is replaced, `scripts/backup.py`
+  (runbook 2) snapshots the current `--target` into `--preserve-dir` and that
+  copy is itself validated. If preserving or validating it fails, the command
+  **refuses** — `restore failed: refusing to replace <target> …`, exit 1, the
+  live database byte-for-byte unchanged. A copy of what you replaced is always
+  kept.
+- **Prepare + validate, then swap.** The snapshot is validated (real SQLite,
+  `integrity_check`, this app's tables), copied to a temp file beside the
+  target, its `sessions` rows cleared, `chmod`ed `0600`, and validated again —
+  and only then renamed onto the live path in one atomic step. A failure at
+  any point before that rename leaves the target unchanged (`restore failed:
+  preparing the recovered database …`, exit 1); the preserved copy stays.
+- **Sessions.** Every session in the recovered database is deleted before it
+  is served, so a token captured from the snapshot is refused (`401`) and a
+  session revoked before the snapshot is not revived — household members sign
+  in afresh after the restart.
+- **Untouched:** earlier snapshots in `--preserve-dir`, and the `--snapshot`
+  file, are only read.
+- **Success** prints `restore ok: replaced <target>` and `preserved prior
+  database: <path>`, exits 0.
+
+The host-specific stop/start commands above are placeholders — process
+supervision and boot ordering are runbooks 6–11 and the actual-host
+acceptance gate. `backend/tests/test_replace.py` /
+`backend/tests/test_restore_cli.py` run the preserve/prepare/validate/swap
+path and its invalid-snapshot, failed-preservation, and failed-preparation
+refusals against disposable data in the `backend` CI job.
 
 ## v1 workflows
 
