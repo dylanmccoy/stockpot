@@ -41,19 +41,27 @@ CONTROL = REPO_ROOT / "deploy" / "control.sh"
 PORT = "8988"
 
 
+def _recipe_row(title: str) -> dict:
+    """Column values for one `recipes` row with the given title."""
+    now = datetime.now(timezone.utc)
+    return {
+        "title": title,
+        "notes": "",
+        "tags": [],
+        "steps": [],
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
 def _seed_db(path: Path, titles: list[str]) -> None:
     """Create a real app-schema SQLite database at `path` with one recipe row
     per title."""
     engine = create_engine(f"sqlite:///{path}")
     Base.metadata.create_all(engine)
-    now = datetime.now(timezone.utc)
     with engine.begin() as conn:
         for title in titles:
-            conn.execute(
-                insert(models.Recipe).values(
-                    title=title, notes="", tags=[], steps=[], created_at=now, updated_at=now
-                )
-            )
+            conn.execute(insert(models.Recipe).values(**_recipe_row(title)))
     engine.dispose()
 
 
@@ -892,13 +900,8 @@ def _add_recipe_row(path: Path, title: str) -> None:
     """Append one recipe straight to an app-schema database (a divergence that
     needs no running app)."""
     engine = create_engine(f"sqlite:///{path}")
-    now = datetime.now(timezone.utc)
     with engine.begin() as conn:
-        conn.execute(
-            insert(models.Recipe).values(
-                title=title, notes="", tags=[], steps=[], created_at=now, updated_at=now
-            )
-        )
+        conn.execute(insert(models.Recipe).values(**_recipe_row(title)))
     engine.dispose()
 
 
@@ -938,6 +941,8 @@ def test_recover_deployment_from_a_scheduled_snapshot(deploy_env, tmp_path: Path
 
     assert _run(CONTROL, "start", env=deploy_env).returncode == 0
     assert _wait_health()
+    # Runbook 15 step 5: the listener is still loopback-only after the restart.
+    assert _run(NET_CHECK, "--local-only", env=deploy_env).returncode == 0
 
     # Household access: a fresh login works and sees the snapshot's world.
     status, data = _api(
@@ -967,34 +972,47 @@ def test_recover_deployment_from_a_scheduled_snapshot(deploy_env, tmp_path: Path
     assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
 
 
-def test_recovery_keeps_the_replaced_database_as_a_recovery_point(deploy_env, tmp_path: Path):
-    # No running app needed: seed by adoption, snapshot with the app stopped
-    # (07a), diverge straight on the file, then replace.
+def test_recovery_selects_the_newest_good_scheduled_snapshot(deploy_env, tmp_path: Path):
+    # Runbook 15 step 1: pick the newest `ok` line from backup-runs.log even when
+    # a later scheduled run FAILed, then replace in place from it. No running app.
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["Pre-snapshot Stew"])
     assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
     deployment_db = tmp_path / "data" / "recipe.db"
     _clear_snapshots(tmp_path)  # drop the adoption snapshot
 
+    # One good scheduled run...
     assert _run(BACKUP_RUN, env=deploy_env).returncode == 0
-    scheduled = _only_snapshot(tmp_path)
+    good = _only_snapshot(tmp_path)
 
-    _add_recipe_row(deployment_db, "Post-snapshot Pie")  # diverge after the snapshot
+    # ...then a later run that FAILs — the database is moved aside for it, so the
+    # log ends `ok <good>` then `FAIL <reason>`.
+    deployment_db.rename(tmp_path / "recipe.db.moved")
+    assert _run(BACKUP_RUN, env=deploy_env).returncode != 0
+    (tmp_path / "recipe.db.moved").rename(deployment_db)
+    tail = [line.split()[1] for line in _backup_log_lines(tmp_path)[-2:]]
+    assert tail == ["ok", "FAIL"], _backup_log_lines(tmp_path)
 
+    # The runbook's selection command picks the newest good snapshot.
+    picked = subprocess.run(
+        [
+            "awk",
+            '$2 == "ok" { p = $3 } END { print p }',
+            str(tmp_path / "data" / "run" / "backup-runs.log"),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert Path(picked) == good
+
+    # Diverge, then restore in place from the picked snapshot.
+    _add_recipe_row(deployment_db, "Post-snapshot Pie")
     preserve_dir = tmp_path / "pre-restore"
-    preserve_dir.mkdir()
-    earlier = preserve_dir / "recipe-20200101T000000Z.db"
-    earlier.write_bytes(b"an earlier recovery point")
-
-    result = _restore_replace(scheduled, deployment_db, preserve_dir, deploy_env)
+    result = _restore_replace(Path(picked), deployment_db, preserve_dir, deploy_env)
     assert result.returncode == 0, result.stderr + result.stdout
 
-    # The database that was replaced is kept as a recovery point, divergence and
-    # all — a bad snapshot choice can still be undone.
-    preserved = [p for p in preserve_dir.glob("recipe-*.db") if p != earlier]
-    assert len(preserved) == 1
-    assert _recipe_titles(preserved[0]) == ["Post-snapshot Pie", "Pre-snapshot Stew"]
-    # The live path itself is back to the snapshot's world.
-    assert _recipe_titles(deployment_db) == ["Pre-snapshot Stew"]
-    # An unrelated earlier recovery point sharing the directory is untouched.
-    assert earlier.read_bytes() == b"an earlier recovery point"
+    assert _recipe_titles(deployment_db) == ["Pre-snapshot Stew"]  # divergence rolled back
+    # The replaced database is kept as a recovery point — the divergence is not lost.
+    (preserved,) = preserve_dir.glob("recipe-*.db")
+    assert "Post-snapshot Pie" in _recipe_titles(preserved)

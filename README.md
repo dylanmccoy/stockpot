@@ -954,8 +954,7 @@ deploy/control.sh start
 deploy/control.sh status          # resolved config + GET /api/health
 deploy/net-check.sh --local-only  # listener still loopback-only
 
-# 6. verify household access — a fresh login and a representative read
-#    (do this in a browser on a permitted device too — the host rehearsal):
+# 6. verify household access — a fresh login and a representative read:
 curl -fsS "http://127.0.0.1:$RECIPE_DEPLOY_PORT/api/health"
 curl -fsS -X POST "http://127.0.0.1:$RECIPE_DEPLOY_PORT/api/auth/login" \
   -H 'content-type: application/json' \
