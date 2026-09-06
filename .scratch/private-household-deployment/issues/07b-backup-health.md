@@ -4,7 +4,7 @@
 
 **Blocked by:** 07a: Create daily snapshots without an open terminal.
 
-**Status:** in-review
+**Status:** done
 
 - [x] Expose the latest successful snapshot, its age, and the latest failed attempt through an operator-facing status command or report. Explicitly flag no successful backup or a success older than 24 hours.
       — **built:** `scripts/backup_status.py` (operator CLI, run from `backend/` like `scripts/backup.py`) reports the latest valid snapshot + its age, the count of valid snapshots, and the latest `FAIL` line from `backup-runs.log`. It prints `STALE` to stderr and exits non-zero when there is no successful backup on disk, or the latest success is older than `RECIPE_DEPLOY_BACKUP_MAX_AGE_HOURS` (default 24) — the exit status is the whole signal, no hosted alerting. `app.backup_status.gather()` is the logic; `--now` injects the clock.
@@ -28,6 +28,10 @@
 - Preserve the parent spec's scope: one private household, existing domain/API behavior and schema, local SQLite and local backups. No public hosting, multi-household work, or authentication redesign.
 
 ## Comments
+
+- Merged via PR [#94](https://github.com/dylanmccoy/stockpot/pull/94)
+  (squash `b5b761b`), CI green (`backend`, `frontend`, `integration`,
+  `production-smoke`, `deployment`).
 
 - Implemented on branch `feat/private-household-deployment-07b`, worktree
   `.claude/worktrees/private-household-deployment-07b`.
