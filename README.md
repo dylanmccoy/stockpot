@@ -112,7 +112,7 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 
 ## Operating the server
 
-Fifteen runbooks, in the order you'll actually need them. Most are the same
+Seventeen runbooks, in the order you'll actually need them. Most are the same
 shape — a human at a terminal, server stopped, doing something irreversible —
 so they're kept together here rather than scattered across documents.
 
@@ -358,9 +358,10 @@ is unaffected.
 
 Install and run the app inside WSL as the household deployment, keeping your
 existing records (private-household-deployment ticket 04a). This is the
-manual, un-supervised form — automatic app-process restart is runbook 15
+manual, un-supervised form — automatic app-process restart is runbook 16
 (`deploy/supervise.sh`); keeping WSL itself alive after terminals close is
-ticket 06b and starting after a Windows boot is 06c. Private HTTPS ingress for
+runbook 17 (`deploy/wsl-keeper.sh`) and starting after a Windows boot is
+ticket 06c. Private HTTPS ingress for
 household devices is runbook 11 (Tailscale Serve);
 without it the app is reachable only on `127.0.0.1` inside WSL. Household
 phones enrol against that ingress in runbook 12.
@@ -996,13 +997,14 @@ change is gone. The **actual-host rehearsal within the one-day target** — real
 browser, real deployment, timed — is the acceptance gate recorded in
 `.scratch/private-household-deployment/host-acceptance-07c.md`.
 
-### 15. WSL app process supervision (auto-restart)
+### 16. WSL app process supervision (auto-restart)
 
 Keep the app process alive while the WSL distribution is up: if it exits, a
 watch loop restarts it (private-household-deployment ticket 06a). This slice
-supervises the **app process only** — keeping WSL itself alive is ticket 06b,
-and starting it after a Windows boot without an interactive login is 06c. Run
-`deploy/supervise.sh` under whatever brings WSL up.
+supervises the **app process only** — keeping WSL itself alive is runbook 17,
+and starting it after a Windows boot without an interactive login is ticket 06c.
+Run `deploy/supervise.sh` under whatever brings WSL up (runbook 17 is that
+"whatever" for unattended operation).
 
 ```bash
 deploy/supervise.sh start     # start the app if needed, then watch it (background)
@@ -1060,6 +1062,127 @@ is signalled, and a failed restart is retried and then recovers. Real
 Windows/WSL process recovery (with the actual WSL distribution and no
 interactive shell) is the actual-host acceptance gate — results recorded in
 `.scratch/private-household-deployment/host-acceptance-06a.md`.
+
+### 17. Keep WSL serving after terminals close
+
+Keep the WSL distribution — and the app supervisor (runbook 16) above it —
+alive with no development shell open, and bring it back after a controlled
+`wsl --shutdown` (private-household-deployment ticket 06b). A WSL distro stops
+when its last process exits, so a systemd service *inside* WSL cannot hold it
+open; the lifetime owner has to be on the Windows side. Starting this before an
+interactive Windows login (a full reboot) and running Tailscale ingress
+unattended are ticket 06c.
+
+**The keeper — `deploy/wsl-keeper.sh`.** One long-lived foreground process:
+
+```bash
+deploy/wsl-keeper.sh run      # hold WSL up + keep supervise.sh (and the app) alive
+deploy/wsl-keeper.sh status   # keeper state + keeper log, then supervise.sh status
+deploy/wsl-keeper.sh stop     # stop the keeper, the supervisor, and the app
+```
+
+- **What it does.** While `run` is alive the distribution stays up. It starts
+  `deploy/supervise.sh` if none is running (adopting an app you started by hand
+  per runbook 8), and re-launches it on the next heartbeat
+  (`RECIPE_DEPLOY_KEEPER_HEARTBEAT`, default 30s) if it ever disappears. The
+  supervisor in turn keeps the app process up. Nothing about the database,
+  build, or port changes.
+- **Runbook 17 supersedes runbook 16.** The keeper owns the whole lifecycle —
+  don't also run `deploy/supervise.sh` by hand. If a supervisor is already
+  running when the keeper starts it adopts it, but any keeper stop (below)
+  brings the supervisor and app down too.
+- **No duplicate instances.** `run` refuses if a keeper is already running (its
+  own pidfile, `RECIPE_DEPLOY_RUNTIME_DIR/recipe-keeper.pid`, written under
+  `noclobber`); `supervise.sh` still refuses a second supervisor and
+  `control.sh` a second app. A stale pidfile left by an abrupt `wsl --shutdown`
+  names a dead pid and is ignored, so the next launch starts clean — repeated
+  setup or a retried start never double-runs anything.
+- **Stopping.** `wsl-keeper.sh stop` (or a `SIGTERM` to `run` — Task Scheduler's
+  "End task") stops the keeper, the supervisor, and the app together. A clean
+  stop stays stopped; only a non-zero exit (a crash, or `wsl.exe` returning
+  after `wsl --shutdown`) is auto-restarted.
+- **Diagnostics.** `wsl-keeper.sh status` prints the keeper state, the tail of
+  the keeper log (`RECIPE_DEPLOY_RUNTIME_DIR/recipe-keeper.log` — one heartbeat
+  line while healthy, a line whenever it re-launches the supervisor), then
+  `deploy/supervise.sh status` (whose exit code — `3` when the app is stopped —
+  is the command's exit code). Supervisor and app logs are unchanged
+  (`recipe-supervisor.log`, `recipe.log`).
+
+**Run it unattended — Windows Task Scheduler.** From an
+elevated-not-required PowerShell on the Windows host:
+
+```powershell
+.\deploy\windows\register-keeper-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe
+# options: -TaskName RecipeAppWslKeeper  -RepetitionMinutes 5  -LogonType S4U|Password
+#          -ConfigurePower   (also set the AC standby/hibernate timeouts to 0)
+.\deploy\windows\register-keeper-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe -Unregister
+.\deploy\windows\register-keeper-task.ps1 -Distro Ubuntu -Checkout /home/you/recipe -ShowCommand
+```
+
+- Registers a task whose action is
+  `wsl.exe -d <Distro> -- bash <Checkout>/deploy/wsl-keeper.sh run`.
+- **Independent of a dev shell.** Principal `LogonType S4U` (no stored
+  password); two triggers, each built natively: **AtLogOn** for the invoking
+  user, and a **`-Once` trigger repeating every `-RepetitionMinutes` (default 5)
+  indefinitely**. The repeating trigger is the recovery path after a controlled
+  `wsl --shutdown` while you stay logged in — the task re-runs, WSL boots, and
+  the keeper restores the supervisor and app — and it starts the keeper at once
+  on registration. `MultipleInstances IgnoreNew` makes a tick a no-op while the
+  keeper is up. The script reads the task back and **warns if the repetition did
+  not attach** (Task Scheduler behaviour varies by Windows / PowerShell
+  version — spec item 6); add a repeating trigger by hand if so.
+- **Restart on failure.** `wsl.exe` exiting non-zero (e.g. after
+  `wsl --shutdown`) restarts the action after 1 minute, up to 999 times.
+  `ExecutionTimeLimit` is 0 — the keeper runs forever.
+- **Idempotent.** Re-running replaces the task of the same name (`-Force`) —
+  repeated setup never leaves a second keeper.
+- **Verify:** `Start-ScheduledTask -TaskName RecipeAppWslKeeper`, then
+  `wsl.exe -d <Distro> -- bash <Checkout>/deploy/wsl-keeper.sh status` shows the
+  keeper running and the app healthy. `Get-ScheduledTaskInfo` shows
+  `LastTaskResult` / `NextRunTime`.
+
+**Host power — this task cannot serve a sleeping machine.** The task starts and
+keeps running on battery and is not stopped when the machine leaves idle, but
+sleep/hibernate still stops everything (spec item 24). Pass `-ConfigurePower` to
+the script (it runs the first two commands below), or set it by hand on the
+host to stay awake during expected availability:
+
+```powershell
+powercfg /change standby-timeout-ac 0
+powercfg /change hibernate-timeout-ac 0
+# a laptop also needs Settings > System > Power > "lid close action" = Do nothing (plugged in)
+# battery-power timeouts (…-dc) are left to you
+```
+
+**Diagnosis.**
+
+- App unreachable, `wsl-keeper.sh status` says `keeper : stopped` — the task did
+  not run or exited. Check `Get-ScheduledTaskInfo -TaskName RecipeAppWslKeeper`
+  (`LastRunTime` / `LastTaskResult`), that it is Enabled, and run
+  `wsl.exe -d <Distro> -- bash <Checkout>/deploy/wsl-keeper.sh status`
+  (`-ShowCommand`) by hand. `LastTaskResult` non-zero with the task Running
+  again is the restart-on-failure loop — read `recipe-keeper.log` /
+  `recipe.log` for why the keeper or app will not stay up.
+- `keeper : running` but the app is down — this is a supervisor/app fault, not a
+  lifetime one. `recipe-keeper.log` shows the re-launch attempts; drop to
+  runbook 16's diagnosis (`recipe-supervisor.log`, then `recipe.log` — bad
+  build, port in use).
+- Access lost after the machine was idle — check it did not sleep (the powercfg
+  settings above); the task itself is not idle-stopped.
+- Recovery after a `wsl --shutdown` is taking minutes — expected: the 1-minute
+  restart-on-failure and the 5-minute repetition are the recovery paths while
+  logged in. Lower `-RepetitionMinutes` if you need it tighter.
+
+`backend/tests/test_deploy.py` covers the mechanism deterministically in the
+`backend` CI job: `wsl-keeper.sh run` holds the app up and a `SIGTERM` takes the
+keeper, supervisor, and app down together; a second `run` is refused and
+duplicates nothing; a terminated supervisor is re-launched on the next
+heartbeat and adopts the still-running app rather than starting a second one;
+and `stop` is clean when nothing is up. The actual `wsl.exe` invocation, the
+Windows task and its power settings, closing the IDE/terminals and idling, and
+recovery across a real `wsl --shutdown` are the actual-host acceptance gate —
+results recorded in
+`.scratch/private-household-deployment/host-acceptance-06b.md`.
 
 ## v1 workflows
 
