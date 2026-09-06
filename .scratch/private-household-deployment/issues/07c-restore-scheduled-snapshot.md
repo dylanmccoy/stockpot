@@ -4,7 +4,7 @@
 
 **Blocked by:** 07a: Create daily snapshots without an open terminal; 02c: Restore an existing database safely while stopped.
 
-**Status:** in-review
+**Status:** done
 
 - [x] Combine installed deployment controls and existing validated restore operations into a concrete runbook: select a successful scheduled snapshot, stop writers, preserve the target, restore, restart, and check app access.
       — **built:** README "Operating the server" **runbook 15** — `select` (newest `ok` line in `backup-runs.log`, 07a) → `deploy/control.sh stop` → `scripts/restore.py --replace --preserve-dir` (02c) → `deploy/control.sh start` + `status` + `deploy/net-check.sh` → fresh-login / representative-read / old-session / post-snapshot-change checks. Runbook 13 cross-links it; `docs/deployment.md` outline item 5 and `backend/CLAUDE.md` updated.
@@ -29,6 +29,16 @@
 - Preserve the parent spec's scope: one private household, existing domain/API behavior and schema, local SQLite and local backups. No public hosting, multi-household work, or authentication redesign.
 
 ## Comments
+
+- Merged via PR [#95](https://github.com/dylanmccoy/stockpot/pull/95)
+  (squash `1d15a3d`), CI green (`backend`, `frontend`, `integration`,
+  `production-smoke`, `deployment`). Rebased onto `main` past 07b (#94) first —
+  conflicts in `backend/CLAUDE.md`, `backend/tests/test_deploy.py`,
+  `docs/deployment.md` resolved by keeping both sides (07b's `backup_status.py`
+  row / prune sentences / `status` asserts alongside the 07c runbook-15
+  additions). Runbook 15's snapshot-age note now points at
+  `scripts/backup_status.py` (07b). Host acceptance (`host-acceptance-07c.md`)
+  stays PENDING — no Windows/WSL host.
 
 - Implemented on branch `feat/private-household-deployment-07c`, worktree
   `.claude/worktrees/private-household-deployment-07c`.
@@ -75,8 +85,8 @@
 - **Docs** — `docs/deployment.md` outline item 5 and `backend/CLAUDE.md`
   `restore.py` row point at runbook 15 / this ticket.
 
-- CI: `cd backend && uv run pytest` green (full suite, 5× under
-  `pytest-randomly`); `test_deploy.py` green.
+- CI: `cd backend && uv run pytest` green (full suite, repeated runs);
+  `test_deploy.py` green.
 
 - Reviewed with `/code-review` (Standards + Spec). Actioned:
   - **Criterion 3 reverted to `[ ]`** (Spec) — it asks for a *browser* login
