@@ -921,7 +921,7 @@ recovery target (private-household-deployment ticket 07c).
 **Depends on** a usable local snapshot and a surviving host disk. Off-machine
 backups and recovery from disk or machine loss are out of scope (spec items
 13, 30). A snapshot older than 24h is already past the accepted data-loss
-target (runbook 14; freshness reporting is 07b).
+target — `scripts/backup_status.py` flags that (runbook 14).
 
 **Rehearse in isolation first.** Before running this against the live
 database, run it once against a separate database and app instance (runbook 5,
