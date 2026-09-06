@@ -24,8 +24,11 @@
 #     earlier snapshot untouched (scripts/backup.py never publishes a partial).
 #
 # One `<UTC ISO8601> ok|FAIL <detail>` line per run is appended to
-# $DEPLOY_BACKUP_LOG. Freshness/age reporting and retention pruning on top of it
-# are ticket 07b.
+# $DEPLOY_BACKUP_LOG. After a successful snapshot the job also applies local
+# retention (ticket 07b) — keep the newest $RECIPE_DEPLOY_BACKUP_KEEP valid
+# snapshots via `scripts/backup_status.py --prune`; a prune problem only warns,
+# it never fails the backup. Freshness/age reporting is the same script without
+# `--prune` (README "Operating the server" runbook 14).
 #
 # No `set -e`: the control flow inspects `timeout`'s exit code explicitly (a
 # failed snapshot is logged and turned into a bounded non-zero exit, it does
@@ -51,9 +54,25 @@ _log() {
   fi
 }
 
+_prune_retention() {
+  # Apply local retention once the snapshot is safely published (ticket 07b):
+  # keep the newest RECIPE_DEPLOY_BACKUP_KEEP valid snapshots, drop older ones.
+  # A prune problem never fails the backup job — the new snapshot already
+  # succeeded — it only warns; `scripts/backup_status.py` reports the detail.
+  ( cd "$RECIPE_DEPLOY_CHECKOUT/backend" \
+    && "$RECIPE_DEPLOY_UV_BIN" run python scripts/backup_status.py \
+         --dest-dir "$RECIPE_DEPLOY_BACKUP_DIR" \
+         --log "$DEPLOY_BACKUP_LOG" \
+         --keep "$RECIPE_DEPLOY_BACKUP_KEEP" \
+         --max-age-hours "$RECIPE_DEPLOY_BACKUP_MAX_AGE_HOURS" \
+         --prune --quiet >&2 ) \
+    || echo "deploy: retention prune reported a problem — the snapshot is safe; run 'uv run python scripts/backup_status.py --dest-dir $RECIPE_DEPLOY_BACKUP_DIR' for detail" >&2
+}
+
 _finish_ok() {
   echo "-- backup ok: $1"
   _log ok "$1"
+  _prune_retention
   exit 0
 }
 

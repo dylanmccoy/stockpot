@@ -768,8 +768,38 @@ def test_backup_run_is_time_bounded(deploy_env, tmp_path: Path):
     assert _backup_log_lines(tmp_path)[-1].split()[1] == "FAIL"
 
 
+def test_backup_run_applies_retention_after_a_successful_snapshot(deploy_env, tmp_path: Path):
+    # 07b: once the new snapshot is safely published, the job keeps the newest
+    # RECIPE_DEPLOY_BACKUP_KEEP valid snapshots and drops older ones.
+    dev_db = tmp_path / "dev.db"
+    _seed_db(dev_db, ["RETAINED"])
+    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    _clear_snapshots(tmp_path)
+
+    backups = tmp_path / "data" / "backups"
+    older = [
+        backups / "recipe-20200101T000000Z.db",
+        backups / "recipe-20200102T000000Z.db",
+        backups / "recipe-20200103T000000Z.db",
+    ]
+    for path in older:
+        _seed_db(path, ["OLD"])
+
+    env = {**deploy_env, "RECIPE_DEPLOY_BACKUP_KEEP": "2"}
+    result = _run(BACKUP_RUN, env=env)
+    assert result.returncode == 0, result.stderr + result.stdout
+
+    remaining = {p.name for p in backups.glob("recipe-*.db")}
+    assert len(remaining) == 2  # the fresh snapshot + the newest pre-existing one
+    assert "recipe-20200103T000000Z.db" in remaining
+    assert not older[0].exists() and not older[1].exists()
+    assert _backup_log_lines(tmp_path)[-1].split()[1] == "ok"
+
+
 def test_status_reports_the_backup_schedule_inputs(deploy_env):
     assert _run(INSTALL, "--skip-build", env=deploy_env).returncode == 0
     status = _run(CONTROL, "status", env=deploy_env)
     assert "backup run log   :" in status.stdout
     assert "backup job limit :" in status.stdout
+    assert "backup retention :" in status.stdout
+    assert "backup freshness :" in status.stdout
