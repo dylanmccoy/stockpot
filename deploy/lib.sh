@@ -50,6 +50,17 @@ RECIPE_DEPLOY_PORT="${RECIPE_DEPLOY_PORT:-8000}"
 RECIPE_DEPLOY_SUPERVISE_INTERVAL="${RECIPE_DEPLOY_SUPERVISE_INTERVAL:-3}"
 RECIPE_DEPLOY_SUPERVISE_BACKOFF_MAX="${RECIPE_DEPLOY_SUPERVISE_BACKOFF_MAX:-60}"
 
+# WSL lifetime keeper (private-household-deployment ticket 06b). deploy/wsl-keeper.sh
+# is the one long-lived foreground process a Windows Scheduled Task runs through
+# `wsl.exe -d <distro> -- ...`: while it runs the WSL distribution stays up, and
+# it holds exactly one deploy/supervise.sh (06a) above the app. Keeping WSL alive
+# is NOT something a WSL systemd service can do (the distro stops when its last
+# process exits); starting it before an interactive Windows login is ticket 06c.
+#   RECIPE_DEPLOY_KEEPER_HEARTBEAT — seconds between keeper liveness checks of the
+#                                   supervisor (it re-launches a supervisor that
+#                                   has gone). Default 30.
+RECIPE_DEPLOY_KEEPER_HEARTBEAT="${RECIPE_DEPLOY_KEEPER_HEARTBEAT:-30}"
+
 # Private HTTPS ingress (private-household-deployment ticket 05a). Tailscale
 # Serve runs on the *Windows* host and proxies its localhost:$RECIPE_DEPLOY_PORT
 # — which WSL2 forwards to this app — out onto the tailnet over HTTPS, private
@@ -135,6 +146,15 @@ DEPLOY_SUPERVISOR_LOGFILE="$RECIPE_DEPLOY_RUNTIME_DIR/recipe-supervisor.log"
 # shellcheck disable=SC2034
 DEPLOY_SUPERVISOR_STATEFILE="$RECIPE_DEPLOY_RUNTIME_DIR/recipe-supervisor.state"
 
+# deploy/wsl-keeper.sh (private-household-deployment ticket 06b): the keeper's
+# own pidfile (distinct from the app's and the supervisor's, so all three are
+# independent) and an activity log — one heartbeat line while the supervisor is
+# healthy, plus a line whenever the keeper has to re-launch it.
+# shellcheck disable=SC2034  # used by wsl-keeper.sh, which sources this file
+DEPLOY_KEEPER_PIDFILE="$RECIPE_DEPLOY_RUNTIME_DIR/recipe-keeper.pid"
+# shellcheck disable=SC2034
+DEPLOY_KEEPER_LOGFILE="$RECIPE_DEPLOY_RUNTIME_DIR/recipe-keeper.log"
+
 # sqlite:/// + an absolute path is four slashes. This is the single explicit
 # database location every start uses.
 DEPLOY_DATABASE_URL="sqlite:///$RECIPE_DEPLOY_DB_FILE"
@@ -199,6 +219,13 @@ deploy_pid_if_running() { _deploy_pid_from_file "$DEPLOY_PIDFILE" "uvicorn"; }
 # supervisor is running.
 deploy_supervisor_pid_if_running() {
   _deploy_pid_from_file "$DEPLOY_SUPERVISOR_PIDFILE" "supervise.sh"
+}
+
+# Echoes the live WSL-lifetime keeper pid and returns 0, or returns 1 if no
+# keeper is running. A stale pidfile left by an abrupt `wsl --shutdown` names a
+# dead (or recycled) pid and is rejected, so the next launch starts clean.
+deploy_keeper_pid_if_running() {
+  _deploy_pid_from_file "$DEPLOY_KEEPER_PIDFILE" "wsl-keeper.sh"
 }
 
 # HTTP liveness probe: prefer curl, fall back to the configured Python so the

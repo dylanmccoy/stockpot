@@ -36,8 +36,13 @@ owns implementation scope and acceptance checks.
    an app service inside an already running WSL session is not sufficient.
    App-process restart (only, while WSL stays up) is delivered by
    `deploy/supervise.sh` (start/stop/status/restart/run); operator steps and
-   the actual-host recovery check are README "Operating the server" runbook 15.
-   Keeping WSL alive and starting after a Windows boot remain separate.
+   the actual-host recovery check are README "Operating the server" runbook 16.
+   Keeping the WSL distribution alive independent of a development shell, and
+   bringing it back after a controlled `wsl --shutdown`, is `deploy/wsl-keeper.sh`
+   run unattended by a Windows Scheduled Task
+   (`deploy/windows/register-keeper-task.ps1`) — README runbook 17, with host
+   power settings paired alongside. Starting before an interactive Windows login
+   (full reboot) and unattended Tailscale ingress remain separate (ticket 06c).
 4. Keep SQLite on persistent WSL Linux storage, outside disposable build
    output. Carry existing household data forward and use an explicit database
    path. Establish data-preserving migrations before any schema-changing

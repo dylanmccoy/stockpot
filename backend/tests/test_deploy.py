@@ -15,6 +15,7 @@ for the built assets `main.py` requires).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -41,6 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL = REPO_ROOT / "deploy" / "install.sh"
 CONTROL = REPO_ROOT / "deploy" / "control.sh"
 SUPERVISE = REPO_ROOT / "deploy" / "supervise.sh"
+KEEPER = REPO_ROOT / "deploy" / "wsl-keeper.sh"
 PORT = "8988"
 
 
@@ -102,8 +104,10 @@ def deploy_env(tmp_path: Path):
         "RECIPE_DEPLOY_ENV_FILE": str(tmp_path / "nonexistent.env"),
     }
     yield env
-    # Stop the supervisor first (so it cannot restart the app during teardown),
-    # then the app. Both are no-ops if the test never started them.
+    # Tear down top-down: the keeper (which would relaunch the supervisor), then
+    # the supervisor (which would restart the app), then the app. Each stop is a
+    # no-op if the test never started that layer.
+    subprocess.run(["bash", str(KEEPER), "stop"], env=env, capture_output=True, text=True)
     subprocess.run(["bash", str(SUPERVISE), "stop"], env=env, capture_output=True, text=True)
     subprocess.run(["bash", str(CONTROL), "stop"], env=env, capture_output=True, text=True)
 
@@ -1299,3 +1303,160 @@ def test_supervise_keeps_retrying_a_failed_restart_then_recovers(supervise_env, 
     assert _read_pid(tmp_path.joinpath(*APP_PIDFILE)) not in (None, app_pid)
 
     assert _run(SUPERVISE, "stop", env=supervise_env).returncode == 0
+
+
+# --- deploy/wsl-keeper.sh (private-household-deployment ticket 06b) ---------
+#
+# WSL lifetime: the one long-lived foreground process a Windows Scheduled Task
+# runs through `wsl.exe -d <distro> -- ...`. While it runs the distribution
+# stays up; it holds exactly one deploy/supervise.sh (06a) above the app and
+# re-launches it if it disappears. Driven here the way Task Scheduler runs it —
+# a `run` subprocess this harness owns, against disposable data on the supervise
+# port. The real `wsl.exe` invocation, the Windows task and its power settings,
+# and recovery across an actual `wsl --shutdown` are the actual-host acceptance
+# gate recorded in .scratch/private-household-deployment/host-acceptance-06b.md.
+
+KEEPER_PIDFILE = (*RUN_DIR, "recipe-keeper.pid")
+KEEPER_LOG = (*RUN_DIR, "recipe-keeper.log")
+
+
+@pytest.fixture
+def keeper_env(supervise_env):
+    """`supervise_env` with a fast keeper heartbeat so the watchdog assertions
+    do not wait on the production 30s cadence."""
+    return {**supervise_env, "RECIPE_DEPLOY_KEEPER_HEARTBEAT": "1"}
+
+
+@contextlib.contextmanager
+def _keeper_run(env: dict):
+    """`wsl-keeper.sh run` as Task Scheduler launches it — a foreground process
+    this test owns. Always torn down (SIGTERM, then a stop sweep)."""
+    proc = subprocess.Popen(
+        ["bash", str(KEEPER), "run"],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    try:
+        yield proc
+    finally:
+        if proc.poll() is None:
+            proc.send_signal(signal.SIGTERM)
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=10)
+        _run(KEEPER, "stop", env=env)
+        _run(CONTROL, "stop", env=env)
+
+
+def test_keeper_run_holds_the_app_up_and_stop_takes_it_all_down(
+    keeper_env, tmp_path: Path
+):
+    assert _run(INSTALL, "--skip-build", env=keeper_env).returncode == 0
+
+    with _keeper_run(keeper_env) as proc:
+        assert _wait_health(30, SUPERVISE_PORT)
+        # keeper and supervisor each own their own pidfile.
+        assert _wait_for(
+            lambda: _read_pid(tmp_path.joinpath(*KEEPER_PIDFILE))
+            and _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)),
+            timeout=15,
+        )
+        keeper_pid = _read_pid(tmp_path.joinpath(*KEEPER_PIDFILE))
+        assert keeper_pid and _pid_alive(keeper_pid)
+        app_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
+        assert app_pid
+
+        # An app crash is absorbed by the supervisor beneath the keeper.
+        os.killpg(app_pid, signal.SIGKILL)
+        second_pid = _new_app_pid(tmp_path, app_pid)
+        assert _wait_health(30, SUPERVISE_PORT)
+        assert second_pid != app_pid
+        assert _pid_alive(keeper_pid)  # keeper itself untouched
+
+        status = _run(KEEPER, "status", env=keeper_env)
+        assert status.returncode == 0
+        assert re.search(r"keeper\s*:\s*running \(pid \d+\)", status.stdout)
+
+        # SIGTERM (Task Scheduler "End task") stops the supervisor, the app, and
+        # the keeper together, and exits 0.
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=30) == 0
+
+    assert _run(CONTROL, "status", env=keeper_env).returncode == 3
+    assert not _pid_alive(keeper_pid)
+    assert re.search(
+        r"keeper\s*:\s*stopped", _run(KEEPER, "status", env=keeper_env).stdout
+    )
+
+
+def test_keeper_run_refuses_a_second_keeper_and_never_duplicates(
+    keeper_env, tmp_path: Path
+):
+    assert _run(INSTALL, "--skip-build", env=keeper_env).returncode == 0
+
+    with _keeper_run(keeper_env):
+        assert _wait_health(30, SUPERVISE_PORT)
+        assert _wait_for(
+            lambda: _read_pid(tmp_path.joinpath(*KEEPER_PIDFILE)), timeout=15
+        )
+        keeper_pid = _read_pid(tmp_path.joinpath(*KEEPER_PIDFILE))
+        sup_pid = _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE))
+        app_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
+
+        dup = _run(KEEPER, "run", env=keeper_env)
+        assert dup.returncode != 0
+        assert "already keeping WSL up" in dup.stderr
+
+        # Same keeper loop, same supervisor, same app — nothing was doubled.
+        assert _read_pid(tmp_path.joinpath(*KEEPER_PIDFILE)) == keeper_pid
+        assert _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)) == sup_pid
+        assert _read_pid(tmp_path.joinpath(*APP_PIDFILE)) == app_pid
+        assert _wait_health(5, SUPERVISE_PORT)
+
+
+def test_keeper_relaunches_a_terminated_supervisor_without_duplicating_the_app(
+    keeper_env, tmp_path: Path
+):
+    assert _run(INSTALL, "--skip-build", env=keeper_env).returncode == 0
+
+    with _keeper_run(keeper_env):
+        assert _wait_health(30, SUPERVISE_PORT)
+        assert _wait_for(
+            lambda: _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)), timeout=15
+        )
+        first_sup = _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE))
+        app_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
+        assert first_sup and app_pid
+
+        # Hard-kill the supervisor loop (no TERM handler runs — the app it
+        # started keeps running, now unsupervised).
+        os.kill(first_sup, signal.SIGKILL)
+        assert _wait_for(lambda: not _pid_alive(first_sup), timeout=10)
+
+        # The keeper notices within a heartbeat and starts a fresh supervisor,
+        # which adopts the still-running app rather than starting a second one.
+        assert _wait_for(
+            lambda: (p := _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)))
+            not in (None, first_sup)
+            and _pid_alive(p),
+            timeout=20,
+        )
+        assert "supervisor has gone" in tmp_path.joinpath(*KEEPER_LOG).read_text()
+        assert _read_pid(tmp_path.joinpath(*APP_PIDFILE)) == app_pid
+        assert _wait_health(5, SUPERVISE_PORT)
+
+        # Still genuinely supervised: kill the app, the new supervisor restores it.
+        os.killpg(app_pid, signal.SIGKILL)
+        _new_app_pid(tmp_path, app_pid)
+        assert _wait_health(30, SUPERVISE_PORT)
+
+
+def test_keeper_stop_is_clean_when_nothing_is_running(keeper_env):
+    assert _run(INSTALL, "--skip-build", env=keeper_env).returncode == 0
+    result = _run(KEEPER, "stop", env=keeper_env)
+    assert result.returncode == 0
+    assert "no keeper running" in result.stdout
