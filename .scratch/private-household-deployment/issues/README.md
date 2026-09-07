@@ -3,6 +3,8 @@
 The 19 approved slices implement the [deployment spec](../spec.md). Each
 ticket is marked `ready-for-agent`; start it only after all its blockers
 are complete. Lettered IDs preserve the seven agreed feature groups.
+Ticket [08](08-host-commissioning.md) (`ready-for-human`) closes the
+actual-host acceptance gate once the 19 slices land.
 
 Initial available tickets: **01a, 01c, 02a, 03a, 03b**.
 
@@ -27,6 +29,7 @@ Initial available tickets: **01a, 01c, 02a, 03a, 03b**.
 | [07a](07a-schedule-snapshots.md) | Create daily snapshots without an open terminal | 04a |
 | [07b](07b-backup-health.md) | Report backup freshness and manage local retention | 07a |
 | [07c](07c-restore-scheduled-snapshot.md) | Recover the deployed app from a scheduled snapshot | 07a, 02c |
+| [08](08-host-commissioning.md) | Commission the deployment on the target Windows/WSL host and record every host-acceptance sheet | 03a, 03b, 04a–04c, 05a–05b, 06a–06c, 07a–07c |
 
 Each slice includes its behavior checks and operator instructions. Use the
 existing real-backend browser/application-factory seams and disposable data.
