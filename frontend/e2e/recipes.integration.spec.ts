@@ -155,12 +155,12 @@ test.describe("recipes · real backend", () => {
       headers: { authorization: `Bearer ${token}` },
     });
     const recipe = (await fetched.json()) as {
-      ingredients: {
+      ingredients: Array<{
         item: string;
         unit: string | null;
         quantity: number | null;
         raw_text: string | null;
-      }[];
+      }>;
     };
     expect(recipe.ingredients).toEqual([
       // structured row: unit lower-cased, trailing "." stripped, NOT singular
@@ -217,9 +217,7 @@ test.describe("recipes · real backend", () => {
     await expect(row(page, 1).item).toHaveValue("flour");
 
     // remove the middle row, then save the full replace
-    await page
-      .getByRole("button", { name: "Remove ingredient 2" })
-      .click();
+    await page.getByRole("button", { name: "Remove ingredient 2" }).click();
     await page.getByRole("button", { name: "Save changes" }).click();
 
     // back on detail — butter is gone, the other two remain
@@ -263,9 +261,9 @@ test.describe("recipes · real backend", () => {
     ).toBeVisible();
     await expect(page).toHaveURL(/\/recipes\/new$/);
     // the "Input should be a valid string" losing-branch sibling stays hidden
-    await expect(
-      page.getByText("Input should be a valid string"),
-    ).toHaveCount(0);
+    await expect(page.getByText("Input should be a valid string")).toHaveCount(
+      0,
+    );
   });
 
   test("RecipeDetail body renders and the multiplier rescales quantities", async ({

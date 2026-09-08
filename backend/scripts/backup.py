@@ -21,17 +21,19 @@ from app.config import settings
 def _source_from_database_url(url: str) -> Path:
     prefix = "sqlite:///"
     if not url.startswith(prefix):
-        raise BackupError(f"backup requires a file-backed sqlite:/// database_url, got: {url!r}")
+        requirement = "backup requires a file-backed sqlite:/// database_url"
+        raise BackupError(f"{requirement}, got: {url!r}")
     return Path(url[len(prefix) :])
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    destination_scope = "outside the checkout and served frontend assets."
     parser.add_argument(
         "--dest-dir",
         required=True,
         type=Path,
-        help="Snapshot directory. Keep it outside the checkout and served frontend assets.",
+        help=f"Snapshot directory. Keep it {destination_scope}",
     )
     parser.add_argument(
         "--source",

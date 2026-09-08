@@ -19,7 +19,9 @@ def _make_plain_sqlite_file(path: Path) -> None:
     conn.close()
 
 
-def _run(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+def _run(
+    args: list[str], env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
     full_env = {**os.environ, **(env or {})}
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
@@ -27,6 +29,7 @@ def _run(args: list[str], env: dict[str, str] | None = None) -> subprocess.Compl
         env=full_env,
         capture_output=True,
         text=True,
+        check=False,
         timeout=30,
     )
 
@@ -45,7 +48,9 @@ def test_cli_success_prints_snapshot_path(tmp_path: Path) -> None:
     assert snapshot.parent == dest_dir
 
 
-def test_cli_missing_source_fails_with_stderr_and_no_output_file(tmp_path: Path) -> None:
+def test_cli_missing_source_fails_with_stderr_and_no_output_file(
+    tmp_path: Path,
+) -> None:
     missing = tmp_path / "nope.db"
     dest_dir = tmp_path / "backups"
 
@@ -62,7 +67,10 @@ def test_cli_defaults_source_to_recipe_database_url(tmp_path: Path) -> None:
     _make_plain_sqlite_file(source)
     dest_dir = tmp_path / "backups"
 
-    result = _run(["--dest-dir", str(dest_dir)], env={"RECIPE_DATABASE_URL": f"sqlite:///{source}"})
+    result = _run(
+        ["--dest-dir", str(dest_dir)],
+        env={"RECIPE_DATABASE_URL": f"sqlite:///{source}"},
+    )
 
     assert result.returncode == 0, result.stderr
     assert list(dest_dir.glob("recipe-*.db"))

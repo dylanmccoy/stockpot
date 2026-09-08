@@ -28,9 +28,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import pathname2url
 
-from app import models  # noqa: F401  — populates Base.metadata with every table
 from app.backup import BackupError, create_backup
-from app.database import Base
+from app.models import Base  # Importing models populates Base.metadata.
 
 
 class RestoreError(Exception):
@@ -211,13 +210,15 @@ def _validate_snapshot(snapshot: Path) -> None:
         conn.close()
 
     if not integrity or integrity[0] != "ok":
-        raise RestoreError(f"snapshot failed its SQLite integrity check: {snapshot}")
+        message = f"snapshot failed its SQLite integrity check: {snapshot}"
+        raise RestoreError(message)
 
     missing = set(Base.metadata.tables) - table_names
     if missing:
+        missing_tables = ", ".join(sorted(missing))
         raise RestoreError(
             f"snapshot is not a recipe-app database: {snapshot} "
-            f"(missing tables: {', '.join(sorted(missing))})"
+            f"(missing tables: {missing_tables})"
         )
 
 

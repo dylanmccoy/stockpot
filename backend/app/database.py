@@ -1,3 +1,5 @@
+"""Database engine, session, and transaction lifecycle configuration."""
+
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from typing import Annotated
@@ -20,16 +22,21 @@ class Base(DeclarativeBase):
 class UtcDateTime(TypeDecorator):
     """A timezone-aware datetime column that survives SQLite.
 
-    SQLite has no timezone type: a value written through `DateTime(timezone=True)`
-    comes back *naive*, which would break the explicit-UTC-offset guarantee on
-    every read path — including raw-SQL paths that bypass the ORM. This decorator
-    normalizes on write and re-attaches UTC on read, in one place (spec.md §3.2).
+    SQLite has no timezone type: a value written through
+    `DateTime(timezone=True)` comes back *naive*, which would break the
+    explicit-UTC-offset guarantee on every read path — including raw-SQL paths
+    that bypass the ORM. This decorator normalizes on write and re-attaches UTC
+    on read, in one place (spec.md §3.2).
     """
 
     impl = DateTime(timezone=True)
     cache_ok = True
 
-    def process_bind_param(self, value: datetime | None, dialect) -> datetime | None:
+    def process_bind_param(
+        self,
+        value: datetime | None,
+        dialect,
+    ) -> datetime | None:
         if value is None:
             return None
         if value.tzinfo is None:
@@ -37,7 +44,11 @@ class UtcDateTime(TypeDecorator):
             return value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
-    def process_result_value(self, value: datetime | None, dialect) -> datetime | None:
+    def process_result_value(
+        self,
+        value: datetime | None,
+        dialect,
+    ) -> datetime | None:
         if value is None:
             return None
         if value.tzinfo is None:
@@ -54,11 +65,11 @@ def make_engine(url: str) -> Engine:
     if url in ("sqlite://", "sqlite:///:memory:"):
         pool_kwargs["poolclass"] = StaticPool
 
-    engine = create_engine(url, connect_args=connect_args, **pool_kwargs)
+    db_engine = create_engine(url, connect_args=connect_args, **pool_kwargs)
 
-    # Set isolation_level to None and enable foreign keys + busy timeout on connect.
-    @event.listens_for(engine, "connect")
-    def on_connect(dbapi_conn, connection_record):
+    # Disable implicit transactions and configure each SQLite connection.
+    @event.listens_for(db_engine, "connect")
+    def on_connect(dbapi_conn, _):
         dbapi_conn.isolation_level = None
         cursor = dbapi_conn.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
@@ -66,16 +77,16 @@ def make_engine(url: str) -> Engine:
         cursor.close()
 
     # Begin with IMMEDIATE lock to ensure all requests serialize on writes.
-    @event.listens_for(engine, "begin")
+    @event.listens_for(db_engine, "begin")
     def on_begin(conn):
         conn.exec_driver_sql("BEGIN IMMEDIATE")
 
-    return engine
+    return db_engine
 
 
-def make_session_factory(engine: Engine) -> sessionmaker[Session]:
+def make_session_factory(db_engine: Engine) -> "sessionmaker[Session]":
     """Create a session factory for the given engine."""
-    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    return sessionmaker(bind=db_engine, autoflush=False, autocommit=False)
 
 
 # Module-level default engine (for `uvicorn app.main:app`).
@@ -106,13 +117,14 @@ SessionDep = Annotated[Session, Depends(get_db)]
 
 
 class TransactionRoute(APIRoute):
-    """Route class that owns the request transaction's commit (spec.md §3.2, §6).
+    """Own the request transaction's commit (spec.md §3.2, §6).
 
-    The commit runs inside `wrap_app_handling_exceptions` and before the response
-    is sent, so an `IntegrityError` or a `SQLITE_BUSY` raised by `COMMIT` reaches
-    the global handlers in `main.py` and returns 409 — exactly like an in-handler
-    failure. Response serialization completes before the commit, so no ORM
-    attribute is touched post-commit and `expire_on_commit` needs no change.
+    The commit runs inside `wrap_app_handling_exceptions` and before the
+    response is sent, so an `IntegrityError` or a `SQLITE_BUSY` raised by
+    `COMMIT` reaches the global handlers in `main.py` and returns 409 — exactly
+    like an in-handler failure. Response serialization completes before the
+    commit, so no ORM attribute is touched post-commit and `expire_on_commit`
+    needs no change.
 
     A route with no database dependency leaves `request.state.db` unset and the
     wrapper no-ops, so `/api/health` needs no special case.

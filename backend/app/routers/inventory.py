@@ -29,7 +29,8 @@ def _get_or_404(db: Session, item_id: int) -> InventoryItem:
     row = db.get(InventoryItem, item_id)
     if row is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Inventory item not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inventory item not found",
         )
     return row
 
@@ -42,7 +43,11 @@ def list_inventory(db: SessionDep) -> list[InventoryItem]:
     return list(db.scalars(stmt))
 
 
-@router.post("", response_model=InventoryItemRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=InventoryItemRead,
+    status_code=status.HTTP_201_CREATED,
+)
 def add_inventory(
     payload: InventoryItemCreate, current_user: CurrentUser, db: SessionDep
 ) -> InventoryItem:
@@ -74,7 +79,9 @@ def add_inventory(
         set_={
             # `item` / `normalized_name` / `created_by_id` are untouched on
             # conflict.
-            "quantity_base": InventoryItem.quantity_base + stmt.excluded.quantity_base,
+            "quantity_base": (
+                InventoryItem.quantity_base + stmt.excluded.quantity_base
+            ),
             "display_unit": func.coalesce(
                 stmt.excluded.display_unit, InventoryItem.display_unit
             ),
@@ -84,7 +91,8 @@ def add_inventory(
     db.execute(stmt)
 
     # Re-read rather than `RETURNING *`: the row was never loaded into this
-    # session's identity map, so a plain SELECT is the row the upsert just wrote.
+    # session's identity map, so a plain SELECT is the row the upsert just
+    # wrote.
     return db.scalar(
         select(InventoryItem).where(
             InventoryItem.match_name == delta.match_name,
@@ -120,7 +128,8 @@ def update_inventory(
         )
 
     if "unit" in fields_set:
-        # `unit:null` on a non-COUNT row lands here as "count" != row.unit_bucket;
+        # `unit:null` on a non-COUNT row lands here as "count" !=
+        # row.unit_bucket;
         # on a COUNT row it is allowed and clears the display preference.
         if bucket_of(normalize_unit_token(payload.unit)) != row.unit_bucket:
             raise HTTPException(
@@ -152,10 +161,15 @@ def update_inventory(
     # ---- apply (all within the single BEGIN IMMEDIATE transaction) ----
     if "quantity" in fields_set:
         amount = max(payload.quantity, 0.0)
-        if row.unit_bucket.startswith("opaque:") or normalize_unit_token(payload.unit) is None:
-            row.quantity_base = amount  # opaque token / no unit keeps the raw amount
+        if (
+            row.unit_bucket.startswith("opaque:")
+            or normalize_unit_token(payload.unit) is None
+        ):
+            # Opaque token / no unit keeps the raw amount.
+            row.quantity_base = amount
         else:
-            row.quantity_base = to_base(amount, payload.unit)[0]  # ABSOLUTE, canonical
+            # Absolute replacement in the canonical unit.
+            row.quantity_base = to_base(amount, payload.unit)[0]
     if "unit" in fields_set:
         row.display_unit = payload.unit  # display preference only, never math
     if "match_name" in fields_set:

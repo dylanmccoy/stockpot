@@ -8,8 +8,9 @@ from pydantic import BaseModel, Field, computed_field
 from app.schemas.common import ORMModel
 from app.units import Dimension, from_base
 
-# `>= 0` (an inventory quantity may legitimately be zero) and finite. Declared as
-# `Annotated[...]` so the constraint lands on the value, not on a nullable union.
+# `>= 0` (an inventory quantity may legitimately be zero) and finite. Declared
+# as `Annotated[...]` so the constraint lands on the value, not on the nullable
+# union.
 NonNegativeQuantity = Annotated[float, Field(ge=0, allow_inf_nan=False)]
 
 
@@ -28,8 +29,9 @@ class InventoryItemCreate(BaseModel):
 
 class InventoryItemUpdate(BaseModel):
     """`PATCH /api/inventory/{id}` body — absolute replacement, driven by
-    `model_fields_set`: an absent field is untouched, a present-and-null `item` /
-    `match_name` / `quantity` is a 422 (the router enforces this)."""
+    `model_fields_set`: an absent field is untouched; a present-and-null `item`,
+    `match_name`, or `quantity` is a 422 (the router enforces this).
+    """
 
     item: Annotated[str, Field(max_length=200)] | None = None
     match_name: Annotated[str, Field(max_length=200)] | None = None
@@ -38,6 +40,8 @@ class InventoryItemUpdate(BaseModel):
 
 
 class InventoryItemRead(ORMModel):
+    """Inventory item returned by the API."""
+
     id: int
     item: str
     normalized_name: str
@@ -51,8 +55,9 @@ class InventoryItemRead(ORMModel):
     @property
     def display_quantity(self) -> float:
         """`from_base(quantity_base, dim, display_unit)`, falling back to
-        `quantity_base` when there is no preference, the bucket is opaque, or the
-        unit does not convert (spec.md §5.5)."""
+        `quantity_base` when there is no preference, the bucket is opaque, or
+        the unit does not convert (spec.md §5.5).
+        """
         if self.display_unit is None or self.unit_bucket.startswith("opaque:"):
             return self.quantity_base
         try:

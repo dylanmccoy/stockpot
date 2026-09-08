@@ -62,7 +62,10 @@ class CookLogRead(ORMModel):
 
 
 class CookLogList(BaseModel):
-    """One page of the global cook-log feed (`GET /api/cook-logs`, spec.md §5.4)."""
+    """One page of the global cook-log feed.
+
+    Returned by `GET /api/cook-logs` (spec.md §5.4).
+    """
 
     items: list[CookLogRead]
     total: int  # full count of all cook logs, ignoring pagination

@@ -7,6 +7,7 @@ app, through the existing authentication API — no mocks, no dependency
 overrides.
 """
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -110,7 +111,9 @@ def test_only_the_target_account_is_touched(tmp_path: Path) -> None:
         assert bob_login.status_code == 200
         bob_token = bob_login.json()["token"]
         bob_h = {"Authorization": f"Bearer {bob_token}"}
-        made = c.post("/api/recipes", json={"title": "Bob's Loaf"}, headers=bob_h)
+        made = c.post(
+            "/api/recipes", json={"title": "Bob's Loaf"}, headers=bob_h
+        )
         assert made.status_code == 201, made.text
         recipe_id = made.json()["id"]
 
@@ -157,15 +160,14 @@ def test_invalid_password_is_refused_and_changes_nothing(
 
 
 def test_missing_database_file_is_refused(tmp_path: Path) -> None:
+    missing = tmp_path / "absent.db"
     with pytest.raises(RecoverError, match="not found"):
         recover_password(
-            f"sqlite:///{tmp_path / 'absent.db'}", "alice", "fresh-passphrase"
+            f"sqlite:///{missing}", "alice", "fresh-passphrase"
         )
 
 
 def test_database_without_schema_is_refused(tmp_path: Path) -> None:
-    import sqlite3
-
     empty = tmp_path / "empty.db"
     sqlite3.connect(empty).close()
     with pytest.raises(RecoverError, match="no schema"):
@@ -211,7 +213,8 @@ def test_recovered_member_logs_in_fresh_while_old_credentials_and_tokens_fail(
         # New password: works, and sees the same household record.
         fresh = _login(c, "alice", "new-passphrase")
         assert fresh.status_code == 200, fresh.text
-        fresh_h = {"Authorization": f"Bearer {fresh.json()['token']}"}
+        fresh_token = fresh.json()["token"]
+        fresh_h = {"Authorization": f"Bearer {fresh_token}"}
         got = c.get(f"/api/recipes/{recipe_id}", headers=fresh_h)
         assert got.status_code == 200
         assert got.json()["title"] == "Household Loaf"

@@ -344,7 +344,7 @@ export default function Inventory() {
     onSuccess: () => {
       setDraft(emptyAddDraft());
       setClientErrors({});
-      queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
+      void queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
     },
     onError: (err: unknown) => {
       // Field / form-level `422`s render inline via `useFormErrors`. A write
@@ -352,7 +352,7 @@ export default function Inventory() {
       // `5xx`) is the generic toast (spec §6).
       if (isStockConflict(err)) {
         toast.show(STOCK_CONFLICT_MESSAGE, { variant: "error" });
-        queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
+        void queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
       } else if (!hasInlineFormError(err)) {
         toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
       }
@@ -363,7 +363,7 @@ export default function Inventory() {
     mutationFn: (id: number) => inventoryApi.remove(id),
     onSuccess: () => {
       setPendingDelete(null);
-      queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
+      void queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
     },
     onError: () => {
       setPendingDelete(null);
@@ -378,7 +378,7 @@ export default function Inventory() {
       setPendingEdit(null);
       setEditDraft(null);
       setClientEditErrors({});
-      queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
+      void queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
     },
     onError: (err: unknown) => {
       // A `match_name` collision and any `422` render inline (below). A generic
@@ -389,7 +389,7 @@ export default function Inventory() {
         setPendingEdit(null);
         setEditDraft(null);
         toast.show(STOCK_CONFLICT_MESSAGE, { variant: "error" });
-        queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
+        void queryClient.invalidateQueries({ queryKey: INVENTORY_KEY });
       } else if (!hasInlineFormError(err)) {
         toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
       }
@@ -477,7 +477,7 @@ export default function Inventory() {
 
   const rows = useMemo(() => sortInventory(data ?? []), [data]);
 
-  const columns: Column<InventoryItemRead>[] = [
+  const columns: Array<Column<InventoryItemRead>> = [
     { key: "item", header: "Item", render: (r) => r.item },
     { key: "match_name", header: "Match name", render: (r) => r.match_name },
     { key: "unit_bucket", header: "Unit bucket", render: (r) => r.unit_bucket },

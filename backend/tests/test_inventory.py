@@ -35,7 +35,10 @@ def _patch(client: TestClient, item_id: int, **body) -> object:
 
 def test_inventory_requires_auth(client: TestClient) -> None:
     assert client.get("/api/inventory").status_code == 401
-    assert client.post("/api/inventory", json={"item": "Flour", "quantity": 1}).status_code == 401
+    response = client.post(
+        "/api/inventory", json={"item": "Flour", "quantity": 1}
+    )
+    assert response.status_code == 401
 
 
 def test_post_returns_read_shape(auth_client: TestClient) -> None:
@@ -64,7 +67,9 @@ def test_two_posts_same_key_sum_quantity_base(auth_client: TestClient) -> None:
     assert len(_list(auth_client)) == 1
 
 
-def test_cross_unit_add_merges_via_quantity_base(auth_client: TestClient) -> None:
+def test_cross_unit_add_merges_via_quantity_base(
+    auth_client: TestClient,
+) -> None:
     """`1 kg` then `500 g` land on the one `(flour, mass)` row: 1500 g base."""
     _add(auth_client, item="Flour", quantity=1, unit="kg")
     row = _add(auth_client, item="Flour", quantity=500, unit="g")
@@ -99,14 +104,28 @@ def test_casing_folds_to_one_row(auth_client: TestClient) -> None:
 def test_surrounding_whitespace_and_casing_in_match_name_normalized(
     auth_client: TestClient,
 ) -> None:
-    a = _add(auth_client, item="Canned Tomatoes", quantity=1, unit="can", match_name=" Tomato ")
-    b = _add(auth_client, item="Whole Tomatoes", quantity=2, unit="can", match_name="TOMATO")
+    a = _add(
+        auth_client,
+        item="Canned Tomatoes",
+        quantity=1,
+        unit="can",
+        match_name=" Tomato ",
+    )
+    b = _add(
+        auth_client,
+        item="Whole Tomatoes",
+        quantity=2,
+        unit="can",
+        match_name="TOMATO",
+    )
     assert a["match_name"] == "tomato"
     assert a["id"] == b["id"]
     assert b["quantity_base"] == pytest.approx(3.0)
 
 
-def test_derived_match_name_uses_normalized_item(auth_client: TestClient) -> None:
+def test_derived_match_name_uses_normalized_item(
+    auth_client: TestClient,
+) -> None:
     """No `match_name` supplied -> derived from `normalize_name(item)`."""
     row = _add(auth_client, item="Yellow Onions", quantity=3)
     assert row["match_name"] == "yellow onion"
@@ -134,7 +153,9 @@ def test_supplied_match_name_normalizing_to_empty_is_422(
     """Every *supplied* value is normalized, an explicit `""` included; one that
     normalizes to `""` is a 422 (spec.md §1, N5). Only an omitted `match_name`
     falls back to the derived key."""
-    resp = _post(auth_client, item="Flour", quantity=1, unit="kg", match_name=match_name)
+    resp = _post(
+        auth_client, item="Flour", quantity=1, unit="kg", match_name=match_name
+    )
     assert resp.status_code == 422, resp.text
     assert "match_name" in resp.json()["detail"]
     assert _list(auth_client) == []
@@ -148,9 +169,13 @@ def test_derived_match_name_empty_is_422(auth_client: TestClient) -> None:
 
 
 @pytest.mark.parametrize("quantity", [-1, -0.5, -1000.0])
-def test_negative_quantity_is_422(auth_client: TestClient, quantity: float) -> None:
-    """`ge=0`. The non-finite (`inf` / `nan`) cases need a raw JSON body and live
-    in `test_validation.py`."""
+def test_negative_quantity_is_422(
+    auth_client: TestClient, quantity: float
+) -> None:
+    """Reject a negative quantity.
+
+    The non-finite cases need a raw JSON body and live in test_validation.py.
+    """
     resp = _post(auth_client, item="Flour", quantity=quantity, unit="kg")
     assert resp.status_code == 422, resp.text
     assert _list(auth_client) == []
@@ -173,7 +198,9 @@ def test_blank_unit_is_treated_as_count_not_a_500(
     assert row["quantity_base"] == pytest.approx(6.0)
 
 
-def test_conversion_overflow_to_infinity_is_rejected(auth_client: TestClient) -> None:
+def test_conversion_overflow_to_infinity_is_rejected(
+    auth_client: TestClient,
+) -> None:
     """A finite request whose canonical conversion overflows to `+inf` is
     stopped at the DB boundary (finite `CHECK`), not stored as the source of
     truth (spec.md §1)."""
@@ -187,7 +214,9 @@ def test_conversion_overflow_to_infinity_is_rejected(auth_client: TestClient) ->
 # --------------------------------------------------------------------------- #
 
 
-def test_list_orders_by_match_name_then_unit_bucket(auth_client: TestClient) -> None:
+def test_list_orders_by_match_name_then_unit_bucket(
+    auth_client: TestClient,
+) -> None:
     _add(auth_client, item="Zucchini", quantity=1)
     _add(auth_client, item="Apples", quantity=5)
     _add(auth_client, item="Tomatoes", quantity=2, unit="jar")
@@ -210,7 +239,8 @@ def test_list_orders_by_match_name_then_unit_bucket(auth_client: TestClient) -> 
 
 def test_delete_removes_row(auth_client: TestClient) -> None:
     row = _add(auth_client, item="Flour", quantity=1, unit="kg")
-    assert auth_client.delete(f"/api/inventory/{row['id']}").status_code == 204
+    row_id = row["id"]
+    assert auth_client.delete(f"/api/inventory/{row_id}").status_code == 204
     assert _list(auth_client) == []
 
 
@@ -220,8 +250,9 @@ def test_delete_absent_row_is_404(auth_client: TestClient) -> None:
 
 def test_delete_is_idempotent_second_call_404(auth_client: TestClient) -> None:
     row = _add(auth_client, item="Flour", quantity=1, unit="kg")
-    assert auth_client.delete(f"/api/inventory/{row['id']}").status_code == 204
-    assert auth_client.delete(f"/api/inventory/{row['id']}").status_code == 404
+    row_id = row["id"]
+    assert auth_client.delete(f"/api/inventory/{row_id}").status_code == 204
+    assert auth_client.delete(f"/api/inventory/{row_id}").status_code == 404
 
 
 # --------------------------------------------------------------------------- #
@@ -267,7 +298,10 @@ def test_display_quantity_recomputed_from_reduced_base_after_edit(
 
 
 def test_patch_requires_auth(client: TestClient) -> None:
-    assert client.patch("/api/inventory/1", json={"quantity": 1, "unit": "kg"}).status_code == 401
+    response = client.patch(
+        "/api/inventory/1", json={"quantity": 1, "unit": "kg"}
+    )
+    assert response.status_code == 401
 
 
 def test_patch_absent_row_is_404(auth_client: TestClient) -> None:
@@ -291,8 +325,7 @@ def test_patch_empty_body_is_200_noop(auth_client: TestClient) -> None:
 def test_patch_quantity_is_absolute_canonical_set(
     auth_client: TestClient, amount: float, unit: str, expected_base: float
 ) -> None:
-    """Every §5.5 example row: `{quantity, unit}` sets `quantity_base` absolutely
-    in the bucket's canonical unit — it does not add."""
+    """Set `quantity_base` absolutely from each §5.5 example row."""
     row = _add(auth_client, item="Flour", quantity=1, unit="kg")  # 1000 g
     resp = _patch(auth_client, row["id"], quantity=amount, unit=unit)
     assert resp.status_code == 200, resp.text
@@ -335,14 +368,18 @@ def test_patch_unit_changing_bucket_is_422(auth_client: TestClient) -> None:
     assert "bucket" in resp.json()["detail"]
 
 
-def test_patch_unit_null_on_non_count_row_is_422(auth_client: TestClient) -> None:
+def test_patch_unit_null_on_non_count_row_is_422(
+    auth_client: TestClient,
+) -> None:
     row = _add(auth_client, item="Flour", quantity=1, unit="kg")
     resp = _patch(auth_client, row["id"], unit=None)
     assert resp.status_code == 422, resp.text
     assert "bucket" in resp.json()["detail"]
 
 
-def test_patch_unit_null_on_count_row_clears_preference(auth_client: TestClient) -> None:
+def test_patch_unit_null_on_count_row_clears_preference(
+    auth_client: TestClient,
+) -> None:
     row = _add(auth_client, item="Eggs", quantity=6, unit="each")
     assert row["unit_bucket"] == "count"
     resp = _patch(auth_client, row["id"], unit=None)
@@ -353,22 +390,34 @@ def test_patch_unit_null_on_count_row_clears_preference(auth_client: TestClient)
 
 
 @pytest.mark.parametrize("field", ["item", "quantity", "match_name"])
-def test_patch_present_and_null_is_422(auth_client: TestClient, field: str) -> None:
+def test_patch_present_and_null_is_422(
+    auth_client: TestClient, field: str
+) -> None:
     row = _add(auth_client, item="Flour", quantity=1, unit="kg")
     resp = _patch(auth_client, row["id"], **{field: None})
     assert resp.status_code == 422, resp.text
     assert resp.json()["detail"] == f"{field} cannot be null"
 
 
-def test_patch_match_name_normalizing_to_empty_is_422(auth_client: TestClient) -> None:
+def test_patch_match_name_normalizing_to_empty_is_422(
+    auth_client: TestClient,
+) -> None:
     row = _add(auth_client, item="Flour", quantity=1, unit="kg")
     resp = _patch(auth_client, row["id"], match_name="!!!")
     assert resp.status_code == 422, resp.text
     assert "match_name normalizes to empty" in resp.json()["detail"]
 
 
-def test_patch_match_name_is_normalized_before_store(auth_client: TestClient) -> None:
-    row = _add(auth_client, item="All-Purpose", quantity=1, unit="kg", match_name="ap")
+def test_patch_match_name_is_normalized_before_store(
+    auth_client: TestClient,
+) -> None:
+    row = _add(
+        auth_client,
+        item="All-Purpose",
+        quantity=1,
+        unit="kg",
+        match_name="ap",
+    )
     for supplied in (" Flour ", "FLOUR"):
         resp = _patch(auth_client, row["id"], match_name=supplied)
         assert resp.status_code == 200, resp.text
@@ -378,14 +427,28 @@ def test_patch_match_name_is_normalized_before_store(auth_client: TestClient) ->
 def test_patch_match_name_colliding_with_other_bucket_row_is_409(
     auth_client: TestClient,
 ) -> None:
-    _add(auth_client, item="Bread Flour", quantity=1, unit="kg", match_name="flour")
-    other = _add(auth_client, item="Cake Flour", quantity=1, unit="kg", match_name="cake flour")
+    _add(
+        auth_client,
+        item="Bread Flour",
+        quantity=1,
+        unit="kg",
+        match_name="flour",
+    )
+    other = _add(
+        auth_client,
+        item="Cake Flour",
+        quantity=1,
+        unit="kg",
+        match_name="cake flour",
+    )
     resp = _patch(auth_client, other["id"], match_name="flour")
     assert resp.status_code == 409, resp.text
     assert resp.json()["detail"] == "match_name already in use for this bucket"
 
 
-def test_patch_match_name_to_its_own_current_value_is_fine(auth_client: TestClient) -> None:
+def test_patch_match_name_to_its_own_current_value_is_fine(
+    auth_client: TestClient,
+) -> None:
     """The `(nm, bucket)` clash check excludes the row itself."""
     row = _add(auth_client, item="Flour", quantity=1, unit="kg")
     resp = _patch(auth_client, row["id"], match_name="flour")
@@ -393,7 +456,9 @@ def test_patch_match_name_to_its_own_current_value_is_fine(auth_client: TestClie
     assert resp.json()["match_name"] == "flour"
 
 
-def test_patch_item_rename_recomputes_normalized_name(auth_client: TestClient) -> None:
+def test_patch_item_rename_recomputes_normalized_name(
+    auth_client: TestClient,
+) -> None:
     row = _add(auth_client, item="Flour", quantity=1, unit="kg")
     resp = _patch(auth_client, row["id"], item=" Bread Flour ")
     assert resp.status_code == 200, resp.text
@@ -403,19 +468,35 @@ def test_patch_item_rename_recomputes_normalized_name(auth_client: TestClient) -
     assert body["match_name"] == "flour"  # match_name not dragged along
 
 
-def test_patch_match_name_repoints_the_upsert_key(auth_client: TestClient) -> None:
+def test_patch_match_name_repoints_the_upsert_key(
+    auth_client: TestClient,
+) -> None:
     """Editing `match_name` re-points the recipe↔inventory match key: after the
     re-point, an additive `POST` on the new name merges into this row, and the
     old name is now free for a fresh row. (Availability/cook read this key in
     phases 4d/5.)"""
-    row = _add(auth_client, item="White Sugar", quantity=500, unit="g", match_name="salt")
+    row = _add(
+        auth_client,
+        item="White Sugar",
+        quantity=500,
+        unit="g",
+        match_name="salt",
+    )
     assert _patch(auth_client, row["id"], match_name="sugar").status_code == 200
 
-    merged = _add(auth_client, item="Caster Sugar", quantity=100, unit="g", match_name="sugar")
+    merged = _add(
+        auth_client,
+        item="Caster Sugar",
+        quantity=100,
+        unit="g",
+        match_name="sugar",
+    )
     assert merged["id"] == row["id"]
     assert merged["quantity_base"] == pytest.approx(600.0)
 
-    fresh = _add(auth_client, item="Table Salt", quantity=1, unit="g", match_name="salt")
+    fresh = _add(
+        auth_client, item="Table Salt", quantity=1, unit="g", match_name="salt"
+    )
     assert fresh["id"] != row["id"]
     assert {r["match_name"] for r in _list(auth_client)} == {"sugar", "salt"}
 
@@ -423,10 +504,11 @@ def test_patch_match_name_repoints_the_upsert_key(auth_client: TestClient) -> No
 def test_patch_reduced_base_recomputes_display_quantity_on_get(
     auth_client: TestClient,
 ) -> None:
-    """add -> reduce -> GET: `display_quantity` tracks the reduced `quantity_base`
-    in the preferred unit. (Cook lands in phase-5; PATCH is the reducer here.)"""
-    row = _add(auth_client, item="Flour", quantity=2, unit="kg")  # 2000 g, pref kg
-    assert _patch(auth_client, row["id"], quantity=750, unit="g").status_code == 200
+    """Track reduced `quantity_base` in the preferred display unit."""
+    # Start at 2000 g with kg as the preferred display unit.
+    row = _add(auth_client, item="Flour", quantity=2, unit="kg")
+    response = _patch(auth_client, row["id"], quantity=750, unit="g")
+    assert response.status_code == 200
     got = _list(auth_client)[0]
     assert got["quantity_base"] == pytest.approx(750.0)
     assert got["display_unit"] == "g"

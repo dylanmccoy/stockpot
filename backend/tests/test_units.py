@@ -68,13 +68,31 @@ KNOWN_TOKENS = [
 ]
 
 OPAQUE_TOKENS = [
-    "clove", "slice", "piece", "stick", "can", "package", "pkg", "jar",
-    "bottle", "box", "bag", "head", "bulb", "bunch", "sprig", "pinch",
-    "handful", "dash", "splash", "to taste",
+    "clove",
+    "slice",
+    "piece",
+    "stick",
+    "can",
+    "package",
+    "pkg",
+    "jar",
+    "bottle",
+    "box",
+    "bag",
+    "head",
+    "bulb",
+    "bunch",
+    "sprig",
+    "pinch",
+    "handful",
+    "dash",
+    "splash",
+    "to taste",
 ]
 
 
 # --- normalize_unit_token (spec.md §2.2 inline examples) -------------------
+
 
 def test_normalize_unit_token_none_and_empty() -> None:
     assert normalize_unit_token(None) is None
@@ -85,13 +103,15 @@ def test_normalize_unit_token_examples() -> None:
     assert normalize_unit_token("Cups.") == "cup"
     assert normalize_unit_token("boxes") == "box"
     assert normalize_unit_token("bunches") == "bunch"
-    assert normalize_unit_token("fl oz") == "fl oz"      # unchanged (2 words, no -s)
+    # Two words with no trailing "s" remain unchanged.
+    assert normalize_unit_token("fl oz") == "fl oz"
     assert normalize_unit_token("lbs") == "lb"
-    assert normalize_unit_token("  KG  ") == "kg"        # lower + strip
-    assert normalize_unit_token("tsp.") == "tsp"         # one trailing "." stripped
+    assert normalize_unit_token("  KG  ") == "kg"  # lower + strip
+    assert normalize_unit_token("tsp.") == "tsp"  # one trailing "." stripped
 
 
-# --- parse_unit -----------------------------------------------------------------
+# --- parse_unit -------------------------------------------------------------
+
 
 @pytest.mark.parametrize("val", [None, ""])
 def test_parse_unit_none_or_empty_is_count_token(val) -> None:
@@ -103,12 +123,15 @@ def test_parse_unit_none_or_empty_is_count_token(val) -> None:
 
 
 @pytest.mark.parametrize("tok,factor,dim", KNOWN_TOKENS)
-def test_parse_unit_known_tokens(tok: str, factor: float, dim: Dimension) -> None:
+def test_parse_unit_known_tokens(
+    tok: str, factor: float, dim: Dimension
+) -> None:
     ud = parse_unit(tok)
     assert isinstance(ud, UnitDef)
     assert ud.dimension is dim
     assert ud.factor_to_base == _approx(factor)
-    assert ud.canonical == {"mass": "g", "volume": "ml", "count": "unit"}[dim.value]
+    canonical_units = {"mass": "g", "volume": "ml", "count": "unit"}
+    assert ud.canonical == canonical_units[dim.value]
 
 
 @pytest.mark.parametrize("tok", OPAQUE_TOKENS + ["xyzzy", "wibble"])
@@ -127,8 +150,12 @@ LOCKED_TO_BASE = [
 ]
 
 
-@pytest.mark.parametrize("amount,unit,expected_base,expected_dim", LOCKED_TO_BASE)
-def test_locked_to_base_oracles(amount, unit, expected_base, expected_dim) -> None:
+@pytest.mark.parametrize(
+    "amount,unit,expected_base,expected_dim", LOCKED_TO_BASE
+)
+def test_locked_to_base_oracles(
+    amount, unit, expected_base, expected_dim
+) -> None:
     res = to_base(amount, unit)
     assert res is not None
     base, dim = res
@@ -136,8 +163,13 @@ def test_locked_to_base_oracles(amount, unit, expected_base, expected_dim) -> No
     assert base == _approx(expected_base)
 
 
-@pytest.mark.parametrize("amount,unit,expected_base,expected_dim", LOCKED_TO_BASE)
-def test_locked_to_base_round_trip(amount, unit, expected_base, expected_dim) -> None:
+@pytest.mark.parametrize(
+    "amount,unit,expected_base,expected_dim", LOCKED_TO_BASE
+)
+def test_locked_to_base_round_trip(
+    amount, unit, expected_base, expected_dim
+) -> None:
+    del expected_base, expected_dim
     base, dim = to_base(amount, unit)
     assert from_base(base, dim, unit) == _approx(float(amount))
 
@@ -160,6 +192,7 @@ def test_to_base_none_unit_is_count() -> None:
 
 
 # --- round-trip over every known synonym token (spec.md §2.2) --------------
+
 
 @pytest.mark.parametrize("amt", [0.125, 1.0, 17.5])
 @pytest.mark.parametrize("tok,factor,dim", KNOWN_TOKENS)
@@ -184,9 +217,9 @@ def test_from_base_none_and_canonical_units_pass_through() -> None:
 @pytest.mark.parametrize(
     "amount,dim,unit",
     [
-        (100.0, Dimension.MASS, "cup"),    # mass base, volume unit
-        (100.0, Dimension.VOLUME, "g"),    # volume base, mass unit
-        (100.0, Dimension.COUNT, "g"),     # count base, mass unit
+        (100.0, Dimension.MASS, "cup"),  # mass base, volume unit
+        (100.0, Dimension.VOLUME, "g"),  # volume base, mass unit
+        (100.0, Dimension.COUNT, "g"),  # count base, mass unit
         (100.0, Dimension.MASS, "dozen"),  # mass base, count unit
     ],
 )
@@ -199,18 +232,38 @@ def test_from_base_opaque_target_returns_none(unit: str) -> None:
     assert from_base(100.0, Dimension.MASS, unit) is None
 
 
-# --- R-3 plural round-trip: known units -----------------------------------------
-# For every synonym-table token, parse_unit(plural) resolves to the same UnitDef.
+# --- R-3 plural round-trip: known units -------------------------------------
+# For every synonym-table token, parse_unit(plural) resolves to the same
+# UnitDef.
 
 KNOWN_PLURALS = [
-    ("g", "grams"), ("gram", "grams"), ("kg", "kgs"), ("mg", "mgs"),
-    ("oz", "ozs"), ("ounce", "ounces"), ("lb", "lbs"), ("pound", "pounds"),
-    ("ml", "mls"), ("l", "ls"), ("litre", "litres"), ("liter", "liters"),
-    ("tsp", "tsps"), ("teaspoon", "teaspoons"),
-    ("tbsp", "tbsps"), ("tablespoon", "tablespoons"),
-    ("cup", "cups"), ("floz", "flozs"), ("fl oz", "fl ozs"), ("fl-oz", "fl-ozs"),
-    ("pint", "pints"), ("quart", "quarts"), ("gallon", "gallons"),
-    ("unit", "units"), ("each", "eaches"), ("dozen", "dozens"), ("pair", "pairs"),
+    ("g", "grams"),
+    ("gram", "grams"),
+    ("kg", "kgs"),
+    ("mg", "mgs"),
+    ("oz", "ozs"),
+    ("ounce", "ounces"),
+    ("lb", "lbs"),
+    ("pound", "pounds"),
+    ("ml", "mls"),
+    ("l", "ls"),
+    ("litre", "litres"),
+    ("liter", "liters"),
+    ("tsp", "tsps"),
+    ("teaspoon", "teaspoons"),
+    ("tbsp", "tbsps"),
+    ("tablespoon", "tablespoons"),
+    ("cup", "cups"),
+    ("floz", "flozs"),
+    ("fl oz", "fl ozs"),
+    ("fl-oz", "fl-ozs"),
+    ("pint", "pints"),
+    ("quart", "quarts"),
+    ("gallon", "gallons"),
+    ("unit", "units"),
+    ("each", "eaches"),
+    ("dozen", "dozens"),
+    ("pair", "pairs"),
 ]
 
 
@@ -223,12 +276,25 @@ def test_plural_round_trip_known_units(singular: str, plural: str) -> None:
 # --- R-3 plural round-trip: opaque tokens -------------------------------------
 
 OPAQUE_PLURALS = [
-    ("clove", "cloves"), ("slice", "slices"), ("piece", "pieces"),
-    ("stick", "sticks"), ("can", "cans"), ("package", "packages"),
-    ("pkg", "pkgs"), ("jar", "jars"), ("bottle", "bottles"), ("box", "boxes"),
-    ("bag", "bags"), ("head", "heads"), ("bulb", "bulbs"), ("bunch", "bunches"),
-    ("sprig", "sprigs"), ("pinch", "pinches"), ("handful", "handfuls"),
-    ("dash", "dashes"), ("splash", "splashes"),
+    ("clove", "cloves"),
+    ("slice", "slices"),
+    ("piece", "pieces"),
+    ("stick", "sticks"),
+    ("can", "cans"),
+    ("package", "packages"),
+    ("pkg", "pkgs"),
+    ("jar", "jars"),
+    ("bottle", "bottles"),
+    ("box", "boxes"),
+    ("bag", "bags"),
+    ("head", "heads"),
+    ("bulb", "bulbs"),
+    ("bunch", "bunches"),
+    ("sprig", "sprigs"),
+    ("pinch", "pinches"),
+    ("handful", "handfuls"),
+    ("dash", "dashes"),
+    ("splash", "splashes"),
 ]
 
 
@@ -262,6 +328,7 @@ def test_es_group_opaque_plurals_named() -> None:
 
 # --- bucket_of ----------------------------------------------------------------
 
+
 def test_bucket_of() -> None:
     assert bucket_of(None) == "count"
     assert bucket_of("") == "count"
@@ -276,12 +343,13 @@ def test_bucket_of() -> None:
     assert bucket_of("dozen") == "count"
     assert bucket_of("pair") == "count"
     assert bucket_of("can") == "opaque:can"
-    assert bucket_of("cans") == "opaque:can"     # plural nets to the same bucket
-    assert bucket_of("Cans") == "opaque:can"     # case-normalized
+    assert bucket_of("cans") == "opaque:can"  # plural nets to the same bucket
+    assert bucket_of("Cans") == "opaque:can"  # case-normalized
     assert bucket_of("xyzzy") == "opaque:xyzzy"  # unknown -> opaque
 
 
 # --- canon_unit -------------------------------------------------------------
+
 
 def test_canon_unit() -> None:
     assert canon_unit("mass") == "g"
@@ -291,23 +359,25 @@ def test_canon_unit() -> None:
     assert canon_unit("opaque:to taste") == "to taste"
 
 
-# --- compatible -----------------------------------------------------------------
+# --- compatible -------------------------------------------------------------
+
 
 def test_compatible_true_cases() -> None:
     assert compatible("g", "kg")
     assert compatible("kg", "g")
     assert compatible("ml", "l")
     assert compatible("tsp", "cup")
-    assert compatible("unit", None)      # None token counts as COUNT
+    assert compatible("unit", None)  # None token counts as COUNT
     assert compatible(None, "dozen")
     assert compatible(None, None)
 
 
 def test_compatible_false_cases() -> None:
-    assert not compatible("g", "ml")     # different dimension
+    assert not compatible("g", "ml")  # different dimension
     assert not compatible("g", "unit")
     assert not compatible("cup", "dozen")
-    assert not compatible("can", "can")  # opaque never resolves to a known UnitDef
+    # Opaque units never resolve to a known UnitDef.
+    assert not compatible("can", "can")
     assert not compatible("can", "jar")
     assert not compatible("g", "xyzzy")
 
@@ -348,49 +418,83 @@ def test_locked_add_quantities_oracles(inp, expected) -> None:
 
 
 def test_add_quantities_partitions_emitted_in_first_seen_order() -> None:
+    quantities = [
+        Quantity(1, "jar"),
+        Quantity(1, "can"),
+        Quantity(1, "kg"),
+    ]
     _assert_quantities(
-        add_quantities([Quantity(1, "jar"), Quantity(1, "can"), Quantity(1, "kg")]),
+        add_quantities(quantities),
         [(1.0, "jar"), (1.0, "can"), (1000.0, "g")],
     )
     # reordering the input reorders the output partitions
+    quantities = [
+        Quantity(1, "kg"),
+        Quantity(1, "can"),
+        Quantity(1, "jar"),
+    ]
     _assert_quantities(
-        add_quantities([Quantity(1, "kg"), Quantity(1, "can"), Quantity(1, "jar")]),
+        add_quantities(quantities),
         [(1000.0, "g"), (1.0, "can"), (1.0, "jar")],
     )
 
 
 def test_add_quantities_none_amount_mixed_with_numbers_counts_as_zero() -> None:
+    quantities = [
+        Quantity(None, "can"),
+        Quantity(2, "can"),
+        Quantity(3, "can"),
+    ]
     _assert_quantities(
-        add_quantities([Quantity(None, "can"), Quantity(2, "can"), Quantity(3, "can")]),
+        add_quantities(quantities),
         [(5.0, "can")],
     )
 
 
 def test_add_quantities_all_none_partition_emits_none() -> None:
+    quantities = [Quantity(None, "kg"), Quantity(None, "g")]
     _assert_quantities(
-        add_quantities([Quantity(None, "kg"), Quantity(None, "g")]), [(None, "g")]
+        add_quantities(quantities),
+        [(None, "g")],
     )
+    quantities = [Quantity(None, "can"), Quantity(None, "cans")]
     _assert_quantities(
-        add_quantities([Quantity(None, "can"), Quantity(None, "cans")]), [(None, "can")]
+        add_quantities(quantities),
+        [(None, "can")],
     )
 
 
 def test_add_quantities_conserves_base_sum_per_known_dimension() -> None:
+    quantities = [
+        Quantity(1, "kg"),
+        Quantity(500, "g"),
+        Quantity(2, "kg"),
+    ]
     _assert_quantities(
-        add_quantities([Quantity(1, "kg"), Quantity(500, "g"), Quantity(2, "kg")]),
+        add_quantities(quantities),
         [(3500.0, "g")],
     )
 
 
 def test_add_quantities_conserves_raw_sum_per_opaque_token() -> None:
+    quantities = [
+        Quantity(2, "can"),
+        Quantity(3, "cans"),
+        Quantity(1, "can"),
+    ]
     _assert_quantities(
-        add_quantities([Quantity(2, "can"), Quantity(3, "cans"), Quantity(1, "can")]),
+        add_quantities(quantities),
         [(6.0, "can")],
     )
 
 
 def test_add_quantities_none_units_merge_into_count_partition() -> None:
+    quantities = [
+        Quantity(2, None),
+        Quantity(3, "unit"),
+        Quantity(1, "each"),
+    ]
     _assert_quantities(
-        add_quantities([Quantity(2, None), Quantity(3, "unit"), Quantity(1, "each")]),
+        add_quantities(quantities),
         [(6.0, "unit")],
     )

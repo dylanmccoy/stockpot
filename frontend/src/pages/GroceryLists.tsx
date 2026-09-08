@@ -40,7 +40,7 @@ export default function GroceryLists() {
   const removeMutation = useMutation({
     mutationFn: (id: number) => groceryApi.remove(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["grocery"] });
+      void queryClient.invalidateQueries({ queryKey: ["grocery"] });
     },
     onError: () => {
       toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });

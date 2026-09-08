@@ -53,10 +53,11 @@ def main(argv: list[str] | None = None) -> int:
         raw = (
             sys.stdin.read()
             if args.password_file == "-"
-            else Path(args.password_file).read_text()
+            else Path(args.password_file).read_text(encoding="utf-8")
         )
     except OSError as exc:
-        print(f"recover failed: cannot read password file: {exc}", file=sys.stderr)
+        message = f"recover failed: cannot read password file: {exc}"
+        print(message, file=sys.stderr)
         return 1
 
     password = raw.strip()
@@ -76,8 +77,8 @@ def main(argv: list[str] | None = None) -> int:
         f"({result.sessions_revoked} session(s) revoked)"
     )
     print(
-        "the old password and every previous session for this account no longer "
-        "work — the member signs in with the new password."
+        "the old password and every previous session for this account no "
+        "longer work — the member signs in with the new password."
     )
     return 0
 

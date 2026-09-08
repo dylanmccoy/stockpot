@@ -13,7 +13,8 @@ So this file **fails on collection** (the ``app.schemas.grocery`` import below)
 until ``phase-6b`` lands, and does not fully pass until ``phase-6d`` (submit) /
 ``phase-6e`` (archive) — that staged failure *is* the lock. Later phases may add
 cases but must not edit or delete an expected value here; a case later found
-wrong is changed only via a paired ``spec.md`` + test edit recorded per the gate.
+wrong is changed only via a paired ``spec.md`` + test edit recorded per the
+gate.
 
 The consolidated-shortfall arithmetic itself (§7 *Grocery generation*) is locked
 as a pure-service oracle in ``test_inventory_math.py``. This file exercises only
@@ -27,8 +28,8 @@ the parts that need HTTP:
 * **submit** (§5.6) — forward-only; already-applied lines skipped; canonical
   ``applied_*``; list ``status`` unchanged; a checked ``quantity=null`` line
   skipped; a checked ``nettable=false`` line with a real quantity is added;
-  nothing eligible -> ``200`` no-op; ``IntegrityError`` / lock timeout -> ``409``
-  with the whole transaction rolled back.
+  nothing eligible -> ``200`` no-op; ``IntegrityError`` / lock timeout ->
+  ``409`` with the whole transaction rolled back.
 * **the submit race** (§6) — two concurrent submits apply each checked line at
   most once; a lock that outlasts ``busy_timeout`` surfaces as
   ``409 {"detail": "conflict"}``, never ``500``.
@@ -102,7 +103,8 @@ def _register(
         json={"username": username, "password": _PASSWORD, "code": code},
     )
     assert reg.status_code == 201, reg.text
-    client.headers["Authorization"] = f"Bearer {reg.json()['token']}"
+    token = reg.json()["token"]
+    client.headers["Authorization"] = f"Bearer {token}"
 
 
 def _build_app(
@@ -119,15 +121,19 @@ def _build_app(
 
 def _mk_recipe(client: TestClient, ingredients: list[dict]) -> int:
     resp = client.post(
-        "/api/recipes", json={"title": "Grocery Contract", "ingredients": ingredients}
+        "/api/recipes",
+        json={"title": "Grocery Contract", "ingredients": ingredients},
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
 
-def _add_inventory(client: TestClient, item: str, quantity: float, unit: str) -> dict:
+def _add_inventory(
+    client: TestClient, item: str, quantity: float, unit: str
+) -> dict:
     resp = client.post(
-        "/api/inventory", json={"item": item, "quantity": quantity, "unit": unit}
+        "/api/inventory",
+        json={"item": item, "quantity": quantity, "unit": unit},
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -137,7 +143,9 @@ def _inventory_row(
     client: TestClient, match_name: str, unit_bucket: str
 ) -> dict | None:
     for row in client.get("/api/inventory").json():
-        if row["match_name"] == match_name and row["unit_bucket"] == unit_bucket:
+        same_name = row["match_name"] == match_name
+        same_bucket = row["unit_bucket"] == unit_bucket
+        if same_name and same_bucket:
             return row
     return None
 
@@ -168,7 +176,8 @@ def _items(client: TestClient, gid: int) -> list[dict]:
 
 def _line_by_norm(items: list[dict], norm: str) -> dict:
     matches = [it for it in items if it["normalized_name"] == norm]
-    assert len(matches) == 1, f"expected exactly one {norm!r} line, got {len(matches)}"
+    message = f"expected exactly one {norm!r} line, got {len(matches)}"
+    assert len(matches) == 1, message
     return matches[0]
 
 
@@ -189,8 +198,8 @@ def _submit(client: TestClient, gid: int):
     return client.post(f"/api/grocery/{gid}/submit")
 
 
-@pytest.fixture
-def grocery_client() -> Iterator[TestClient]:
+@pytest.fixture(name="grocery_client")
+def grocery_client_fixture() -> Iterator[TestClient]:
     """An authed client over a fresh in-memory app. ``raise_server_exceptions``
     stays at its default (``True``) so a stray ``500`` on a happy path raises
     loudly rather than passing a status-code assertion."""
@@ -201,7 +210,7 @@ def grocery_client() -> Iterator[TestClient]:
     engine.dispose()
 
 
-# --- shared line/list builders -------------------------------------------------
+# --- shared line/list builders ----------------------------------------------
 
 
 def _generated_flour_500g(client: TestClient) -> tuple[int, dict]:
@@ -237,7 +246,8 @@ def _generated_nonnettable_tomato_line(client: TestClient) -> tuple[int, dict]:
     ``(list_id, that_line)``."""
     _add_inventory(client, "Tomatoes", 1, "can")
     _add_inventory(client, "Tomatoes", 1, "jar")
-    rid = _mk_recipe(client, [{"item": "Tomatoes", "quantity": 3, "unit": "can"}])
+    ingredient = {"item": "Tomatoes", "quantity": 3, "unit": "can"}
+    rid = _mk_recipe(client, [ingredient])
     gl = _mk_grocery(client, [rid])
     line = _line_by_norm(gl["items"], "tomato")
     assert line["source"] == "generated"
@@ -252,13 +262,16 @@ def _generated_nonnettable_tomato_line(client: TestClient) -> tuple[int, dict]:
 # ===========================================================================
 
 
-def test_grocery_read_shapes_match_the_56_schemas(grocery_client: TestClient) -> None:
+def test_grocery_read_shapes_match_the_56_schemas(
+    grocery_client: TestClient,
+) -> None:
     gid, line = _generated_flour_500g(grocery_client)
     gl = _get_grocery(grocery_client, gid)
 
     assert set(gl) == GROCERY_LIST_READ_KEYS
     assert gl["status"] == "active"
-    assert gl["items"] == sorted(gl["items"], key=lambda it: it["id"])  # ordered by id
+    ordered_items = sorted(gl["items"], key=lambda item: item["id"])
+    assert gl["items"] == ordered_items
     GroceryListRead.model_validate(gl)
 
     assert set(line) == GROCERY_ITEM_READ_KEYS
@@ -288,7 +301,9 @@ def test_patch_unit_only_is_422_atomic_pair(grocery_client: TestClient) -> None:
     assert after["source"] == "generated"
 
 
-def test_patch_quantity_only_is_422_atomic_pair(grocery_client: TestClient) -> None:
+def test_patch_quantity_only_is_422_atomic_pair(
+    grocery_client: TestClient,
+) -> None:
     gid, line = _generated_flour_500g(grocery_client)
     resp = _patch_item(grocery_client, gid, line["id"], {"quantity": 200})
     assert resp.status_code == 422, resp.text
@@ -310,7 +325,10 @@ def test_patch_quantity_and_unit_together_sets_as_sent_and_reclassifies(
     gid, line = _generated_flour_500g(grocery_client)
     assert line["nettable"] is True
     resp = _patch_item(
-        grocery_client, gid, line["id"], {"quantity": 0.5, "unit": "kg"}
+        grocery_client,
+        gid,
+        line["id"],
+        {"quantity": 0.5, "unit": "kg"},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -331,7 +349,10 @@ def test_patch_quantity_unit_edit_flips_nettable_on_a_non_nettable_line(
     gid, line = _generated_nonnettable_tomato_line(grocery_client)
     assert line["nettable"] is False
     resp = _patch_item(
-        grocery_client, gid, line["id"], {"quantity": 4, "unit": "can"}
+        grocery_client,
+        gid,
+        line["id"],
+        {"quantity": 4, "unit": "can"},
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -341,7 +362,9 @@ def test_patch_quantity_unit_edit_flips_nettable_on_a_non_nettable_line(
     assert body["nettable"] is True
 
 
-def test_patch_quantity_and_unit_may_both_be_null(grocery_client: TestClient) -> None:
+def test_patch_quantity_and_unit_may_both_be_null(
+    grocery_client: TestClient,
+) -> None:
     """§5.6: "values may be null; both keys must appear together" — the atomic
     pair is about *presence* in the body, not about being non-null. Whether a
     pure null/null edit also reclassifies the line is deliberately left unlocked
@@ -363,7 +386,10 @@ def test_patch_quantity_without_unit_is_422_even_alongside_another_key(
     only — a third field in the same body does not excuse a missing ``unit``."""
     gid, line = _generated_flour_500g(grocery_client)
     resp = _patch_item(
-        grocery_client, gid, line["id"], {"item": "bread flour", "quantity": 200}
+        grocery_client,
+        gid,
+        line["id"],
+        {"item": "bread flour", "quantity": 200},
     )
     assert resp.status_code == 422, resp.text
     assert "quantity and unit must be set together" in resp.text
@@ -379,7 +405,9 @@ def test_patch_item_text_reclassifies_and_recomputes_normalized_name(
     ``source="manual"``, ``nettable=true`` and recomputes ``normalized_name``
     (N6)."""
     gid, line = _generated_nonnettable_tomato_line(grocery_client)
-    resp = _patch_item(grocery_client, gid, line["id"], {"item": "almond flour"})
+    resp = _patch_item(
+        grocery_client, gid, line["id"], {"item": "almond flour"}
+    )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["item"] == "almond flour"
@@ -388,7 +416,9 @@ def test_patch_item_text_reclassifies_and_recomputes_normalized_name(
     assert body["nettable"] is True
 
 
-def test_patch_checked_only_does_not_reclassify(grocery_client: TestClient) -> None:
+def test_patch_checked_only_does_not_reclassify(
+    grocery_client: TestClient,
+) -> None:
     """A ``checked``-only PATCH sets ``checked`` / ``checked_at`` and leaves
     ``source`` / ``nettable`` untouched (N6)."""
     gid, line = _generated_nonnettable_tomato_line(grocery_client)
@@ -401,7 +431,9 @@ def test_patch_checked_only_does_not_reclassify(grocery_client: TestClient) -> N
     assert body["nettable"] is False
 
 
-def test_patch_checked_false_clears_checked_at(grocery_client: TestClient) -> None:
+def test_patch_checked_false_clears_checked_at(
+    grocery_client: TestClient,
+) -> None:
     gid, line = _generated_flour_500g(grocery_client)
     _patch_item(grocery_client, gid, line["id"], {"checked": True})
     resp = _patch_item(grocery_client, gid, line["id"], {"checked": False})
@@ -419,9 +451,15 @@ def test_patch_has_no_inventory_side_effect(grocery_client: TestClient) -> None:
 
 
 def test_patch_unknown_list_or_line_is_404(grocery_client: TestClient) -> None:
-    assert _patch_item(grocery_client, 999999, 1, {"checked": True}).status_code == 404
+    unknown_list = _patch_item(
+        grocery_client, 999999, 1, {"checked": True}
+    )
+    assert unknown_list.status_code == 404
     gid, _ = _generated_flour_500g(grocery_client)
-    assert _patch_item(grocery_client, gid, 999999, {"checked": True}).status_code == 404
+    unknown_line = _patch_item(
+        grocery_client, gid, 999999, {"checked": True}
+    )
+    assert unknown_line.status_code == 404
 
 
 # ===========================================================================
@@ -434,7 +472,12 @@ def test_submit_freezes_checked_line_with_canonical_applied_fields(
 ) -> None:
     gid, line = _generated_flour_500g(grocery_client)
     # edit to 0.5 kg (now manual), check, submit
-    _patch_item(grocery_client, gid, line["id"], {"quantity": 0.5, "unit": "kg"})
+    _patch_item(
+        grocery_client,
+        gid,
+        line["id"],
+        {"quantity": 0.5, "unit": "kg"},
+    )
     _patch_item(grocery_client, gid, line["id"], {"checked": True})
 
     resp = _submit(grocery_client, gid)
@@ -496,7 +539,7 @@ def test_submit_does_not_change_list_status(grocery_client: TestClient) -> None:
 def test_submit_with_nothing_checked_is_a_200_no_op(
     grocery_client: TestClient,
 ) -> None:
-    gid, line = _generated_flour_500g(grocery_client)
+    gid, _ = _generated_flour_500g(grocery_client)
     resp = _submit(grocery_client, gid)
     assert resp.status_code == 200, resp.text
     out = _line_by_norm(resp.json()["items"], "flour")
@@ -550,7 +593,10 @@ def test_submit_on_a_non_active_list_is_409(grocery_client: TestClient) -> None:
     gid, line = _generated_flour_500g(grocery_client)
     assert grocery_client.post(f"/api/grocery/{gid}/archive").status_code == 200
     # an archived list rejects both the check and the submit
-    assert _patch_item(grocery_client, gid, line["id"], {"checked": True}).status_code == 409
+    patched = _patch_item(
+        grocery_client, gid, line["id"], {"checked": True}
+    )
+    assert patched.status_code == 409
     assert _submit(grocery_client, gid).status_code == 409
 
 
@@ -566,16 +612,20 @@ def test_frozen_line_rejects_further_patch_and_delete(
 
     _patch_item(grocery_client, gid, flour["id"], {"checked": True})
     assert _submit(grocery_client, gid).status_code == 200
-    assert _line_by_norm(_items(grocery_client, gid), "flour")["added_to_inventory"]
+    frozen_flour = _line_by_norm(_items(grocery_client, gid), "flour")
+    assert frozen_flour["added_to_inventory"]
 
-    assert _patch_item(grocery_client, gid, flour["id"], {"checked": False}).status_code == 409
-    assert grocery_client.delete(
-        f"/api/grocery/{gid}/items/{flour['id']}"
-    ).status_code == 409
+    patched = _patch_item(
+        grocery_client, gid, flour["id"], {"checked": False}
+    )
+    assert patched.status_code == 409
+    flour_id = flour["id"]
+    deleted = grocery_client.delete(f"/api/grocery/{gid}/items/{flour_id}")
+    assert deleted.status_code == 409
     # the still-unfrozen sugar line deletes cleanly
-    assert grocery_client.delete(
-        f"/api/grocery/{gid}/items/{sugar['id']}"
-    ).status_code == 204
+    sugar_id = sugar["id"]
+    deleted = grocery_client.delete(f"/api/grocery/{gid}/items/{sugar_id}")
+    assert deleted.status_code == 204
 
 
 # ===========================================================================
@@ -596,7 +646,8 @@ def _build_file_app(
         # Registered after make_engine's own `connect` listener, so this PRAGMA
         # runs last and lowers the 5000 ms default for the test.
         @event.listens_for(engine, "connect")
-        def _lower_busy_timeout(dbapi_conn, _record):  # noqa: ANN001
+        def _lower_busy_timeout(dbapi_conn, connection_record):
+            del connection_record
             cur = dbapi_conn.cursor()
             cur.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
             cur.close()
@@ -630,10 +681,13 @@ def _seed_two_checked_lines(client: TestClient) -> int:
     gl = _mk_grocery(client, [rid])
     for norm in ("flour", "sugar"):
         line = _line_by_norm(gl["items"], norm)
-        assert (
-            _patch_item(client, gl["id"], line["id"], {"checked": True}).status_code
-            == 200
+        response = _patch_item(
+            client,
+            gl["id"],
+            line["id"],
+            {"checked": True},
         )
+        assert response.status_code == 200
     return gl["id"]
 
 
@@ -651,12 +705,16 @@ def test_submit_request_maps_a_held_lock_to_409_not_500(tmp_path) -> None:
 
             holder = engine.connect()
             try:
-                holder_txn = holder.begin()  # BEGIN IMMEDIATE — holds the write lock
+                # BEGIN IMMEDIATE holds the write lock.
+                holder_txn = holder.begin()
                 # Any held write lock blocks submit at its own opening
                 # BEGIN IMMEDIATE, before its first statement. `inventory_items`
                 # is an established table (phase-4b) and submit's upsert target.
                 holder.execute(
-                    text("UPDATE inventory_items SET quantity_base = quantity_base")
+                    text(
+                        "UPDATE inventory_items "
+                        "SET quantity_base = quantity_base"
+                    )
                 )
 
                 resp = client.post(f"/api/grocery/{gid}/submit")
@@ -690,9 +748,13 @@ def test_submit_lock_failure_rolls_back_the_whole_transaction(tmp_path) -> None:
 
             holder = engine.connect()
             try:
-                holder_txn = holder.begin()  # BEGIN IMMEDIATE — holds the write lock
+                # BEGIN IMMEDIATE holds the write lock.
+                holder_txn = holder.begin()
                 holder.execute(
-                    text("UPDATE inventory_items SET quantity_base = quantity_base")
+                    text(
+                        "UPDATE inventory_items "
+                        "SET quantity_base = quantity_base"
+                    )
                 )
                 resp = client.post(f"/api/grocery/{gid}/submit")
                 assert resp.status_code == 409, resp.text
@@ -719,7 +781,8 @@ def test_two_concurrent_submits_apply_the_checked_line_at_most_once(
     DB. ``BEGIN IMMEDIATE`` serializes them, so the checked line is applied
     exactly once — inventory reflects one application, not two, and the line is
     frozen once with a canonical ``applied_quantity``."""
-    app, engine = _build_file_app(tmp_path / "grocery-race.db")  # 5 s busy_timeout
+    # Use the production 5 s busy_timeout.
+    app, engine = _build_file_app(tmp_path / "grocery-race.db")
     try:
         with TestClient(app) as client:
             gid, _ = _seed_submit_fixture(client)
@@ -732,7 +795,10 @@ def test_two_concurrent_submits_apply_the_checked_line_at_most_once(
                 worker.headers["Authorization"] = token
                 results[key] = worker.post(f"/api/grocery/{gid}/submit")
 
-            threads = [threading.Thread(target=submit, args=(k,)) for k in range(2)]
+            threads = [
+                threading.Thread(target=submit, args=(key,))
+                for key in range(2)
+            ]
             for thread in threads:
                 thread.start()
             for thread in threads:
@@ -745,6 +811,7 @@ def test_two_concurrent_submits_apply_the_checked_line_at_most_once(
             line = _line_by_norm(_items(client, gid), "flour")
             assert line["added_to_inventory"] is True
             assert line["applied_quantity"] == pytest.approx(500.0)
-            _assert_base(client, "flour", "mass", 500.0)  # applied once, not 1000
+            # Applied once, not 1000.
+            _assert_base(client, "flour", "mass", 500.0)
     finally:
         engine.dispose()

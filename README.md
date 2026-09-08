@@ -20,6 +20,7 @@ A root `Makefile` wraps the everyday commands. `make help` lists them.
 
 ```bash
 make install        # backend `uv sync` + frontend `npm install`
+make lint           # Pylint (Google profile) + Google-style ESLint
 make test           # backend pytest + frontend vitest
 make dev-backend    # backend dev server (separate terminal)
 make dev-frontend   # frontend dev server (separate terminal)
@@ -35,7 +36,12 @@ cd backend
 uv sync                                 # install deps into .venv
 uv run uvicorn app.main:app --reload    # http://localhost:8000  (interactive docs at /docs)
 uv run pytest                           # run tests
+uv run pylint app scripts tests         # Google Python Style lint
 ```
+
+The Python profile is intentionally the canonical upstream Google configuration.
+It currently reports pre-existing style debt, so the backend lint is available
+locally but is not yet a required CI step.
 
 Tables are auto-created on startup — there are no migrations. Config is read
 from environment variables prefixed with `RECIPE_` (see `backend/.env.example`
@@ -49,6 +55,7 @@ npm install
 npm run dev        # http://localhost:5173, proxies /api -> http://localhost:8000
 npm run build      # type-check + production build
 npm run typecheck
+npm run lint       # Google TypeScript rules + React Hooks
 npm test           # vitest (watch);  npm run test:run for one-shot
 ```
 

@@ -49,20 +49,33 @@ def test_create_backup_round_trips_through_app_factory(tmp_path: Path) -> None:
     dest_dir = tmp_path / "backups"
 
     live_engine = make_engine(f"sqlite:///{live_db}")
-    live_app = create_app(_file_settings(live_db, allow_registration=True), live_engine)
+    live_settings = _file_settings(live_db, allow_registration=True)
+    live_app = create_app(live_settings, live_engine)
     with TestClient(live_app) as client:
         register = client.post(
             "/api/auth/register",
-            json={"username": USERNAME, "password": PASSWORD, "code": REGISTRATION_CODE},
+            json={
+                "username": USERNAME,
+                "password": PASSWORD,
+                "code": REGISTRATION_CODE,
+            },
         )
         assert register.status_code == 201, register.text
-        login = client.post("/api/auth/login", json={"username": USERNAME, "password": PASSWORD})
+        login = client.post(
+            "/api/auth/login", json={"username": USERNAME, "password": PASSWORD}
+        )
         assert login.status_code == 200, login.text
-        client.headers["Authorization"] = f"Bearer {login.json()['token']}"
+        token = login.json()["token"]
+        client.headers["Authorization"] = f"Bearer {token}"
 
         created = client.post(
             "/api/recipes",
-            json={"title": "Snapshot Pancakes", "tags": [], "steps": [], "ingredients": []},
+            json={
+                "title": "Snapshot Pancakes",
+                "tags": [],
+                "steps": [],
+                "ingredients": [],
+            },
         )
         assert created.status_code == 201, created.text
 
@@ -78,9 +91,12 @@ def test_create_backup_round_trips_through_app_factory(tmp_path: Path) -> None:
         _file_settings(snapshot_path, allow_registration=False), snapshot_engine
     )
     with TestClient(snapshot_app) as client:
-        login = client.post("/api/auth/login", json={"username": USERNAME, "password": PASSWORD})
+        login = client.post(
+            "/api/auth/login", json={"username": USERNAME, "password": PASSWORD}
+        )
         assert login.status_code == 200, login.text
-        client.headers["Authorization"] = f"Bearer {login.json()['token']}"
+        token = login.json()["token"]
+        client.headers["Authorization"] = f"Bearer {token}"
 
         listed = client.get("/api/recipes")
         assert listed.status_code == 200
@@ -88,7 +104,9 @@ def test_create_backup_round_trips_through_app_factory(tmp_path: Path) -> None:
         assert "Snapshot Pancakes" in titles
 
 
-def test_missing_source_fails_without_touching_destination(tmp_path: Path) -> None:
+def test_missing_source_fails_without_touching_destination(
+    tmp_path: Path,
+) -> None:
     missing = tmp_path / "nope.db"
     dest_dir = tmp_path / "backups"
 
@@ -98,7 +116,9 @@ def test_missing_source_fails_without_touching_destination(tmp_path: Path) -> No
     assert not dest_dir.exists()
 
 
-def test_unwritable_destination_fails_and_creates_no_snapshot(tmp_path: Path) -> None:
+def test_unwritable_destination_fails_and_creates_no_snapshot(
+    tmp_path: Path,
+) -> None:
     if os.geteuid() == 0:
         pytest.skip("permission bits are not enforced for root")
 
@@ -122,12 +142,16 @@ def test_unwritable_destination_fails_and_creates_no_snapshot(tmp_path: Path) ->
     assert not dest_dir.exists()
 
 
-def test_interrupted_write_preserves_earlier_snapshot(tmp_path: Path, monkeypatch) -> None:
+def test_interrupted_write_preserves_earlier_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
     source = tmp_path / "live.db"
     _make_plain_sqlite_file(source)
     dest_dir = tmp_path / "backups"
 
-    first = create_backup(source, dest_dir, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    first = create_backup(
+        source, dest_dir, now=datetime(2026, 1, 1, tzinfo=timezone.utc)
+    )
     first_bytes = first.read_bytes()
     first_mtime = first.stat().st_mtime
 
@@ -137,24 +161,38 @@ def test_interrupted_write_preserves_earlier_snapshot(tmp_path: Path, monkeypatc
     monkeypatch.setattr(app.backup, "_run_online_backup", _boom)
 
     with pytest.raises(BackupError, match="simulated interruption"):
-        create_backup(source, dest_dir, now=datetime(2026, 1, 2, tzinfo=timezone.utc))
+        create_backup(
+            source,
+            dest_dir,
+            now=datetime(2026, 1, 2, tzinfo=timezone.utc),
+        )
 
     remaining = sorted(p.name for p in dest_dir.iterdir())
-    assert remaining == [first.name], "interrupted attempt must leave no new/partial file"
+    assert remaining == [
+        first.name
+    ], "interrupted attempt must leave no new/partial file"
     assert first.read_bytes() == first_bytes
     assert first.stat().st_mtime == first_mtime
 
 
-def test_successive_backups_get_distinct_timestamped_names(tmp_path: Path) -> None:
+def test_successive_backups_get_distinct_timestamped_names(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "live.db"
     _make_plain_sqlite_file(source)
     dest_dir = tmp_path / "backups"
 
-    first = create_backup(source, dest_dir, now=datetime(2026, 1, 1, tzinfo=timezone.utc))
-    second = create_backup(source, dest_dir, now=datetime(2026, 1, 2, tzinfo=timezone.utc))
+    first = create_backup(
+        source, dest_dir, now=datetime(2026, 1, 1, tzinfo=timezone.utc)
+    )
+    second = create_backup(
+        source, dest_dir, now=datetime(2026, 1, 2, tzinfo=timezone.utc)
+    )
 
     assert first != second
-    assert sorted(p.name for p in dest_dir.iterdir()) == sorted([first.name, second.name])
+    assert sorted(p.name for p in dest_dir.iterdir()) == sorted(
+        [first.name, second.name]
+    )
 
 
 def test_snapshot_and_destination_are_operator_only(tmp_path: Path) -> None:

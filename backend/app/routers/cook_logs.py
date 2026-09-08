@@ -7,8 +7,9 @@ deleted (spec.md §1).
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.functions import count
 
 from app.database import SessionDep, TransactionRoute
 from app.models import CookLog
@@ -30,7 +31,7 @@ def list_all_cook_logs(
     offset: int = Query(0, ge=0),
 ) -> CookLogList:
     """Global made-history feed, ``cooked_at DESC, id DESC``, paginated."""
-    total = db.scalar(select(func.count()).select_from(CookLog)) or 0
+    total = db.scalar(select(count()).select_from(CookLog)) or 0
     stmt = (
         select(CookLog)
         .options(selectinload(CookLog.cooked_by))
@@ -45,7 +46,7 @@ def list_all_cook_logs(
 
 @router.get("/{log_id}", response_model=CookLogRead)
 def get_cook_log(log_id: int, db: SessionDep) -> CookLog:
-    """One cook log by id; ``404`` if absent. Resolves after the recipe is gone."""
+    """One log by id; ``404`` if absent. Resolves after the recipe is gone."""
     log = db.get(CookLog, log_id, options=[selectinload(CookLog.cooked_by)])
     if log is None:
         raise HTTPException(

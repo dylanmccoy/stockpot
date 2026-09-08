@@ -41,7 +41,9 @@ def _closed_client(url: str) -> TestClient:
 def test_creates_a_login_per_account(tmp_path: Path) -> None:
     url = _schema_db(tmp_path / "recipe.db")
 
-    result = provision_accounts(url, [("alice", "alice-passphrase"), ("bob", "bob-passphrase")])
+    result = provision_accounts(
+        url, [("alice", "alice-passphrase"), ("bob", "bob-passphrase")]
+    )
 
     assert result == ProvisionResult(created=["alice", "bob"], skipped=[])
 
@@ -52,7 +54,8 @@ def test_creates_a_login_per_account(tmp_path: Path) -> None:
 
     by_name = {u: h for u, h in rows}
     assert set(by_name) == {"alice", "bob"}
-    # Stored as a real argon2 hash the login path can verify — not the plaintext.
+    # Stored as a real argon2 hash the login path can verify, not the
+    # plaintext.
     assert verify_password("alice-passphrase", by_name["alice"])
     assert "alice-passphrase" not in by_name["alice"]
 
@@ -73,7 +76,9 @@ def test_existing_username_is_skipped_not_duplicated(tmp_path: Path) -> None:
     provision_accounts(url, [("Alice", "alice-passphrase")])
 
     # Re-run with a case-variant of an existing member plus a new one.
-    result = provision_accounts(url, [("alice", "different-passphrase"), ("bob", "bob-passphrase")])
+    result = provision_accounts(
+        url, [("alice", "different-passphrase"), ("bob", "bob-passphrase")]
+    )
 
     assert result == ProvisionResult(created=["bob"], skipped=["Alice"])
 
@@ -96,23 +101,26 @@ def test_empty_list_is_a_noop(tmp_path: Path) -> None:
 
 
 def test_missing_database_file_is_refused(tmp_path: Path) -> None:
+    absent = tmp_path / "absent.db"
+    accounts = [("alice", "alice-passphrase")]
     with pytest.raises(ProvisionError, match="not found"):
-        provision_accounts(
-            f"sqlite:///{tmp_path / 'absent.db'}", [("alice", "alice-passphrase")]
-        )
+        provision_accounts(f"sqlite:///{absent}", accounts)
 
 
 def test_database_without_schema_is_refused(tmp_path: Path) -> None:
     empty = tmp_path / "empty.db"
-    sqlite3.connect(empty).close()  # a real SQLite file, but with no tables
+    # Create a real SQLite file with no tables.
+    sqlite3.connect(empty).close()
+    accounts = [("alice", "alice-passphrase")]
     with pytest.raises(ProvisionError, match="no schema"):
-        provision_accounts(f"sqlite:///{empty}", [("alice", "alice-passphrase")])
+        provision_accounts(f"sqlite:///{empty}", accounts)
 
 
 @pytest.mark.parametrize(
     ("username", "password"),
     [
-        ("ab", "long-enough-passphrase"),  # username too short for the register rule
+        # Username is too short for the register rule.
+        ("ab", "long-enough-passphrase"),
         ("has space", "long-enough-passphrase"),  # username charset
         ("alice", "short"),  # password below 8 chars
     ],
@@ -123,7 +131,8 @@ def test_invalid_account_is_refused_and_commits_nothing(
     url = _schema_db(tmp_path / "recipe.db")
 
     with pytest.raises(ProvisionError):
-        provision_accounts(url, [("valid", "valid-passphrase"), (username, password)])
+        accounts = [("valid", "valid-passphrase"), (username, password)]
+        provision_accounts(url, accounts)
 
     engine = make_engine(url)
     with engine.connect() as conn:
@@ -134,7 +143,9 @@ def test_invalid_account_is_refused_and_commits_nothing(
 def test_list_repeating_a_username_is_refused(tmp_path: Path) -> None:
     url = _schema_db(tmp_path / "recipe.db")
     with pytest.raises(ProvisionError, match="repeats a username"):
-        provision_accounts(url, [("alice", "passphrase-one"), ("Alice", "passphrase-two")])
+        provision_accounts(
+            url, [("alice", "passphrase-one"), ("Alice", "passphrase-two")]
+        )
 
 
 def test_two_provisioned_members_share_read_write_and_registration_is_closed(
@@ -144,29 +155,39 @@ def test_two_provisioned_members_share_read_write_and_registration_is_closed(
     individual accounts have equal read/write on the same household records,
     and a direct registration request is refused once the deployment runs."""
     url = _schema_db(tmp_path / "recipe.db")
-    provision_accounts(url, [("alice", "alice-passphrase"), ("bob", "bob-passphrase")])
+    accounts = [("alice", "alice-passphrase"), ("bob", "bob-passphrase")]
+    provision_accounts(url, accounts)
 
     client = _closed_client(url)
     with client:
         alice = client.post(
-            "/api/auth/login", json={"username": "alice", "password": "alice-passphrase"}
+            "/api/auth/login",
+            json={"username": "alice", "password": "alice-passphrase"},
         )
         bob = client.post(
-            "/api/auth/login", json={"username": "bob", "password": "bob-passphrase"}
+            "/api/auth/login",
+            json={"username": "bob", "password": "bob-passphrase"},
         )
         assert alice.status_code == 200, alice.text
         assert bob.status_code == 200, bob.text
-        alice_h = {"Authorization": f"Bearer {alice.json()['token']}"}
-        bob_h = {"Authorization": f"Bearer {bob.json()['token']}"}
+        alice_token = alice.json()["token"]
+        bob_token = bob.json()["token"]
+        alice_h = {"Authorization": f"Bearer {alice_token}"}
+        bob_h = {"Authorization": f"Bearer {bob_token}"}
 
-        created = client.post("/api/recipes", json={"title": "Shared Loaf"}, headers=alice_h)
+        created = client.post(
+            "/api/recipes", json={"title": "Shared Loaf"}, headers=alice_h
+        )
         assert created.status_code == 201, created.text
         recipe_id = created.json()["id"]
 
         # Bob reads Alice's record and edits it.
-        assert client.get(f"/api/recipes/{recipe_id}", headers=bob_h).status_code == 200
+        read = client.get(f"/api/recipes/{recipe_id}", headers=bob_h)
+        assert read.status_code == 200
         edited = client.put(
-            f"/api/recipes/{recipe_id}", json={"title": "Shared Loaf (Bob's edit)"}, headers=bob_h
+            f"/api/recipes/{recipe_id}",
+            json={"title": "Shared Loaf (Bob's edit)"},
+            headers=bob_h,
         )
         assert edited.status_code == 200, edited.text
 
@@ -192,7 +213,9 @@ def test_registration_open_then_refused_after_closure(tmp_path: Path) -> None:
     provision_accounts(url, [("alice", "alice-passphrase")])
 
     open_settings = Settings(
-        database_url=url, allow_registration=True, registration_code="transition-code"
+        database_url=url,
+        allow_registration=True,
+        registration_code="transition-code",
     )
     with TestClient(create_app(open_settings, make_engine(url))) as c:
         opened = c.post(

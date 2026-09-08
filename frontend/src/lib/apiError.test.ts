@@ -13,7 +13,7 @@ import {
   useFormErrors,
 } from "./apiError";
 
-const issue = (loc: (string | number)[], msg = "bad"): ValidationIssue => ({
+const issue = (loc: Array<string | number>, msg = "bad"): ValidationIssue => ({
   loc,
   msg,
   type: "value_error",

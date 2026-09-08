@@ -22,8 +22,9 @@ class RecipeIngredientIn(BaseModel):
 
     `extra="forbid"` lives here and nowhere else in the API: this is the one
     schema where a mistyped key yields a *successful wrong write* rather than an
-    error. `{"item": "flour", "qty": 500}` would otherwise return 201 and store a
-    to-taste row, because `quantity=None` is itself legitimate (spec.md §5.2).
+    error. `{"item": "flour", "qty": 500}` would otherwise return 201 and
+    store a to-taste row, because `quantity=None` is itself legitimate
+    (spec.md §5.2).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -31,7 +32,8 @@ class RecipeIngredientIn(BaseModel):
     quantity: PositiveQuantity | None = None
     unit: Annotated[str, Field(max_length=30)] | None = None
     # Optional at the schema level so the router can answer a blank/whitespace
-    # `item` with the named 422 from §5.2 rather than a generic missing-field one.
+    # `item` with the named 422 from §5.2 rather than a generic missing-field
+    # one.
     item: Annotated[str, Field(min_length=1, max_length=200)] | None = None
     note: Annotated[str, Field(max_length=200)] | None = None
 
@@ -54,7 +56,7 @@ class RecipeBase(BaseModel):
     cook_time: NonNegativeMinutes | None = None
     servings: PositiveQuantity | None = None
     cuisine: Annotated[str, Field(max_length=100)] | None = None
-    # Free string, deliberately not URL-validated (spec.md §Mechanical defaults).
+    # Free string, deliberately not URL-validated (spec.md mechanical defaults).
     source_url: Annotated[str, Field(max_length=500)] | None = None
     tags: Annotated[list[Tag], Field(max_length=100)] = []
     steps: Annotated[list[Step], Field(max_length=100)] = []
@@ -62,7 +64,8 @@ class RecipeBase(BaseModel):
 
 class RecipeCreate(RecipeBase):
     # A `str` element is a pasted line, parsed server-side; an object element is
-    # already structured. Only `title` is required — a title-only recipe is legal.
+    # already structured. Only `title` is required; a title-only recipe is
+    # legal.
     ingredients: list[RecipeIngredientIn | str] = []
 
 

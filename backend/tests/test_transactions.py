@@ -101,7 +101,9 @@ def test_commit_time_failure_leaves_no_row_behind() -> None:
 
         db = make_session_factory(engine)()
         try:
-            row = db.scalar(select(SessionModel).where(SessionModel.token == _TOKEN))
+            row = db.scalar(
+                select(SessionModel).where(SessionModel.token == _TOKEN)
+            )
             assert row is None
         finally:
             db.close()
@@ -165,8 +167,8 @@ def test_every_database_touching_api_route_is_a_transaction_route(
 ) -> None:
     """The guard that fails when a later phase forgets `route_class=`.
 
-    `/api/health` has no database dependency and is exempt — it is asserted to be
-    a plain `APIRoute` so that the exemption stays deliberate rather than
+    `/api/health` has no database dependency and is exempt. It is asserted to
+    be a plain `APIRoute` so the exemption stays deliberate rather than
     becoming a hole this test cannot see.
     """
     offenders = [
@@ -191,7 +193,10 @@ def test_the_guard_can_actually_see_a_missing_route_class(built_app) -> None:
     forgetful = APIRouter()
 
     @forgetful.get("/api/_forgot")
-    def _forgot(db: SessionDep) -> dict[str, str]:  # pragma: no cover - never called
+    def _forgot(
+        db: SessionDep,
+    ) -> dict[str, str]:  # pragma: no cover - never called
+        del db
         return {"status": "ok"}
 
     built_app.include_router(forgetful)

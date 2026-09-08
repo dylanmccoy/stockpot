@@ -35,6 +35,7 @@ def _run(
         input=stdin,
         capture_output=True,
         text=True,
+        check=False,
         timeout=30,
     )
 
@@ -48,12 +49,15 @@ def _usernames(url: str) -> list[str]:
         engine.dispose()
 
 
-def test_cli_provisions_accounts_and_never_echoes_passwords(tmp_path: Path) -> None:
+def test_cli_provisions_accounts_and_never_echoes_passwords(
+    tmp_path: Path,
+) -> None:
     db = tmp_path / "recipe.db"
     url = _schema_db(db)
     accounts = tmp_path / "accounts.txt"
     accounts.write_text(
-        "# household\nalice alice-secret-passphrase\nbob bob-secret-passphrase\n"
+        "# household\nalice alice-secret-passphrase\n"
+        "bob bob-secret-passphrase\n"
     )
 
     result = _run(["--accounts", str(accounts), "--database-url", url])
@@ -70,7 +74,8 @@ def test_cli_reads_accounts_from_stdin(tmp_path: Path) -> None:
     url = _schema_db(tmp_path / "recipe.db")
 
     result = _run(
-        ["--accounts", "-", "--database-url", url], stdin="alice alice-secret-passphrase\n"
+        ["--accounts", "-", "--database-url", url],
+        stdin="alice alice-secret-passphrase\n",
     )
 
     assert result.returncode == 0, result.stderr
@@ -83,14 +88,19 @@ def test_cli_defaults_database_url_to_env_and_echoes_it(tmp_path: Path) -> None:
     accounts = tmp_path / "accounts.txt"
     accounts.write_text("alice alice-secret-passphrase\n")
 
-    result = _run(["--accounts", str(accounts)], env={"RECIPE_DATABASE_URL": url})
+    result = _run(
+        ["--accounts", str(accounts)],
+        env={"RECIPE_DATABASE_URL": url},
+    )
 
     assert result.returncode == 0, result.stderr
     assert f"database: {url}" in result.stdout
     assert _usernames(url) == ["alice"]
 
 
-def test_cli_rejects_a_malformed_line_and_writes_nothing(tmp_path: Path) -> None:
+def test_cli_rejects_a_malformed_line_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
     url = _schema_db(tmp_path / "recipe.db")
     accounts = tmp_path / "accounts.txt"
     accounts.write_text("alice alice-secret-passphrase\nbob\n")
@@ -103,13 +113,18 @@ def test_cli_rejects_a_malformed_line_and_writes_nothing(tmp_path: Path) -> None
     assert _usernames(url) == []
 
 
-def test_cli_reports_already_existing_accounts_as_skipped(tmp_path: Path) -> None:
+def test_cli_reports_already_existing_accounts_as_skipped(
+    tmp_path: Path,
+) -> None:
     url = _schema_db(tmp_path / "recipe.db")
     accounts = tmp_path / "accounts.txt"
     accounts.write_text("alice alice-secret-passphrase\n")
-    assert _run(["--accounts", str(accounts), "--database-url", url]).returncode == 0
+    first = _run(["--accounts", str(accounts), "--database-url", url])
+    assert first.returncode == 0
 
-    accounts.write_text("alice alice-secret-passphrase\nbob bob-secret-passphrase\n")
+    accounts.write_text(
+        "alice alice-secret-passphrase\nbob bob-secret-passphrase\n"
+    )
     result = _run(["--accounts", str(accounts), "--database-url", url])
 
     assert result.returncode == 0, result.stderr
@@ -121,9 +136,15 @@ def test_cli_reports_already_existing_accounts_as_skipped(tmp_path: Path) -> Non
 def test_cli_refuses_a_missing_database_file(tmp_path: Path) -> None:
     accounts = tmp_path / "accounts.txt"
     accounts.write_text("alice alice-secret-passphrase\n")
+    missing = tmp_path / "absent.db"
 
     result = _run(
-        ["--accounts", str(accounts), "--database-url", f"sqlite:///{tmp_path / 'absent.db'}"]
+        [
+            "--accounts",
+            str(accounts),
+            "--database-url",
+            f"sqlite:///{missing}",
+        ]
     )
 
     assert result.returncode == 1
@@ -136,7 +157,9 @@ def test_cli_refuses_a_database_without_schema(tmp_path: Path) -> None:
     accounts = tmp_path / "accounts.txt"
     accounts.write_text("alice alice-secret-passphrase\n")
 
-    result = _run(["--accounts", str(accounts), "--database-url", f"sqlite:///{empty}"])
+    result = _run(
+        ["--accounts", str(accounts), "--database-url", f"sqlite:///{empty}"]
+    )
 
     assert result.returncode == 1
     assert "no schema" in result.stderr

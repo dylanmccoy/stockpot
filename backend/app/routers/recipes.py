@@ -1,3 +1,5 @@
+"""Recipe API route handlers."""
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, selectinload
@@ -27,8 +29,8 @@ router = APIRouter(
 
 # A pasted `str` element is bounded before it reaches the parser. This is the
 # single guard that keeps every string sink fed by a pasted line inside its
-# column: `raw_text`, and the parser's `item` / `note` — `item` falls back to the
-# whole cleaned line when nothing parses (spec.md §5.2, R-4).
+# column: `raw_text`, and the parser's `item` / `note` — `item` falls back to
+# the whole cleaned line when nothing parses (spec.md §5.2, R-4).
 _PASTED_LINE_MAX = 200
 
 _EAGER = (selectinload(Recipe.ingredients), selectinload(Recipe.created_by))
@@ -37,7 +39,9 @@ _EAGER = (selectinload(Recipe.ingredients), selectinload(Recipe.created_by))
 def _get_or_404(db: Session, recipe_id: int) -> Recipe:
     recipe = db.get(Recipe, recipe_id, options=_EAGER)
     if recipe is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Recipe not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Recipe not found"
+        )
     return recipe
 
 
@@ -60,7 +64,7 @@ def _normalize_author_unit(unit: str | None) -> str | None:
 def _build_ingredients(
     elements: list[RecipeIngredientIn | str],
 ) -> list[RecipeIngredient]:
-    """Turn the request's mixed string/object elements into ordered child rows."""
+    """Turn mixed string/object request elements into ordered child rows."""
     rows: list[dict] = []
     for element in elements:
         if isinstance(element, str):
@@ -105,7 +109,9 @@ def _req_lines(recipe: Recipe, multiplier: float) -> list[ReqLine]:
             ingredient_id=ing.id,
             item=ing.item,
             normalized_name=ing.normalized_name,
-            quantity=None if ing.quantity is None else ing.quantity * multiplier,
+            quantity=(
+                None if ing.quantity is None else ing.quantity * multiplier
+            ),
             unit=ing.unit,
         )
         for ing in recipe.ingredients
@@ -136,7 +142,9 @@ def list_recipes(db: SessionDep) -> list[Recipe]:
 
 
 @router.post("", response_model=RecipeRead, status_code=status.HTTP_201_CREATED)
-def create_recipe(payload: RecipeCreate, current_user: CurrentUser, db: SessionDep) -> Recipe:
+def create_recipe(
+    payload: RecipeCreate, current_user: CurrentUser, db: SessionDep
+) -> Recipe:
     # Both stamps come from one `_utcnow()` call: two column defaults would fire
     # independently and leave a freshly created recipe with `created_at` a few
     # microseconds behind `updated_at` (spec.md §1, §7).
@@ -190,9 +198,12 @@ def recipe_availability(
     status_code=status.HTTP_201_CREATED,
 )
 def cook_recipe(
-    recipe_id: int, payload: CookRequest, current_user: CurrentUser, db: SessionDep
+    recipe_id: int,
+    payload: CookRequest,
+    current_user: CurrentUser,
+    db: SessionDep,
 ) -> CookLog:
-    """Record a cook event and, when `deduct=true`, draw inventory down (spec.md §5.4).
+    """Record a cook event and optionally draw inventory down.
 
     The `deduct_calc` proposal is applied with Core `UPDATE`s inside the
     request's single `BEGIN IMMEDIATE` transaction (`TransactionRoute` owns the
@@ -220,7 +231,10 @@ def cook_recipe(
             db.execute(
                 update(InventoryItem)
                 .where(InventoryItem.id == row_update.row_id)
-                .values(quantity_base=row_update.new_quantity_base, updated_at=now)
+                .values(
+                    quantity_base=row_update.new_quantity_base,
+                    updated_at=now,
+                )
             )
         log.deductions = proposal.log_entries
 
@@ -243,7 +257,9 @@ def list_cook_logs(recipe_id: int, db: SessionDep) -> list[CookLog]:
 
 
 @router.put("/{recipe_id}", response_model=RecipeRead)
-def update_recipe(recipe_id: int, payload: RecipeUpdate, db: SessionDep) -> Recipe:
+def update_recipe(
+    recipe_id: int, payload: RecipeUpdate, db: SessionDep
+) -> Recipe:
     recipe = _get_or_404(db, recipe_id)
     # Build the replacement children before mutating anything, so a rejected
     # element leaves the recipe untouched.

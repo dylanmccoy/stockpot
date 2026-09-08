@@ -43,10 +43,10 @@ def issue_token(
 ) -> SessionModel:
     """Create a new session token for a user.
 
-    `settings` is passed in, never read from the module-level `Settings`: that is
-    what lets `create_app(test_settings, test_engine)` influence token lifetime,
-    and it leaves no module-global configuration read on a request path
-    (spec.md §3.4).
+    `settings` is passed in, never read from the module-level `Settings`: this
+    lets `create_app(test_settings, test_engine)` influence token lifetime and
+    leaves no module-global configuration read on a request path (spec.md
+    §3.4).
 
     Args:
         db: SQLAlchemy session.
@@ -78,7 +78,7 @@ def get_current_user(
     settings: Annotated[Settings, Depends(_get_settings)],
     authorization: str | None = Header(default=None),
 ) -> User:
-    """Dependency to extract and validate the current user from the Authorization header.
+    """Extract and validate the current user from the Authorization header.
 
     Stashes the SessionModel row on request.state for logout to use.
 
@@ -93,6 +93,8 @@ def get_current_user(
             - unknown token
             - expired token
     """
+    del settings  # Retain app-settings dependency injection for this request.
+
     if authorization is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -115,7 +117,9 @@ def get_current_user(
     token = parts[1]
 
     # Lookup the session token.
-    session_row = db.scalar(select(SessionModel).where(SessionModel.token == token))
+    session_row = db.scalar(
+        select(SessionModel).where(SessionModel.token == token)
+    )
     if session_row is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

@@ -1,4 +1,4 @@
-"""Grocery list schemas (spec.md §1 "grocery_lists"/"grocery_list_items", §5.6)."""
+"""Grocery list schemas (spec.md sections 1 and 5.6)."""
 
 from datetime import datetime
 from typing import Annotated
@@ -58,6 +58,8 @@ class GroceryListItemUpdate(BaseModel):
 
 
 class GroceryListItemRead(ORMModel):
+    """Grocery list item returned by grocery list endpoints."""
+
     id: int
     item: str
     normalized_name: str

@@ -17,9 +17,17 @@ from app.schemas.auth import (
     TokenResponse,
     UserRead,
 )
-from app.security import CurrentUser, hash_password, issue_token, verify_password
+from app.security import (
+    CurrentUser,
+    _DUMMY_HASH,
+    hash_password,
+    issue_token,
+    verify_password,
+)
 
-router = APIRouter(prefix="/api/auth", tags=["auth"], route_class=TransactionRoute)
+router = APIRouter(
+    prefix="/api/auth", tags=["auth"], route_class=TransactionRoute
+)
 
 
 def get_settings(request: Request) -> Settings:
@@ -27,7 +35,11 @@ def get_settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
-@router.post("/register", status_code=status.HTTP_201_CREATED, response_model=TokenResponse)
+@router.post(
+    "/register",
+    status_code=status.HTTP_201_CREATED,
+    response_model=TokenResponse,
+)
 def register(
     payload: RegisterRequest,
     db: SessionDep,
@@ -51,7 +63,9 @@ def register(
 
     # Check registration code if configured.
     if settings.registration_code:
-        if not secrets.compare_digest(payload.code or "", settings.registration_code):
+        if not secrets.compare_digest(
+            payload.code or "", settings.registration_code
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="invalid registration code",
@@ -59,7 +73,9 @@ def register(
 
     # Check for existing user (case-insensitive).
     existing = db.scalar(
-        select(User).where(func.lower(User.username) == payload.username.lower())
+        select(User).where(
+            func.lower(User.username) == payload.username.lower()
+        )
     )
     if existing is not None:
         raise HTTPException(
@@ -84,7 +100,11 @@ def register(
     )
 
 
-@router.post("/login", status_code=status.HTTP_200_OK, response_model=TokenResponse)
+@router.post(
+    "/login",
+    status_code=status.HTTP_200_OK,
+    response_model=TokenResponse,
+)
 def login(
     payload: LoginRequest,
     db: SessionDep,
@@ -97,14 +117,14 @@ def login(
     """
     # Lookup user by lower(username).
     user = db.scalar(
-        select(User).where(func.lower(User.username) == payload.username.lower())
+        select(User).where(
+            func.lower(User.username) == payload.username.lower()
+        )
     )
 
     # If user not found, verify against dummy hash for timing safety.
     if user is None:
-        from app.security import _DUMMY_HASH
-
-        verify_password(payload.password, _DUMMY_HASH)  # noqa: F841 (unused, for timing)
+        verify_password(payload.password, _DUMMY_HASH)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid username or password",
@@ -137,13 +157,19 @@ def logout(
     The token is validated by CurrentUser dependency; session_row is stashed
     on request.state by get_current_user.
     """
+    del user  # The injected dependency authenticates the request.
+
     # The session_row is stashed by get_current_user on the request.
     session_row = getattr(request.state, "session_row", None)
     if session_row is not None:
         db.delete(session_row)
 
 
-@router.post("/change-password", status_code=status.HTTP_200_OK, response_model=TokenResponse)
+@router.post(
+    "/change-password",
+    status_code=status.HTTP_200_OK,
+    response_model=TokenResponse,
+)
 def change_password(
     payload: ChangePasswordRequest,
     user: CurrentUser,

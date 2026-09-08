@@ -1,3 +1,5 @@
+"""SQLAlchemy models for persistent recipe application data."""
+
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -23,6 +25,8 @@ def _utcnow() -> datetime:
 
 
 class User(Base):
+    """A user who can authenticate and own application records."""
+
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -36,15 +40,21 @@ class User(Base):
     )
 
     sessions: Mapped[list["Session"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
 
 class Session(Base):
+    """An authentication session belonging to a user."""
+
     __tablename__ = "sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    token: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
@@ -52,10 +62,15 @@ class Session(Base):
     last_used_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
     expires_at: Mapped[datetime] = mapped_column(UtcDateTime, nullable=False)
 
-    user: Mapped[User] = relationship(back_populates="sessions", passive_deletes=True)
+    user: Mapped[User] = relationship(
+        back_populates="sessions",
+        passive_deletes=True,
+    )
 
 
 class Recipe(Base):
+    """A recipe and its preparation metadata."""
+
     __tablename__ = "recipes"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -97,6 +112,8 @@ class Recipe(Base):
 
 
 class RecipeIngredient(Base):
+    """An ordered ingredient belonging to a recipe."""
+
     __tablename__ = "recipe_ingredients"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -113,30 +130,42 @@ class RecipeIngredient(Base):
     unit: Mapped[str | None] = mapped_column(String(30), nullable=True)
     item: Mapped[str] = mapped_column(String(200), nullable=False)
     note: Mapped[str | None] = mapped_column(String(200), nullable=True)
-    normalized_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    normalized_name: Mapped[str] = mapped_column(
+        String(200), nullable=False, index=True
+    )
     # The verbatim pasted line (already truncated to 200 chars) for string
     # elements; NULL for structured ones.
     raw_text: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
     recipe: Mapped[Recipe] = relationship(back_populates="ingredients")
 
-    __table_args__ = (Index("ix_recipe_ingredients_recipe_position", "recipe_id", "position"),)
+    __table_args__ = (
+        Index("ix_recipe_ingredients_recipe_position", "recipe_id", "position"),
+    )
 
 
 class InventoryItem(Base):
+    """An ingredient quantity currently held in inventory."""
+
     __tablename__ = "inventory_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    # Display text. Set on first insert into a `(match_name, unit_bucket)` row and
-    # only changed by `PATCH` — the additive `POST` upsert leaves it untouched
-    # on conflict (spec.md §1, §5.5).
+    # Display text. Set on first insert into a `(match_name, unit_bucket)`
+    # row and only changed by `PATCH` — the additive `POST` upsert leaves it
+    # untouched on conflict (spec.md §1, §5.5).
     item: Mapped[str] = mapped_column(String(200), nullable=False)
     # `normalize_name(item)`; tracks `item`.
-    normalized_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    normalized_name: Mapped[str] = mapped_column(
+        String(200), nullable=False, index=True
+    )
     # The recipe<->inventory match key. User-editable but canonical: every value
     # (default or supplied) is `normalize_name`d before store; `""` after
     # normalize -> 422 (N5).
-    match_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    match_name: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+        index=True,
+    )
     # "mass" | "volume" | "count" | "opaque:<canonical-token>". Widened to 30 to
     # fit `opaque:` + a long unknown token.
     unit_bucket: Mapped[str] = mapped_column(String(30), nullable=False)
@@ -145,7 +174,11 @@ class InventoryItem(Base):
     # can still overflow to `+inf` through unit conversion or the additive
     # upsert, and `x < 9e999` (SQLite parses the literal as `+Inf`) rejects that
     # and NaN at the database boundary.
-    quantity_base: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    quantity_base: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+    )
     # Preferred display unit only — never drives math. NULL / opaque => display
     # in the canonical unit.
     display_unit: Mapped[str | None] = mapped_column(String(30), nullable=True)
@@ -159,7 +192,11 @@ class InventoryItem(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("match_name", "unit_bucket", name="uq_inventory_match_bucket"),
+        UniqueConstraint(
+            "match_name",
+            "unit_bucket",
+            name="uq_inventory_match_bucket",
+        ),
         CheckConstraint(
             "quantity_base >= 0 AND quantity_base < 9e999",
             name="ck_inventory_quantity_base_nonneg_finite",
@@ -168,14 +205,22 @@ class InventoryItem(Base):
 
 
 class GroceryList(Base):
+    """A named collection of grocery list items."""
+
     __tablename__ = "grocery_lists"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
-    # Informational only, **no FK** — a deleted source recipe must not touch this
-    # list (spec.md §1).
-    source_recipe_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="active",
+    )
+    # Informational only, **no FK** — a deleted source recipe must not touch
+    # this list (spec.md §1).
+    source_recipe_ids: Mapped[list[int]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
     # Attribution only, never reassigned. No cascade: deleting a user (which v1
     # never does) must not take their grocery lists with them.
@@ -193,6 +238,8 @@ class GroceryList(Base):
 
 
 class GroceryListItem(Base):
+    """An individual item on a grocery list."""
+
     __tablename__ = "grocery_list_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -201,22 +248,40 @@ class GroceryListItem(Base):
     )
     item: Mapped[str] = mapped_column(String(200), nullable=False)
     # `normalize_name(item)`; recomputed whenever `item` is edited.
-    normalized_name: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
-    # For `source="generated"`: the shortfall in the bucket's canonical unit. For
-    # `source="manual"`: as the user typed. `None` = to taste / no amount.
+    normalized_name: Mapped[str] = mapped_column(
+        String(200), nullable=False, index=True
+    )
+    # For `source="generated"`: the shortfall in the bucket's canonical unit.
+    # For `source="manual"`: as the user typed. `None` = to taste / no amount.
     quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
     unit: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    checked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    checked: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
     # Set when `checked` flips true, cleared to NULL when it flips false.
-    checked_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    checked_at: Mapped[datetime | None] = mapped_column(
+        UtcDateTime,
+        nullable=True,
+    )
     # Set by `submit` when the line is applied.
-    submitted_at: Mapped[datetime | None] = mapped_column(UtcDateTime, nullable=True)
+    submitted_at: Mapped[datetime | None] = mapped_column(
+        UtcDateTime,
+        nullable=True,
+    )
     source: Mapped[str] = mapped_column(String(20), nullable=False)
     # `false` = the true shortfall is uncertain (incompatible stock present).
-    nettable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    nettable: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
     # Idempotency guard **and** freeze flag: once true, the line rejects further
     # PATCH / DELETE (spec.md §5.6).
-    added_to_inventory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    added_to_inventory: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     # Canonical amount / unit `submit` actually added, for the applied snapshot.
     applied_quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
     applied_unit: Mapped[str | None] = mapped_column(String(30), nullable=True)
@@ -227,6 +292,8 @@ class GroceryListItem(Base):
 
 
 class CookLog(Base):
+    """A historical record of cooking a recipe."""
+
     __tablename__ = "cook_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -238,9 +305,17 @@ class CookLog(Base):
     recipe_title: Mapped[str] = mapped_column(String(200), nullable=False)
     # The schema guarantees `> 0` and finite on the HTTP path; the check is
     # defense in depth, mirroring `inventory_items.quantity_base`.
-    multiplier: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+    multiplier: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=1.0,
+    )
     # `false` = the event was logged without touching stock.
-    deducted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    deducted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
     cooked_at: Mapped[datetime] = mapped_column(UtcDateTime, default=_utcnow)
     # Attribution only, never reassigned. No cascade: deleting a user (which v1
     # never does) must not take their cook history with them.
@@ -249,7 +324,11 @@ class CookLog(Base):
     )
     # One entry per member ingredient; `[]` when `deducted=false`. Stored raw,
     # serialized through `list[CookDeductionRead]` on read (spec.md §1, §5.4).
-    deductions: Mapped[list[dict]] = mapped_column(JSON, nullable=False, default=list)
+    deductions: Mapped[list[dict]] = mapped_column(
+        JSON,
+        nullable=False,
+        default=list,
+    )
 
     recipe: Mapped[Recipe | None] = relationship(back_populates="cook_logs")
     cooked_by: Mapped[User | None] = relationship()

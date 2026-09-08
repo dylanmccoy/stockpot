@@ -1,7 +1,7 @@
 // Shared test utilities for exercising the HTTP client / error surfaces.
 
 import { QueryClient } from "@tanstack/react-query";
-import { ApiError } from "../lib/apiError";
+import { type ApiError } from "../lib/apiError";
 
 /** Await a promise that must reject, returning the thrown `ApiError`. */
 export async function rejection(p: Promise<unknown>): Promise<ApiError> {

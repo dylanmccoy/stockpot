@@ -45,7 +45,10 @@ def main(argv: list[str] | None = None) -> int:
         "--target",
         required=True,
         type=Path,
-        help="Database path. Must NOT exist by default; MUST exist with --replace.",
+        help=(
+            "Database path. Must NOT exist by default; "
+            "MUST exist with --replace."
+        ),
     )
     parser.add_argument(
         "--replace",

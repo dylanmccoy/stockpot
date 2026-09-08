@@ -11,7 +11,7 @@ export interface Column<Row> {
 export interface DataTableProps<Row> {
   /** Accessible name for the table. Rendered as a `<caption>`. */
   caption: string;
-  columns: Column<Row>[];
+  columns: Array<Column<Row>>;
   rows: Row[];
   rowKey: (row: Row) => string | number;
   /** Shown in place of the body when `rows` is empty. */

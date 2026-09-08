@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from app import models  # noqa: F401  — populates Base.metadata with every table
+from app import models
 from app.backup_status import (
     BackupStatusError,
     gather,
@@ -29,12 +29,14 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent
 CLI = BACKEND_DIR / "scripts" / "backup_status.py"
 
 NOW = datetime(2026, 9, 5, 12, 0, 0, tzinfo=timezone.utc)
+MODELS_MODULE = models  # Import populates Base.metadata with every table.
 
 
 def _snapshot(dest_dir: Path, taken_at: datetime) -> Path:
     """Write a real app-schema SQLite file named like a real snapshot."""
     dest_dir.mkdir(parents=True, exist_ok=True)
-    path = dest_dir / f"recipe-{taken_at.strftime('%Y%m%dT%H%M%SZ')}.db"
+    timestamp = taken_at.strftime("%Y%m%dT%H%M%SZ")
+    path = dest_dir / f"recipe-{timestamp}.db"
     engine = make_engine(f"sqlite:///{path}")
     Base.metadata.create_all(engine)
     engine.dispose()
@@ -54,14 +56,17 @@ def _hours_before(hours: float) -> datetime:
 # --- freshness report (acceptance criterion 1) -----------------------------
 
 
-def test_report_exposes_latest_success_its_age_and_the_latest_failure(tmp_path: Path):
+def test_report_exposes_latest_success_its_age_and_the_latest_failure(
+    tmp_path: Path,
+):
     backups = tmp_path / "backups"
     _snapshot(backups, _hours_before(50))
     newest = _snapshot(backups, _hours_before(2))
     log = _log(
         tmp_path,
         "2026-09-03T03:30:00Z ok /b/recipe-20260903T033000Z.db",
-        "2026-09-04T03:30:00Z FAIL destination /b unwritable: [Errno 13] Permission denied",
+        "2026-09-04T03:30:00Z FAIL destination /b unwritable: "
+        "[Errno 13] Permission denied",
         "2026-09-05T03:30:00Z ok /b/recipe-20260905T100000Z.db",
     )
 
@@ -73,7 +78,9 @@ def test_report_exposes_latest_success_its_age_and_the_latest_failure(tmp_path: 
     assert report.fresh is True
     assert report.problem is None
     assert report.latest_failure is not None
-    assert report.latest_failure.at == datetime(2026, 9, 4, 3, 30, tzinfo=timezone.utc)
+    assert report.latest_failure.at == datetime(
+        2026, 9, 4, 3, 30, tzinfo=timezone.utc
+    )
     assert "Permission denied" in report.latest_failure.reason
 
 
@@ -109,7 +116,9 @@ def test_a_recent_success_is_not_flagged(tmp_path: Path):
 # --- incomplete / unreadable files (acceptance criterion 3) ----------------
 
 
-def test_incomplete_and_unreadable_files_are_never_counted_as_a_success(tmp_path: Path):
+def test_incomplete_and_unreadable_files_are_never_counted_as_a_success(
+    tmp_path: Path,
+):
     backups = tmp_path / "backups"
     good = _snapshot(backups, _hours_before(2))
     (backups / ".recipe-20260905T110000Z.db.tmp").write_bytes(b"half a copy")
@@ -124,14 +133,16 @@ def test_incomplete_and_unreadable_files_are_never_counted_as_a_success(tmp_path
     assert torn in report.unreadable
 
 
-def test_a_directory_with_only_an_incomplete_file_has_no_successful_backup(tmp_path: Path):
+def test_a_directory_with_only_an_incomplete_file_has_no_successful_backup(
+    tmp_path: Path,
+):
     backups = tmp_path / "backups"
     backups.mkdir()
     (backups / ".recipe-20260905T110000Z.db.tmp").write_bytes(b"half a copy")
 
     report = gather(backups, now=NOW)
 
-    assert report.valid == []
+    assert not report.valid
     assert report.problem == "no successful backup on local disk"
 
 
@@ -149,16 +160,21 @@ def test_keep_below_one_is_rejected(tmp_path: Path):
 # --- retention (acceptance criteria 2 and 4) -------------------------------
 
 
-def test_prune_keeps_the_newest_keep_valid_snapshots_and_drops_the_rest(tmp_path: Path):
+def test_prune_keeps_the_newest_keep_valid_snapshots_and_drops_the_rest(
+    tmp_path: Path,
+):
     backups = tmp_path / "backups"
-    made = [_snapshot(backups, _hours_before(h)) for h in (120, 96, 72, 48, 24, 2)]
+    hours = (120, 96, 72, 48, 24, 2)
+    made = [_snapshot(backups, _hours_before(h)) for h in hours]
     oldest_four, newest_two = made[:4], made[4:]
 
     outcome = prune(backups, keep=2, now=NOW)
 
     assert sorted(outcome.removed) == sorted(oldest_four)
     assert [s.path for s in outcome.kept] == list(reversed(newest_two))
-    assert {p.name for p in backups.glob("recipe-*.db")} == {p.name for p in newest_two}
+    actual_names = {p.name for p in backups.glob("recipe-*.db")}
+    expected_names = {p.name for p in newest_two}
+    assert actual_names == expected_names
     assert outcome.ok
 
 
@@ -178,11 +194,14 @@ def test_a_failed_run_never_evicts_an_earlier_success(tmp_path: Path):
 
     outcome = prune(backups, keep=3, log_path=log, now=NOW)
 
-    assert outcome.removed == []
-    assert {p.name for p in backups.glob("recipe-*.db")} == {older.name, newer.name}
+    assert not outcome.removed
+    actual_names = {p.name for p in backups.glob("recipe-*.db")}
+    assert actual_names == {older.name, newer.name}
     assert outcome.report.latest_success.path == newer
     assert outcome.report.latest_failure is not None
-    assert outcome.report.latest_failure.reason.startswith("deployment database")
+    assert outcome.report.latest_failure.reason.startswith(
+        "deployment database"
+    )
 
 
 def test_prune_never_touches_partials_or_unrelated_files(tmp_path: Path):
@@ -207,12 +226,14 @@ def test_dry_run_reports_the_surplus_without_deleting_anything(tmp_path: Path):
 
     outcome = prune(backups, keep=1, now=NOW, dry_run=True)
 
-    assert outcome.removed == []
+    assert not outcome.removed
     assert [s.path for s in outcome.report.surplus] == list(reversed(made[:3]))
     assert len(list(backups.glob("recipe-*.db"))) == 4
 
 
-def test_a_delete_that_fails_is_reported_and_leaves_the_retained_set_intact(tmp_path: Path):
+def test_a_delete_that_fails_is_reported_and_leaves_the_retained_set_intact(
+    tmp_path: Path,
+):
     backups = tmp_path / "backups"
     made = [_snapshot(backups, _hours_before(h)) for h in (72, 48, 2)]
     os.chmod(backups, 0o500)  # entries cannot be unlinked
@@ -223,7 +244,9 @@ def test_a_delete_that_fails_is_reported_and_leaves_the_retained_set_intact(tmp_
 
     assert outcome.ok is False
     assert {p for p, _ in outcome.failed} == set(made[:2])
-    assert {p.name for p in backups.glob("recipe-*.db")} == {p.name for p in made}
+    actual_names = {p.name for p in backups.glob("recipe-*.db")}
+    expected_names = {p.name for p in made}
+    assert actual_names == expected_names
 
 
 # --- operator CLI (the real operator operation, acceptance criterion 4) ----
@@ -236,6 +259,7 @@ def _run_cli(*args: str) -> subprocess.CompletedProcess:
         env={**os.environ},
         capture_output=True,
         text=True,
+        check=False,
         timeout=60,
     )
 
@@ -246,15 +270,21 @@ def test_cli_reports_a_fresh_backup_and_exits_zero(tmp_path: Path):
     log = _log(tmp_path, "2026-09-01T03:30:00Z FAIL something earlier")
 
     result = _run_cli(
-        "--dest-dir", str(backups),
-        "--log", str(log),
-        "--now", NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "--dest-dir",
+        str(backups),
+        "--log",
+        str(log),
+        "--now",
+        NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
     assert result.returncode == 0, result.stderr
     assert "latest success  :" in result.stdout
     assert "3.0h old" in result.stdout
-    assert "latest failure  : 2026-09-01T03:30:00Z  something earlier" in result.stdout
+    assert (
+        "latest failure  : 2026-09-01T03:30:00Z  something earlier"
+        in result.stdout
+    )
     assert "status          : OK" in result.stdout
 
 
@@ -263,8 +293,10 @@ def test_cli_exits_one_when_the_latest_backup_is_stale(tmp_path: Path):
     _snapshot(backups, _hours_before(40))
 
     result = _run_cli(
-        "--dest-dir", str(backups),
-        "--now", NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "--dest-dir",
+        str(backups),
+        "--now",
+        NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
     assert result.returncode == 1
@@ -275,7 +307,9 @@ def test_cli_exits_one_when_there_is_no_successful_backup(tmp_path: Path):
     backups = tmp_path / "backups"
     backups.mkdir()
 
-    result = _run_cli("--dest-dir", str(backups), "--now", NOW.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    result = _run_cli(
+        "--dest-dir", str(backups), "--now", NOW.strftime("%Y-%m-%dT%H:%M:%SZ")
+    )
 
     assert result.returncode == 1
     assert "no successful backup" in result.stderr
@@ -287,18 +321,24 @@ def test_cli_exits_two_on_a_missing_directory(tmp_path: Path):
     assert "backup-status failed" in result.stderr
 
 
-def test_cli_prune_applies_retention_and_reports_what_it_removed(tmp_path: Path):
+def test_cli_prune_applies_retention_and_reports_what_it_removed(
+    tmp_path: Path,
+):
     backups = tmp_path / "backups"
     made = [_snapshot(backups, _hours_before(h)) for h in (72, 48, 24, 2)]
 
     result = _run_cli(
-        "--dest-dir", str(backups),
-        "--keep", "2",
+        "--dest-dir",
+        str(backups),
+        "--keep",
+        "2",
         "--prune",
-        "--now", NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "--now",
+        NOW.strftime("%Y-%m-%dT%H:%M:%SZ"),
     )
 
     assert result.returncode == 0, result.stderr
     assert f"removed         : {made[0].name}" in result.stdout
     assert f"removed         : {made[1].name}" in result.stdout
-    assert {p.name for p in backups.glob("recipe-*.db")} == {made[2].name, made[3].name}
+    actual_names = {p.name for p in backups.glob("recipe-*.db")}
+    assert actual_names == {made[2].name, made[3].name}

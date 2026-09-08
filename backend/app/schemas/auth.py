@@ -12,7 +12,9 @@ class RegisterRequest(BaseModel):
 
     username: str = Field(
         pattern=r"^[A-Za-z0-9_.-]{3,50}$",
-        description="Username: 3-50 chars, alphanumeric + underscore, dot, dash",
+        description=(
+            "Username: 3-50 chars, alphanumeric + underscore, dot, dash"
+        ),
     )
     password: str = Field(
         min_length=8,
@@ -41,7 +43,9 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(
         min_length=8,
         max_length=128,
-        description="New password: 8-128 characters (the same rule register applies)",
+        description=(
+            "New password: 8-128 characters (the same rule register applies)"
+        ),
     )
 
 

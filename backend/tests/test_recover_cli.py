@@ -36,6 +36,7 @@ def _run(
         input=stdin,
         capture_output=True,
         text=True,
+        check=False,
         timeout=30,
     )
 
@@ -53,13 +54,21 @@ def test_cli_recovers_revokes_sessions_and_never_echoes_the_password(
 ) -> None:
     url = _schema_db(tmp_path / "recipe.db")
     provision_accounts(url, [("alice", "old-secret-passphrase")])
-    assert _login(url, "alice", "old-secret-passphrase") == 200  # one live session
+    # Establish one live session before recovery.
+    assert _login(url, "alice", "old-secret-passphrase") == 200
 
     pw_file = tmp_path / "new-password.txt"
     pw_file.write_text("new-secret-passphrase\n")
 
     result = _run(
-        ["--username", "alice", "--password-file", str(pw_file), "--database-url", url]
+        [
+            "--username",
+            "alice",
+            "--password-file",
+            str(pw_file),
+            "--database-url",
+            url,
+        ]
     )
 
     assert result.returncode == 0, result.stderr
@@ -98,7 +107,9 @@ def test_cli_defaults_database_url_to_env_and_echoes_it(tmp_path: Path) -> None:
     assert f"database: {url}" in result.stdout
 
 
-def test_cli_refuses_an_unknown_account_and_writes_nothing(tmp_path: Path) -> None:
+def test_cli_refuses_an_unknown_account_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
     url = _schema_db(tmp_path / "recipe.db")
     provision_accounts(url, [("alice", "old-secret-passphrase")])
     pw_file = tmp_path / "new-password.txt"
@@ -122,7 +133,14 @@ def test_cli_refuses_a_short_password(tmp_path: Path) -> None:
     pw_file.write_text("short\n")
 
     result = _run(
-        ["--username", "alice", "--password-file", str(pw_file), "--database-url", url]
+        [
+            "--username",
+            "alice",
+            "--password-file",
+            str(pw_file),
+            "--database-url",
+            url,
+        ]
     )
 
     assert result.returncode == 1
@@ -137,7 +155,14 @@ def test_cli_refuses_an_empty_password_file(tmp_path: Path) -> None:
     pw_file.write_text("\n\n")
 
     result = _run(
-        ["--username", "alice", "--password-file", str(pw_file), "--database-url", url]
+        [
+            "--username",
+            "alice",
+            "--password-file",
+            str(pw_file),
+            "--database-url",
+            url,
+        ]
     )
 
     assert result.returncode == 1
@@ -147,6 +172,7 @@ def test_cli_refuses_an_empty_password_file(tmp_path: Path) -> None:
 def test_cli_refuses_a_missing_database_file(tmp_path: Path) -> None:
     pw_file = tmp_path / "new-password.txt"
     pw_file.write_text("new-secret-passphrase\n")
+    missing = tmp_path / "absent.db"
 
     result = _run(
         [
@@ -155,7 +181,7 @@ def test_cli_refuses_a_missing_database_file(tmp_path: Path) -> None:
             "--password-file",
             str(pw_file),
             "--database-url",
-            f"sqlite:///{tmp_path / 'absent.db'}",
+            f"sqlite:///{missing}",
         ]
     )
 

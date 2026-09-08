@@ -79,7 +79,9 @@ function lineDraftFrom(item: GroceryListItemRead): GroceryLineDraft {
   return {
     item: item.item,
     quantity:
-      item.quantity == null ? "" : String(Number(item.quantity.toPrecision(6))),
+      item.quantity === null
+        ? ""
+        : String(Number(item.quantity.toPrecision(6))),
     unit: item.unit ?? "",
   };
 }
@@ -124,7 +126,7 @@ export function buildAddLine(draft: GroceryLineDraft): GroceryListItemIn {
  *  PATCH-body builder (mirrors Inventory's `diffEditDraft`). */
 function diffLineDraft(original: GroceryListItemRead, draft: GroceryLineDraft) {
   const currentQuantity =
-    original.quantity == null
+    original.quantity === null
       ? ""
       : String(Number(original.quantity.toPrecision(6)));
   const currentUnit = original.unit ?? "";
@@ -247,7 +249,7 @@ function GroceryListDetailView({ id }: { id: number }) {
       toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey });
+      void queryClient.invalidateQueries({ queryKey });
     },
   });
 
@@ -257,7 +259,7 @@ function GroceryListDetailView({ id }: { id: number }) {
   const addMutation = useMutation({
     mutationFn: (body: GroceryListItemIn) => groceryApi.addItem(id, body),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey });
+      void queryClient.invalidateQueries({ queryKey });
       setAddDraft(emptyLineDraft());
       setAddErrors({});
     },
@@ -294,7 +296,7 @@ function GroceryListDetailView({ id }: { id: number }) {
       wasGenerated: boolean;
     }) => groceryApi.updateItem(id, itemId, body),
     onSuccess: (_updated, vars) => {
-      queryClient.invalidateQueries({ queryKey });
+      void queryClient.invalidateQueries({ queryKey });
       setEditingId(null);
       setEditDraft(null);
       setEditErrors({});
@@ -312,7 +314,7 @@ function GroceryListDetailView({ id }: { id: number }) {
         setEditDraft(null);
         setEditErrors({});
         toast.show(LIST_ARCHIVED_MESSAGE, { variant: "error" });
-        queryClient.invalidateQueries({ queryKey });
+        void queryClient.invalidateQueries({ queryKey });
         return;
       }
       if (isStockConflict(err)) {
@@ -326,7 +328,7 @@ function GroceryListDetailView({ id }: { id: number }) {
         setEditDraft(null);
         setEditErrors({});
         toast.show(FROZEN_LINE_MESSAGE, { variant: "error" });
-        queryClient.invalidateQueries({ queryKey });
+        void queryClient.invalidateQueries({ queryKey });
         return;
       }
       if (!hasInlineFormError(err)) {
@@ -378,17 +380,17 @@ function GroceryListDetailView({ id }: { id: number }) {
     mutationFn: () => groceryApi.submit(id),
     onSuccess: () => {
       setSubmitDialogOpen(false);
-      queryClient.invalidateQueries({ queryKey });
-      queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      void queryClient.invalidateQueries({ queryKey });
+      void queryClient.invalidateQueries({ queryKey: ["inventory"] });
     },
     onError: (err: unknown) => {
       setSubmitDialogOpen(false);
       if (isListNotActive(err)) {
         toast.show(LIST_ARCHIVED_MESSAGE, { variant: "error" });
-        queryClient.invalidateQueries({ queryKey });
+        void queryClient.invalidateQueries({ queryKey });
       } else if (isStockConflict(err)) {
         toast.show(STOCK_CONFLICT_MESSAGE, { variant: "error" });
-        queryClient.invalidateQueries({ queryKey });
+        void queryClient.invalidateQueries({ queryKey });
       } else {
         toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
       }
@@ -402,13 +404,13 @@ function GroceryListDetailView({ id }: { id: number }) {
     mutationFn: () => groceryApi.archive(id),
     onSuccess: () => {
       setArchiveDialogOpen(false);
-      queryClient.invalidateQueries({ queryKey });
+      void queryClient.invalidateQueries({ queryKey });
     },
     onError: (err: unknown) => {
       setArchiveDialogOpen(false);
       if (isListNotActive(err)) {
         toast.show(LIST_ARCHIVED_MESSAGE, { variant: "error" });
-        queryClient.invalidateQueries({ queryKey });
+        void queryClient.invalidateQueries({ queryKey });
       } else {
         toast.show(GENERIC_ERROR_MESSAGE, { variant: "error" });
       }

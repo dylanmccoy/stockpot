@@ -1,4 +1,4 @@
-"""Numeric-bound validation on the request surface (spec.md §7, `test_validation.py`).
+"""Numeric-bound request-surface validation (spec.md §7).
 
 Phase 3 owns the recipe half of that row. The inventory `POST`/`PATCH`, `cook`
 `multiplier`, grocery `multipliers`, and `availability?multiplier=` cases land
@@ -11,7 +11,6 @@ test. Python's `json.loads` — what Starlette parses with — accepts them, so 
 server really does see a non-finite float, and `allow_inf_nan=False` on the
 schema is what rejects it.
 """
-
 
 import pytest
 from fastapi.testclient import TestClient
@@ -33,12 +32,15 @@ def _send_raw(client: TestClient, method: str, url: str, body: str):
 def test_recipe_ingredient_quantity_rejects_non_positive_and_non_finite(
     auth_client: TestClient, quantity: str
 ) -> None:
+    body = (
+        '{"title": "Bad quantity", "ingredients": '
+        '[{"item": "flour", "quantity": %s}]}'
+    ) % quantity
     response = _send_raw(
         auth_client,
         "POST",
         "/api/recipes",
-        '{"title": "Bad quantity", "ingredients": [{"item": "flour", "quantity": %s}]}'
-        % quantity,
+        body,
     )
     assert response.status_code == 422, response.text
     # Nothing was written on the way to the rejection.
@@ -50,21 +52,27 @@ def test_recipe_ingredient_quantity_bound_also_applies_to_put(
     auth_client: TestClient, quantity: str
 ) -> None:
     created = auth_client.post(
-        "/api/recipes", json={"title": "Good", "ingredients": [{"item": "flour", "quantity": 1}]}
+        "/api/recipes",
+        json={
+            "title": "Good",
+            "ingredients": [{"item": "flour", "quantity": 1}],
+        },
     ).json()
+    recipe_id = created["id"]
 
     response = _send_raw(
         auth_client,
         "PUT",
-        f"/api/recipes/{created['id']}",
-        '{"title": "Good", "ingredients": [{"item": "flour", "quantity": %s}]}' % quantity,
+        f"/api/recipes/{recipe_id}",
+        '{"title": "Good", "ingredients": [{"item": "flour", "quantity": %s}]}'
+        % quantity,
     )
     assert response.status_code == 422, response.text
 
     # The rejected PUT left the stored ingredient untouched.
-    assert auth_client.get(f"/api/recipes/{created['id']}").json()["ingredients"] == (
-        created["ingredients"]
-    )
+    assert auth_client.get(f"/api/recipes/{recipe_id}").json()[
+        "ingredients"
+    ] == (created["ingredients"])
 
 
 @pytest.mark.parametrize("servings", REJECTED_QUANTITIES)
@@ -81,14 +89,20 @@ def test_recipe_servings_rejects_non_positive_and_non_finite(
 
 
 @pytest.mark.parametrize("field", ["prep_time", "cook_time"])
-def test_recipe_times_reject_negative_minutes(auth_client: TestClient, field: str) -> None:
+def test_recipe_times_reject_negative_minutes(
+    auth_client: TestClient, field: str
+) -> None:
     assert (
-        auth_client.post("/api/recipes", json={"title": "Bad time", field: -1}).status_code
+        auth_client.post(
+            "/api/recipes", json={"title": "Bad time", field: -1}
+        ).status_code
         == 422
     )
     # Zero is a legitimate answer to "how long does the prep take".
     assert (
-        auth_client.post("/api/recipes", json={"title": "No time", field: 0}).status_code
+        auth_client.post(
+            "/api/recipes", json={"title": "No time", field: 0}
+        ).status_code
         == 201
     )
 
@@ -108,7 +122,9 @@ def test_recipe_times_reject_negative_minutes(auth_client: TestClient, field: st
 def test_recipe_string_and_list_bounds_are_enforced(
     auth_client: TestClient, field: str, value: object
 ) -> None:
-    response = auth_client.post("/api/recipes", json={"title": "Bounded", field: value})
+    response = auth_client.post(
+        "/api/recipes", json={"title": "Bounded", field: value}
+    )
     assert response.status_code == 422, response.text
 
 
@@ -125,7 +141,9 @@ def test_recipe_list_bounds_accept_their_maximum(
     auth_client: TestClient, field: str, value: object
 ) -> None:
     """The caps are inclusive — 100 items of 50/2000 chars is legal."""
-    response = auth_client.post("/api/recipes", json={"title": "At the cap", field: value})
+    response = auth_client.post(
+        "/api/recipes", json={"title": "At the cap", field: value}
+    )
     assert response.status_code == 201, response.text
 
 
@@ -136,7 +154,10 @@ def test_ingredient_object_string_bounds_are_enforced(
     over = {"unit": "x" * 31, "note": "x" * 201}[field]
     response = auth_client.post(
         "/api/recipes",
-        json={"title": "Bounded", "ingredients": [{"item": "flour", field: over}]},
+        json={
+            "title": "Bounded",
+            "ingredients": [{"item": "flour", field: over}],
+        },
     )
     assert response.status_code == 422, response.text
 
@@ -164,34 +185,44 @@ def test_inventory_post_quantity_rejects_negative_and_non_finite(
 def test_inventory_patch_quantity_rejects_negative_and_non_finite(
     auth_client: TestClient, quantity: str
 ) -> None:
-    """`>= 0`, `allow_inf_nan=False` on the PATCH body too. `"0"` stays out of the
-    rejected set — spec §5.5 does `max(body.quantity, 0.0)`, so a PATCH to zero is
-    a 200 (`test_inventory.py::test_patch_quantity_zero_is_accepted`)."""
+    """Verify the PATCH quantity is nonnegative and finite.
+
+    `"0"` stays out of the rejected set: spec §5.5 permits a PATCH to zero
+    (`test_inventory.py::test_patch_quantity_zero_is_accepted`).
+    """
     created = auth_client.post(
         "/api/inventory", json={"item": "Flour", "quantity": 1, "unit": "kg"}
     ).json()
+    item_id = created["id"]
     response = _send_raw(
         auth_client,
         "PATCH",
-        f"/api/inventory/{created['id']}",
+        f"/api/inventory/{item_id}",
         '{"quantity": %s, "unit": "kg"}' % quantity,
     )
     assert response.status_code == 422, response.text
     # The rejected PATCH left the stored quantity untouched.
-    assert auth_client.get("/api/inventory").json()[0]["quantity_base"] == 1000.0
+    assert (
+        auth_client.get("/api/inventory").json()[0]["quantity_base"] == 1000.0
+    )
 
 
 # `availability?multiplier=` — `Query(1.0, gt=0)`, `allow_inf_nan=False`
-# (spec.md §5.3). Same rejected set as a recipe quantity: zero, negative, and the
-# two non-finite floats. It rides in the query string, so no raw-body helper.
-@pytest.mark.parametrize("multiplier", ["0", "-1", "-0.5", "inf", "-inf", "nan"])
+# (spec.md §5.3). The rejected set covers zero, negative, and non-finite
+# values. It rides in the query string, so no raw-body helper is needed.
+@pytest.mark.parametrize(
+    "multiplier", ["0", "-1", "-0.5", "inf", "-inf", "nan"]
+)
 def test_availability_multiplier_rejects_non_positive_and_non_finite(
     auth_client: TestClient, multiplier: str
 ) -> None:
-    recipe_id = auth_client.post("/api/recipes", json={"title": "Scale me"}).json()["id"]
+    recipe_id = auth_client.post(
+        "/api/recipes", json={"title": "Scale me"}
+    ).json()["id"]
 
     response = auth_client.get(
-        f"/api/recipes/{recipe_id}/availability", params={"multiplier": multiplier}
+        f"/api/recipes/{recipe_id}/availability",
+        params={"multiplier": multiplier},
     )
     assert response.status_code == 422, response.text
 
@@ -206,16 +237,24 @@ def test_grocery_empty_recipe_ids_is_422(auth_client: TestClient) -> None:
 
 
 def test_grocery_duplicate_recipe_ids_is_422(auth_client: TestClient) -> None:
-    recipe_id = auth_client.post("/api/recipes", json={"title": "Dup me"}).json()["id"]
+    recipe_id = auth_client.post(
+        "/api/recipes", json={"title": "Dup me"}
+    ).json()["id"]
     response = auth_client.post(
         "/api/grocery", json={"recipe_ids": [recipe_id, recipe_id]}
     )
     assert response.status_code == 422, response.text
 
 
-def test_grocery_multiplier_key_not_in_recipe_ids_is_422(auth_client: TestClient) -> None:
-    recipe_id = auth_client.post("/api/recipes", json={"title": "In list"}).json()["id"]
-    other_id = auth_client.post("/api/recipes", json={"title": "Not in list"}).json()["id"]
+def test_grocery_multiplier_key_not_in_recipe_ids_is_422(
+    auth_client: TestClient,
+) -> None:
+    recipe_id = auth_client.post(
+        "/api/recipes", json={"title": "In list"}
+    ).json()["id"]
+    other_id = auth_client.post(
+        "/api/recipes", json={"title": "Not in list"}
+    ).json()["id"]
     response = auth_client.post(
         "/api/grocery",
         json={"recipe_ids": [recipe_id], "multipliers": {str(other_id): 2}},
@@ -223,11 +262,15 @@ def test_grocery_multiplier_key_not_in_recipe_ids_is_422(auth_client: TestClient
     assert response.status_code == 422, response.text
 
 
-@pytest.mark.parametrize("multiplier", ["0", "-1", "Infinity", "-Infinity", "NaN"])
+@pytest.mark.parametrize(
+    "multiplier", ["0", "-1", "Infinity", "-Infinity", "NaN"]
+)
 def test_grocery_multiplier_value_rejects_non_positive_and_non_finite(
     auth_client: TestClient, multiplier: str
 ) -> None:
-    recipe_id = auth_client.post("/api/recipes", json={"title": "Scale me"}).json()["id"]
+    recipe_id = auth_client.post(
+        "/api/recipes", json={"title": "Scale me"}
+    ).json()["id"]
     response = _send_raw(
         auth_client,
         "POST",

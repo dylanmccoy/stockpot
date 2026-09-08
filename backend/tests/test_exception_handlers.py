@@ -15,7 +15,6 @@ synthetic `OperationalError`. No production code, no `dependency_overrides`, the
 `_to_409_if_locked_else_500` predicate is untouched.
 """
 
-import pytest
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import OperationalError
@@ -56,9 +55,9 @@ def test_non_lock_operationalerror_surfaces_as_500() -> None:
         with TestClient(app, raise_server_exceptions=False) as c:
             resp = c.get("/api/_boom")
         assert resp.status_code == 500
-        # The 409 path returns a JSON `{"detail": "conflict"}` body; the 500 path
-        # is Starlette's plain "Internal Server Error". Guard against a handler
-        # that returns the 409 body under a 500 status, or vice versa.
+        # The 409 path returns a JSON `{"detail": "conflict"}` body; the 500
+        # path is Starlette's plain "Internal Server Error". Guard against a
+        # handler that returns the 409 body under a 500 status, or vice versa.
         assert "conflict" not in resp.text
     finally:
         engine.dispose()

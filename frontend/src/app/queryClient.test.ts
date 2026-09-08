@@ -10,10 +10,7 @@ describe("createQueryClient defaults", () => {
   const { queries, mutations } = createQueryClient().getDefaultOptions();
 
   it("retries a network failure up to 5 attempts, then gives up", () => {
-    const retry = queries!.retry as (
-      count: number,
-      err: unknown,
-    ) => boolean;
+    const retry = queries!.retry as (count: number, err: unknown) => boolean;
     const networkErr = new ApiError(0, "Network request failed");
     expect(retry(0, networkErr)).toBe(true);
     expect(retry(4, networkErr)).toBe(true);
@@ -23,19 +20,13 @@ describe("createQueryClient defaults", () => {
   it.each([404, 409, 422, 500])(
     "never retries a real %i API error",
     (status) => {
-      const retry = queries!.retry as (
-        count: number,
-        err: unknown,
-      ) => boolean;
+      const retry = queries!.retry as (count: number, err: unknown) => boolean;
       expect(retry(0, new ApiError(status, "conflict"))).toBe(false);
     },
   );
 
   it("never retries a non-ApiError throw", () => {
-    const retry = queries!.retry as (
-      count: number,
-      err: unknown,
-    ) => boolean;
+    const retry = queries!.retry as (count: number, err: unknown) => boolean;
     expect(retry(0, new Error("boom"))).toBe(false);
   });
 
