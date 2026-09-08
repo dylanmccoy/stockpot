@@ -20,22 +20,25 @@ from tests.conftest import REGISTRATION_CODE
 # ============================================================================
 
 
-def test_register_disabled_by_default(client: TestClient) -> None:
+def test_register_disabled_by_default() -> None:
     """When allow_registration=False, register endpoint rejects with 403."""
-    del client  # This case needs an app with default settings, not the fixture.
-
-    # Create a client with default (disabled) registration.
-    settings = Settings(database_url="sqlite://")
+    settings = Settings(
+        database_url="sqlite://",
+        allow_registration=False,
+        registration_code=None,
+    )
     engine = make_engine(settings.database_url)
-    app = create_app(settings, engine)
-    with TestClient(app) as c:
-        resp = c.post(
-            "/api/auth/register",
-            json={"username": "user1", "password": "password123"},
-        )
-        assert resp.status_code == 403
-        assert resp.json() == {"detail": "registration disabled"}
-    engine.dispose()
+    try:
+        app = create_app(settings, engine)
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/auth/register",
+                json={"username": "user1", "password": "password123"},
+            )
+            assert response.status_code == 403
+            assert response.json() == {"detail": "registration disabled"}
+    finally:
+        engine.dispose()
 
 
 def test_register_requires_code_when_set(client: TestClient) -> None:
