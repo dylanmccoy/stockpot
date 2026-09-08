@@ -61,17 +61,19 @@ def provision_accounts(
         try:
             RegisterRequest(username=username, password=password)
         except ValidationError as exc:
+            messages = [error["msg"] for error in exc.errors()]
+            validation_messages = "; ".join(messages)
             raise ProvisionError(
-                f"invalid account {username!r}: "
-                f"{'; '.join(e['msg'] for e in exc.errors())}"
+                f"invalid account {username!r}: {validation_messages}"
             ) from exc
 
     lowered = [u.lower() for u, _ in accounts]
     dupes = sorted({u for u in lowered if lowered.count(u) > 1})
     if dupes:
+        repeated_usernames = ", ".join(dupes)
         raise ProvisionError(
             f"the accounts list repeats a username (case-insensitively): "
-            f"{', '.join(dupes)}"
+            f"{repeated_usernames}"
         )
 
     # Fail before touching SQLite for a `sqlite:///` path that isn't there —
@@ -110,7 +112,10 @@ def provision_accounts(
                         result.skipped.append(existing.username)
                         continue
                     db.add(
-                        User(username=username, password_hash=hash_password(password))
+                        User(
+                            username=username,
+                            password_hash=hash_password(password),
+                        )
                     )
                     result.created.append(username)
                 db.commit()

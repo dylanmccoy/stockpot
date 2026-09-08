@@ -40,7 +40,8 @@ _SNAPSHOT_RE = re.compile(r"^recipe-(\d{8}T\d{6}Z)\.db$")
 _SNAPSHOT_TS_FORMAT = "%Y%m%dT%H%M%SZ"
 _LOG_TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 _LOG_LINE_RE = re.compile(
-    r"^(?P<ts>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)\s+(?P<result>ok|FAIL)\s+(?P<detail>.*)$"
+    r"^(?P<ts>\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)\s+"
+    r"(?P<result>ok|FAIL)\s+(?P<detail>.*)$"
 )
 
 
@@ -74,6 +75,8 @@ class FailedRun:
 
 @dataclass(frozen=True)
 class BackupReport:
+    """Current backup health and the snapshots considered for retention."""
+
     now: datetime
     keep: int
     max_age: timedelta
@@ -120,7 +123,8 @@ class PruneOutcome:
     report: BackupReport
     removed: list[Path]
     kept: list[Snapshot]  # newest first — the retained set
-    failed: list[tuple[Path, str]]  # (path, error) for delete attempts that raised
+    # (path, error) for delete attempts that raised
+    failed: list[tuple[Path, str]]
 
     @property
     def ok(self) -> bool:
@@ -161,9 +165,9 @@ def gather(
         match = _SNAPSHOT_RE.match(name)
         if match is None:
             continue  # an unrelated file — never counted, never pruned
-        taken_at = datetime.strptime(match.group(1), _SNAPSHOT_TS_FORMAT).replace(
-            tzinfo=timezone.utc
-        )
+        taken_at = datetime.strptime(
+            match.group(1), _SNAPSHOT_TS_FORMAT
+        ).replace(tzinfo=timezone.utc)
         if _looks_like_backup(entry):
             valid.append(Snapshot(path=entry, taken_at=taken_at))
         else:
@@ -195,7 +199,13 @@ def prune(
     ``recipe-<UTC>.db`` files that opened as an intact backup — never a
     partial, an unreadable file, an unrelated file, or the run log. A delete
     that raises is captured in ``failed`` and leaves the retained set intact."""
-    report = gather(dest_dir, log_path=log_path, now=now, keep=keep, max_age=max_age)
+    report = gather(
+        dest_dir,
+        log_path=log_path,
+        now=now,
+        keep=keep,
+        max_age=max_age,
+    )
 
     removed: list[Path] = []
     failed: list[tuple[Path, str]] = []
@@ -211,11 +221,18 @@ def prune(
 
     removed_set = set(removed)
     kept = [s for s in report.valid if s.path not in removed_set]
-    return PruneOutcome(report=report, removed=removed, kept=kept, failed=failed)
+    return PruneOutcome(
+        report=report,
+        removed=removed,
+        kept=kept,
+        failed=failed,
+    )
 
 
 def _as_utc(value: datetime) -> datetime:
-    return value.astimezone(timezone.utc) if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if value.tzinfo:
+        return value.astimezone(timezone.utc)
+    return value.replace(tzinfo=timezone.utc)
 
 
 def _looks_like_backup(path: Path) -> bool:
@@ -235,7 +252,12 @@ def _looks_like_backup(path: Path) -> bool:
         return False
     try:
         row = conn.execute("PRAGMA integrity_check").fetchone()
-        tables = {name for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = {
+            name
+            for (name,) in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
     except sqlite3.Error:
         return False
     finally:
@@ -250,11 +272,13 @@ def _latest_failure(log_path: Path | str | None) -> FailedRun | None:
     if not log_path.is_file():
         return None
     latest: FailedRun | None = None
-    for raw in log_path.read_text().splitlines():
+    for raw in log_path.read_text(encoding="utf-8").splitlines():
         match = _LOG_LINE_RE.match(raw.strip())
         if match is None or match.group("result") != "FAIL":
             continue
-        at = datetime.strptime(match.group("ts"), _LOG_TS_FORMAT).replace(tzinfo=timezone.utc)
+        at = datetime.strptime(
+            match.group("ts"), _LOG_TS_FORMAT
+        ).replace(tzinfo=timezone.utc)
         if latest is None or at >= latest.at:
             latest = FailedRun(at=at, reason=match.group("detail"))
     return latest

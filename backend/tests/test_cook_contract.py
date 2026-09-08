@@ -5,20 +5,22 @@ Authored black-box from the normative spec in a fresh context **before** the
 Phase 5 production surface exists (``docs/plan.md`` §Independent contract-test
 gate). At the time of writing there is:
 
-* no ``POST /api/recipes/{id}/cook`` / ``GET /api/recipes/{id}/cook-logs`` route,
+* no ``POST /api/recipes/{id}/cook`` or
+  ``GET /api/recipes/{id}/cook-logs`` route,
 * no ``CookLog`` model / ``cook_logs`` table,
 * no ``app.schemas.cook_logs`` module.
 
-So this file **fails on collection** (the ``app.schemas.cook_logs`` import below)
-until ``phase-5b`` lands — that failure *is* the lock. ``phase-5b`` may add
-cases but must not edit or delete an expected value here; a case later found
-wrong is changed only via a paired ``spec.md`` + test edit recorded per the gate.
+So this file **fails on collection** (the ``app.schemas.cook_logs`` import
+below) until ``phase-5b`` lands — that failure *is* the lock. ``phase-5b`` may
+add cases but must not edit or delete an expected value here; a case later
+found wrong is changed only via a paired ``spec.md`` + test edit recorded per
+the gate.
 
 Scope — the slice ``phase-4a`` explicitly deferred to ``phase-5a``:
 
-* ``CookDeductionRead`` — the JSON shape of every ``deductions[]`` entry: all 11
-  keys, ``extra="forbid"``, the 5-value ``reason`` ``Literal``, and ``null`` only
-  where the §5.4 per-branch table permits it.
+* ``CookDeductionRead`` — the JSON shape of every ``deductions[]`` entry: all
+  11 keys, ``extra="forbid"``, the 5-value ``reason`` ``Literal``, and ``null``
+  only where the §5.4 per-branch table permits it.
 * ``POST /cook`` with ``deduct=true`` — every §7 *Deduction* outcome that is
   constructible over HTTP, the to-taste entry, ``multiplier`` scaling, the
   ``deduct=false`` log-only mode, ``404``, defaults, the ``CookLogRead`` body
@@ -102,10 +104,10 @@ COOK_LOG_READ_KEYS = {
 }
 
 
-# --- §7 shorthand, mirroring ``test_inventory_math.py``'s ``R()`` / ``S()`` ---
+# --- §7 shorthand, mirroring test_inventory_math.py's constructors ----------
 
 
-def R(  # noqa: N802 - matches the sibling oracle's constructor name
+def _requirement(
     ingredient_id: int,
     item: str,
     norm: str,
@@ -121,10 +123,15 @@ def R(  # noqa: N802 - matches the sibling oracle's constructor name
     )
 
 
-def S(  # noqa: N802 - matches the sibling oracle's constructor name
+def _stock(
     row_id: int, norm: str, bucket: str, base: float
 ) -> StockRow:
-    return StockRow(id=row_id, match_name=norm, unit_bucket=bucket, quantity_base=base)
+    return StockRow(
+        id=row_id,
+        match_name=norm,
+        unit_bucket=bucket,
+        quantity_base=base,
+    )
 
 
 def _ok_entry(**overrides: object) -> dict:
@@ -161,7 +168,7 @@ def test_cookdeductionread_accepts_a_canonical_ok_entry() -> None:
 
 @pytest.mark.parametrize("reason", ALLOWED_REASONS)
 def test_cookdeductionread_allows_each_of_the_five_reasons(reason: str) -> None:
-    """A payload legal for whichever branch the ``reason`` names (§5.4 table)."""
+    """A payload legal for the branch named by ``reason`` (§5.4 table)."""
     if reason == "ok":
         payload = _ok_entry()
     elif reason == "clamped to 0":
@@ -218,7 +225,9 @@ def test_cookdeductionread_forbids_a_renamed_key() -> None:
 
 
 @pytest.mark.parametrize("field", ["item", "applied", "reason"])
-def test_cookdeductionread_rejects_null_in_a_never_null_field(field: str) -> None:
+def test_cookdeductionread_rejects_null_in_a_never_null_field(
+    field: str,
+) -> None:
     """§5.4: ``item``, ``applied``, ``reason`` are set in every branch."""
     with pytest.raises(ValidationError):
         CookDeductionRead.model_validate(_ok_entry(**{field: None}))
@@ -237,7 +246,9 @@ def test_cookdeductionread_rejects_null_in_a_never_null_field(field: str) -> Non
         "after",
     ],
 )
-def test_cookdeductionread_permits_null_in_every_nullable_field(field: str) -> None:
+def test_cookdeductionread_permits_null_in_every_nullable_field(
+    field: str,
+) -> None:
     """The §5.4 "to taste" row nulls all eight of these at once, so each is
     individually nullable in the model."""
     payload = _ok_entry(**{field: None, "applied": False})
@@ -246,19 +257,33 @@ def test_cookdeductionread_permits_null_in_every_nullable_field(field: str) -> N
 
 # --- every real ``deduct_calc`` entry round-trips through the read model -----
 
-_TOMATO_3_CAN_REQ = [R(1, "Tomatoes", "tomato", 3, "can")]
-_SALT_TO_TASTE_REQ = [R(1, "Salt", "salt", None, None)]
+_TOMATO_3_CAN_REQ = [_requirement(1, "Tomatoes", "tomato", 3, "can")]
+_SALT_TO_TASTE_REQ = [_requirement(1, "Salt", "salt", None, None)]
 
 _ROUNDTRIP_CASES = [
-    pytest.param(_TOMATO_3_CAN_REQ, [S(10, "tomato", "opaque:can", 5)], "ok", id="ok"),
     pytest.param(
-        _TOMATO_3_CAN_REQ, [S(10, "tomato", "opaque:can", 2)], "clamped to 0",
+        _TOMATO_3_CAN_REQ,
+        [_stock(10, "tomato", "opaque:can", 5)],
+        "ok",
+        id="ok",
+    ),
+    pytest.param(
+        _TOMATO_3_CAN_REQ,
+        [_stock(10, "tomato", "opaque:can", 2)],
+        "clamped to 0",
         id="clamped-to-0",
     ),
-    pytest.param(_TOMATO_3_CAN_REQ, [], "not in inventory", id="not-in-inventory"),
     pytest.param(
-        _TOMATO_3_CAN_REQ, [S(11, "tomato", "opaque:jar", 2)],
-        "have uncertain (incompatible unit)", id="incompatible",
+        _TOMATO_3_CAN_REQ,
+        [],
+        "not in inventory",
+        id="not-in-inventory",
+    ),
+    pytest.param(
+        _TOMATO_3_CAN_REQ,
+        [_stock(11, "tomato", "opaque:jar", 2)],
+        "have uncertain (incompatible unit)",
+        id="incompatible",
     ),
     pytest.param(_SALT_TO_TASTE_REQ, [], "to taste", id="to-taste"),
 ]
@@ -276,7 +301,8 @@ def test_every_deduct_calc_entry_round_trips_through_cookdeductionread(
         assert set(dumped.keys()) == ELEVEN_KEYS
         for key, value in entry.items():
             if isinstance(value, float):
-                assert dumped[key] == pytest.approx(value, rel=REL, abs=ABS), key
+                expected = pytest.approx(value, rel=REL, abs=ABS)
+                assert dumped[key] == expected, key
             else:
                 assert dumped[key] == value, key
     assert any(e["reason"] == reason for e in proposal.log_entries)
@@ -305,7 +331,10 @@ def test_to_taste_entry_nulls_exactly_the_fields_the_54_table_permits() -> None:
     "stock,reason",
     [
         ([], "not in inventory"),
-        ([S(11, "tomato", "opaque:jar", 2)], "have uncertain (incompatible unit)"),
+        (
+            [_stock(11, "tomato", "opaque:jar", 2)],
+            "have uncertain (incompatible unit)",
+        ),
     ],
 )
 def test_absent_and_incompatible_entries_null_only_before_and_after(
@@ -325,8 +354,11 @@ def test_absent_and_incompatible_entries_null_only_before_and_after(
     assert entry["inventory_unit"] == "can"
 
 
-def test_applied_entry_populates_all_11_fields_and_holds_the_before_after_invariant() -> None:
-    (entry,) = deduct_calc(_TOMATO_3_CAN_REQ, [S(10, "tomato", "opaque:can", 5)]).log_entries
+def test_applied_entry_populates_all_fields_and_holds_before_after() -> None:
+    (entry,) = deduct_calc(
+        _TOMATO_3_CAN_REQ,
+        [_stock(10, "tomato", "opaque:can", 5)],
+    ).log_entries
     CookDeductionRead.model_validate(entry)
     assert entry["applied"] is True
     assert entry["reason"] == "ok"
@@ -335,7 +367,8 @@ def test_applied_entry_populates_all_11_fields_and_holds_the_before_after_invari
     assert entry["before"] - entry["deducted"] == pytest.approx(
         entry["after"], rel=REL, abs=ABS
     )
-    assert entry["requested_unit"] == entry["deducted_unit"] == entry["inventory_unit"]
+    assert entry["requested_unit"] == entry["deducted_unit"]
+    assert entry["deducted_unit"] == entry["inventory_unit"]
 
 
 # ===========================================================================
@@ -349,16 +382,21 @@ TOMATO_3_CAN = {"item": "Tomatoes", "quantity": 3, "unit": "can"}
 SALT_TO_TASTE = {"item": "Salt"}
 
 
-def _register(client: TestClient, *, username: str = "cook", code: str = _REG_CODE) -> None:
+def _register(
+    client: TestClient, *, username: str = "cook", code: str = _REG_CODE
+) -> None:
     reg = client.post(
         "/api/auth/register",
         json={"username": username, "password": _PASSWORD, "code": code},
     )
     assert reg.status_code == 201, reg.text
-    client.headers["Authorization"] = f"Bearer {reg.json()['token']}"
+    token = reg.json()["token"]
+    client.headers["Authorization"] = f"Bearer {token}"
 
 
-def _build_app(*, registration_code: str = _REG_CODE, database_url: str = "sqlite://") -> tuple[FastAPI, Engine]:
+def _build_app(
+    *, registration_code: str = _REG_CODE, database_url: str = "sqlite://"
+) -> tuple[FastAPI, Engine]:
     settings = Settings(
         database_url=database_url,
         allow_registration=True,
@@ -370,23 +408,31 @@ def _build_app(*, registration_code: str = _REG_CODE, database_url: str = "sqlit
 
 def _mk_recipe(client: TestClient, ingredients: list[dict]) -> int:
     resp = client.post(
-        "/api/recipes", json={"title": "Cook Contract", "ingredients": ingredients}
+        "/api/recipes",
+        json={"title": "Cook Contract", "ingredients": ingredients},
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
 
-def _add_inventory(client: TestClient, item: str, quantity: float, unit: str) -> dict:
+def _add_inventory(
+    client: TestClient, item: str, quantity: float, unit: str
+) -> dict:
     resp = client.post(
-        "/api/inventory", json={"item": item, "quantity": quantity, "unit": unit}
+        "/api/inventory",
+        json={"item": item, "quantity": quantity, "unit": unit},
     )
     assert resp.status_code == 201, resp.text
     return resp.json()
 
 
-def _inventory_row(client: TestClient, match_name: str, unit_bucket: str) -> dict | None:
+def _inventory_row(
+    client: TestClient, match_name: str, unit_bucket: str
+) -> dict | None:
     for row in client.get("/api/inventory").json():
-        if row["match_name"] == match_name and row["unit_bucket"] == unit_bucket:
+        same_name = row["match_name"] == match_name
+        same_bucket = row["unit_bucket"] == unit_bucket
+        if same_name and same_bucket:
             return row
     return None
 
@@ -437,8 +483,8 @@ def _assert_entry(
     CookDeductionRead.model_validate(actual)
 
 
-@pytest.fixture
-def cook_client() -> Iterator[TestClient]:
+@pytest.fixture(name="cook_client")
+def cook_client_fixture() -> Iterator[TestClient]:
     """An authed client over a fresh in-memory app. ``raise_server_exceptions``
     stays at its default (``True``) so a stray ``500`` on a happy path raises
     loudly rather than passing a status-code assertion (``conftest.auth_client``
@@ -450,11 +496,11 @@ def cook_client() -> Iterator[TestClient]:
     engine.dispose()
 
 
-@pytest.fixture
-def cook_env() -> Iterator[tuple[TestClient, Engine]]:
+@pytest.fixture(name="cook_env")
+def cook_env_fixture() -> Iterator[tuple[TestClient, Engine]]:
     """Authed client + its engine, with ``raise_server_exceptions=False`` so the
-    N7 read-path failure surfaces as a ``500`` *response* rather than a re-raised
-    exception. Used only by the N7 tests."""
+    N7 read-path failure surfaces as a ``500`` *response* rather than a
+    re-raised exception. Used only by the N7 tests."""
     app, engine = _build_app()
     with TestClient(app, raise_server_exceptions=False) as client:
         _register(client)
@@ -467,7 +513,9 @@ def cook_env() -> Iterator[tuple[TestClient, Engine]]:
 # ===========================================================================
 
 
-def test_cook_not_in_inventory_logs_and_touches_nothing(cook_client: TestClient) -> None:
+def test_cook_not_in_inventory_logs_and_touches_nothing(
+    cook_client: TestClient,
+) -> None:
     rid = _mk_recipe(cook_client, [TOMATO_3_CAN])
 
     resp = cook_client.post(
@@ -523,7 +571,9 @@ def test_cook_only_incompatible_bucket_is_uncertain_and_untouched(
     _assert_base(cook_client, "tomato", "opaque:jar", 2.0)
 
 
-def test_cook_enough_compatible_deducts_and_reports_ok(cook_client: TestClient) -> None:
+def test_cook_enough_compatible_deducts_and_reports_ok(
+    cook_client: TestClient,
+) -> None:
     rid = _mk_recipe(cook_client, [TOMATO_3_CAN])
     _add_inventory(cook_client, "Tomatoes", 5, "can")
 
@@ -548,7 +598,9 @@ def test_cook_enough_compatible_deducts_and_reports_ok(cook_client: TestClient) 
     _assert_base(cook_client, "tomato", "opaque:can", 2.0)
 
 
-def test_cook_clamps_to_zero_when_compatible_stock_is_short(cook_client: TestClient) -> None:
+def test_cook_clamps_to_zero_when_compatible_stock_is_short(
+    cook_client: TestClient,
+) -> None:
     rid = _mk_recipe(cook_client, [TOMATO_3_CAN])
     _add_inventory(cook_client, "Tomatoes", 2, "can")
 
@@ -643,7 +695,8 @@ def test_cook_multiplier_scales_quantified_need_and_leaves_to_taste_null(
     body = resp.json()
     assert body["multiplier"] == pytest.approx(2.0)
 
-    tomato, salt = body["deductions"]  # first-seen group order: tomato, then salt
+    # First-seen group order: tomato, then salt.
+    tomato, salt = body["deductions"]
     _assert_entry(
         tomato,
         item="Tomatoes",
@@ -697,7 +750,9 @@ def test_cook_deduct_false_writes_a_log_but_touches_no_stock(
     assert logs.json()[0]["deductions"] == []
 
 
-def test_cook_defaults_multiplier_1_and_deduct_true(cook_client: TestClient) -> None:
+def test_cook_defaults_multiplier_1_and_deduct_true(
+    cook_client: TestClient,
+) -> None:
     rid = _mk_recipe(cook_client, [TOMATO_3_CAN])
     _add_inventory(cook_client, "Tomatoes", 5, "can")
 
@@ -709,18 +764,23 @@ def test_cook_defaults_multiplier_1_and_deduct_true(cook_client: TestClient) -> 
     _assert_base(cook_client, "tomato", "opaque:can", 2.0)
 
 
-def test_cook_201_body_is_the_full_cooklogread_shape(cook_client: TestClient) -> None:
+def test_cook_201_body_is_the_full_cooklogread_shape(
+    cook_client: TestClient,
+) -> None:
     rid = _mk_recipe(cook_client, [TOMATO_3_CAN])
     _add_inventory(cook_client, "Tomatoes", 5, "can")
 
-    body = cook_client.post(f"/api/recipes/{rid}/cook", json={"multiplier": 1}).json()
+    response = cook_client.post(
+        f"/api/recipes/{rid}/cook", json={"multiplier": 1}
+    )
+    body = response.json()
     assert set(body) == COOK_LOG_READ_KEYS
     assert isinstance(body["id"], int)
     assert body["recipe_id"] == rid
     assert body["recipe_title"] == "Cook Contract"
     assert body["multiplier"] == pytest.approx(1.0)
     assert body["deducted"] is True
-    assert body["cooked_at"].endswith("+00:00") or body["cooked_at"].endswith("Z")
+    assert body["cooked_at"].endswith(("+00:00", "Z"))
     # §5.4: cooked_by is a UserMini
     assert set(body["cooked_by"]) == {"id", "username"}
     assert body["cooked_by"]["username"] == "cook"
@@ -743,7 +803,9 @@ def test_cook_logs_return_newest_first_with_the_full_read_shape(
     _add_inventory(cook_client, "Tomatoes", 10, "can")
 
     first = cook_client.post(f"/api/recipes/{rid}/cook", json={"multiplier": 1})
-    second = cook_client.post(f"/api/recipes/{rid}/cook", json={"multiplier": 2})
+    second = cook_client.post(
+        f"/api/recipes/{rid}/cook", json={"multiplier": 2}
+    )
     assert first.status_code == 201 and second.status_code == 201
 
     logs = cook_client.get(f"/api/recipes/{rid}/cook-logs")
@@ -751,7 +813,8 @@ def test_cook_logs_return_newest_first_with_the_full_read_shape(
     rows = logs.json()
     assert len(rows) == 2
     # order_by(cooked_at DESC, id DESC)
-    assert [r["id"] for r in rows] == sorted((r["id"] for r in rows), reverse=True)
+    ids = [row["id"] for row in rows]
+    assert ids == sorted(ids, reverse=True)
     assert [r["multiplier"] for r in rows] == pytest.approx([2.0, 1.0])
 
     newest = rows[0]
@@ -759,7 +822,7 @@ def test_cook_logs_return_newest_first_with_the_full_read_shape(
     assert newest["recipe_id"] == rid
     assert newest["recipe_title"] == "Cook Contract"
     # §7: every datetime read carries an explicit UTC designator
-    assert newest["cooked_at"].endswith("+00:00") or newest["cooked_at"].endswith("Z")
+    assert newest["cooked_at"].endswith(("+00:00", "Z"))
     assert set(newest["cooked_by"]) == {"id", "username"}
     assert newest["cooked_by"]["username"] == "cook"
     for entry in newest["deductions"]:
@@ -793,10 +856,16 @@ def test_stored_entry_with_an_unknown_key_is_500_on_read(
     client, engine = cook_env
     rid = _mk_recipe(client, [TOMATO_3_CAN])
     _add_inventory(client, "Tomatoes", 5, "can")
-    assert client.post(f"/api/recipes/{rid}/cook", json={"multiplier": 1}).status_code == 201
-    assert client.get(f"/api/recipes/{rid}/cook-logs").status_code == 200  # clean first
+    response = client.post(
+        f"/api/recipes/{rid}/cook", json={"multiplier": 1}
+    )
+    assert response.status_code == 201
+    clean_read = client.get(f"/api/recipes/{rid}/cook-logs")
+    assert clean_read.status_code == 200
 
-    _tamper_first_stored_deduction(engine, lambda e: e.__setitem__("mystery", 1))
+    _tamper_first_stored_deduction(
+        engine, lambda entry: entry.__setitem__("mystery", 1)
+    )
 
     assert client.get(f"/api/recipes/{rid}/cook-logs").status_code == 500
 
@@ -807,9 +876,14 @@ def test_stored_entry_with_an_unlisted_reason_is_500_on_read(
     client, engine = cook_env
     rid = _mk_recipe(client, [TOMATO_3_CAN])
     _add_inventory(client, "Tomatoes", 5, "can")
-    assert client.post(f"/api/recipes/{rid}/cook", json={"multiplier": 1}).status_code == 201
+    response = client.post(
+        f"/api/recipes/{rid}/cook", json={"multiplier": 1}
+    )
+    assert response.status_code == 201
 
-    _tamper_first_stored_deduction(engine, lambda e: e.__setitem__("reason", "made up"))
+    _tamper_first_stored_deduction(
+        engine, lambda entry: entry.__setitem__("reason", "made up")
+    )
 
     assert client.get(f"/api/recipes/{rid}/cook-logs").status_code == 500
 
@@ -819,10 +893,11 @@ def test_stored_entry_with_an_unlisted_reason_is_500_on_read(
 # ===========================================================================
 
 # The serialization test lowers busy_timeout so it does not sit out the 5 s
-# production default; a genuine lock wait still has to take a real fraction of it.
+# production default. A genuine lock wait still takes a real fraction of it.
 _TEST_BUSY_TIMEOUT_MS = 200
 _LOCK_WAIT_FLOOR_S = 0.08  # below this, no real busy-wait happened
-_LOCK_WAIT_CEILING_S = 4.0  # above this, we are hitting the 5 s production default
+# Above this, the test is hitting the 5 s production default.
+_LOCK_WAIT_CEILING_S = 4.0
 
 
 def _build_file_app(
@@ -834,7 +909,8 @@ def _build_file_app(
         # Registered after make_engine's own `connect` listener, so this PRAGMA
         # runs last and lowers the 5000 ms default for the test.
         @event.listens_for(engine, "connect")
-        def _lower_busy_timeout(dbapi_conn, _record):  # noqa: ANN001
+        def _lower_busy_timeout(dbapi_conn, connection_record):
+            del connection_record
             cur = dbapi_conn.cursor()
             cur.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
             cur.close()
@@ -845,17 +921,20 @@ def _build_file_app(
 def _seed_cook_fixture(client: TestClient) -> int:
     """Recipe needing 1 can of tomato; inventory holds 5 cans."""
     _register(client, username="racer", code="race")
-    rid = _mk_recipe(client, [{"item": "Tomatoes", "quantity": 1, "unit": "can"}])
+    ingredient = {"item": "Tomatoes", "quantity": 1, "unit": "can"}
+    rid = _mk_recipe(client, [ingredient])
     _add_inventory(client, "Tomatoes", 5, "can")
     return rid
 
 
-def test_begin_immediate_serializes_two_writers_on_the_cook_row(tmp_path) -> None:
-    """The interleave that loses an update is unconstructable: a cook's inventory
-    write takes the RESERVED lock at ``BEGIN IMMEDIATE``; a second writer blocks
-    and, once ``busy_timeout`` elapses, raises ``database is locked`` — after a
-    real wait, not instantly. After the first commits, the second's retry reads
-    the committed value (freshness)."""
+def test_begin_immediate_serializes_two_cook_writers(tmp_path) -> None:
+    """The update-losing interleave is unconstructable.
+
+    A cook's inventory write takes the RESERVED lock at ``BEGIN IMMEDIATE``; a
+    second writer blocks and, once ``busy_timeout`` elapses, raises ``database
+    is locked`` after a real wait. After the first commits, the second's retry
+    reads the committed value (freshness).
+    """
     app, engine = _build_file_app(
         tmp_path / "cook-serialize.db", busy_timeout_ms=_TEST_BUSY_TIMEOUT_MS
     )
@@ -886,13 +965,18 @@ def test_begin_immediate_serializes_two_writers_on_the_cook_row(tmp_path) -> Non
             elapsed = time.monotonic() - started
 
             orig = str(excinfo.value.orig)
-            assert "database is locked" in orig or "database is busy" in orig, orig
+            locked = "database is locked" in orig
+            busy = "database is busy" in orig
+            assert locked or busy, orig
             assert _LOCK_WAIT_FLOOR_S <= elapsed < _LOCK_WAIT_CEILING_S, elapsed
 
             first_txn.commit()
 
             fresh = second.execute(
-                text("SELECT quantity_base FROM inventory_items WHERE match_name = 'tomato'")
+                text(
+                    "SELECT quantity_base FROM inventory_items "
+                    "WHERE match_name = 'tomato'"
+                )
             ).scalar_one()
             assert fresh == pytest.approx(4.0)
         finally:
@@ -905,7 +989,9 @@ def test_begin_immediate_serializes_two_writers_on_the_cook_row(tmp_path) -> Non
 def test_cook_request_maps_a_held_lock_to_409_not_500(tmp_path) -> None:
     """An ``OperationalError: database is locked`` raised anywhere in the cook
     request — here at its opening ``BEGIN IMMEDIATE`` — converts to
-    ``409 {"detail": "conflict"}`` through the global handler, never a ``500``."""
+    ``409 {"detail": "conflict"}`` through the global handler, never a
+    ``500``.
+    """
     app, engine = _build_file_app(
         tmp_path / "cook-409.db", busy_timeout_ms=_TEST_BUSY_TIMEOUT_MS
     )
@@ -918,12 +1004,15 @@ def test_cook_request_maps_a_held_lock_to_409_not_500(tmp_path) -> None:
                 holder_txn = holder.begin()
                 holder.execute(
                     text(
-                        "UPDATE inventory_items SET quantity_base = quantity_base "
+                        "UPDATE inventory_items "
+                        "SET quantity_base = quantity_base "
                         "WHERE match_name = 'tomato'"
                     )
                 )
 
-                resp = client.post(f"/api/recipes/{rid}/cook", json={"multiplier": 1})
+                resp = client.post(
+                    f"/api/recipes/{rid}/cook", json={"multiplier": 1}
+                )
 
                 assert resp.status_code == 409, resp.text
                 assert resp.json() == {"detail": "conflict"}
@@ -937,8 +1026,12 @@ def test_cook_request_maps_a_held_lock_to_409_not_500(tmp_path) -> None:
 def test_two_concurrent_cook_requests_do_not_lose_an_update(tmp_path) -> None:
     """Coarse smoke (not the guard): two real HTTP cooks on the same recipe over
     a file-backed DB serialize on the write lock — final ``quantity_base`` is
-    ``5 - 1 - 1`` and both ``CookLog`` rows carry an honest before/after chain."""
-    app, engine = _build_file_app(tmp_path / "cook-race.db")  # production 5 s busy_timeout
+    ``5 - 1 - 1`` and both ``CookLog`` rows carry an honest before/after
+    chain.
+    """
+    app, engine = _build_file_app(
+        tmp_path / "cook-race.db"
+    )  # production 5 s busy_timeout
     try:
         with TestClient(app) as client:
             rid = _seed_cook_fixture(client)
@@ -953,7 +1046,10 @@ def test_two_concurrent_cook_requests_do_not_lose_an_update(tmp_path) -> None:
                     f"/api/recipes/{rid}/cook", json={"multiplier": 1}
                 )
 
-            threads = [threading.Thread(target=cook, args=(k,)) for k in range(2)]
+            threads = [
+                threading.Thread(target=cook, args=(key,))
+                for key in range(2)
+            ]
             for thread in threads:
                 thread.start()
             for thread in threads:
@@ -967,7 +1063,8 @@ def test_two_concurrent_cook_requests_do_not_lose_an_update(tmp_path) -> None:
             rows = client.get(f"/api/recipes/{rid}/cook-logs").json()
             assert len(rows) == 2
             pairs = sorted(
-                (r["deductions"][0]["before"], r["deductions"][0]["after"]) for r in rows
+                (r["deductions"][0]["before"], r["deductions"][0]["after"])
+                for r in rows
             )
             assert pairs == [(4.0, 3.0), (5.0, 4.0)]
     finally:

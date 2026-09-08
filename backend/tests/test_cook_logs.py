@@ -1,5 +1,6 @@
-"""Global cook-log reads — `routers/cook_logs.py`, prefix `/api/cook-logs` (spec.md §5.4).
+"""Global cook-log read tests.
 
+Tests `routers/cook_logs.py` at prefix `/api/cook-logs` (spec.md §5.4).
 Companion to `test_cook_contract.py` (the locked R-7 oracle, which covers the
 per-recipe `POST /cook` + `GET /api/recipes/{id}/cook-logs` surface). This file
 covers only the Phase 5c additions:
@@ -35,7 +36,9 @@ def _cook(client: TestClient, recipe_id: int) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-def test_global_feed_is_newest_first_across_recipes(auth_client: TestClient) -> None:
+def test_global_feed_is_newest_first_across_recipes(
+    auth_client: TestClient,
+) -> None:
     r1 = _mk_recipe(auth_client, "Soup")
     r2 = _mk_recipe(auth_client, "Stew")
 
@@ -53,8 +56,8 @@ def test_global_feed_is_newest_first_across_recipes(auth_client: TestClient) -> 
     assert body["limit"] == 50
     assert body["offset"] == 0
     got = [row["id"] for row in body["items"]]
-    # `cooked_at DESC, id DESC` — timestamps may tie, so id is the real tiebreak;
-    # newest-created id comes first.
+    # `cooked_at DESC, id DESC` — timestamps may tie, so id is the real
+    # tiebreak; newest-created id comes first.
     assert got == sorted(created, reverse=True)
     # Feed spans both recipes.
     assert {row["recipe_id"] for row in body["items"]} == {r1, r2}
@@ -76,7 +79,7 @@ def test_pagination_windows_the_feed(auth_client: TestClient) -> None:
     page3 = auth_client.get("/api/cook-logs?limit=2&offset=4").json()
     assert [r["id"] for r in page3["items"]] == ids_newest_first[4:5]
 
-    # offset past the end is an empty page, not an error; total still full count.
+    # An offset past the end is an empty page, not an error; total stays full.
     past = auth_client.get("/api/cook-logs?limit=2&offset=99").json()
     assert past["items"] == [] and past["total"] == 5
 
@@ -108,8 +111,9 @@ def test_global_feed_requires_auth(client: TestClient) -> None:
 def test_get_one_by_id(auth_client: TestClient) -> None:
     rid = _mk_recipe(auth_client, "Chili")
     posted = _cook(auth_client, rid)
+    log_id = posted["id"]
 
-    got = auth_client.get(f"/api/cook-logs/{posted['id']}")
+    got = auth_client.get(f"/api/cook-logs/{log_id}")
     assert got.status_code == 200
     assert got.json() == posted
 
@@ -127,7 +131,9 @@ def test_get_one_requires_auth(client: TestClient) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_reads_resolve_after_the_recipe_is_deleted(auth_client: TestClient) -> None:
+def test_reads_resolve_after_the_recipe_is_deleted(
+    auth_client: TestClient,
+) -> None:
     rid = _mk_recipe(auth_client, "Ragu")
     log_id = _cook(auth_client, rid)["id"]
 

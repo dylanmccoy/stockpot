@@ -6,13 +6,21 @@ import os
 import sqlite3
 import subprocess
 import sys
+from importlib import import_module
 from pathlib import Path
 
-from app import models  # noqa: F401  — populates Base.metadata
 from app.database import Base, make_engine
+
+import_module("app.models")  # Populates Base.metadata.
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 SCRIPT = BACKEND_DIR / "scripts" / "restore.py"
+_SESSION_COLUMNS = "token, user_id, created_at, last_used_at, expires_at"
+_SESSION_INSERT = (
+    f"INSERT INTO sessions ({_SESSION_COLUMNS}) "
+    "VALUES ('stale-token', 1, '2026-01-01 00:00:00', "
+    "'2026-01-01 00:00:00', '2099-01-01 00:00:00')"
+)
 
 
 def _recipe_shaped_sqlite(path: Path) -> None:
@@ -25,17 +33,15 @@ def _recipe_shaped_sqlite(path: Path) -> None:
 
     conn = sqlite3.connect(path)
     try:
-        conn.execute(
-            "INSERT INTO sessions (token, user_id, created_at, last_used_at, expires_at) "
-            "VALUES ('stale-token', 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00', "
-            "'2099-01-01 00:00:00')"
-        )
+        conn.execute(_SESSION_INSERT)
         conn.commit()
     finally:
         conn.close()
 
 
-def _run(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+def _run(
+    args: list[str], env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         cwd=BACKEND_DIR,
@@ -43,10 +49,13 @@ def _run(args: list[str], env: dict[str, str] | None = None) -> subprocess.Compl
         capture_output=True,
         text=True,
         timeout=30,
+        check=False,
     )
 
 
-def test_cli_success_prints_recovered_path_and_clears_sessions(tmp_path: Path) -> None:
+def test_cli_success_prints_recovered_path_and_clears_sessions(
+    tmp_path: Path,
+) -> None:
     snapshot = tmp_path / "snap.db"
     _recipe_shaped_sqlite(snapshot)
     target = tmp_path / "rehearsal.db"
@@ -64,10 +73,13 @@ def test_cli_success_prints_recovered_path_and_clears_sessions(tmp_path: Path) -
         conn.close()
 
 
-def test_cli_missing_snapshot_fails_without_creating_target(tmp_path: Path) -> None:
+def test_cli_missing_snapshot_fails_without_creating_target(
+    tmp_path: Path,
+) -> None:
     target = tmp_path / "rehearsal.db"
+    missing = tmp_path / "nope.db"
 
-    result = _run(["--snapshot", str(tmp_path / "nope.db"), "--target", str(target)])
+    result = _run(["--snapshot", str(missing), "--target", str(target)])
 
     assert result.returncode == 1
     assert result.stdout == ""
@@ -129,7 +141,8 @@ def test_cli_replace_swaps_existing_target_and_preserves_the_prior_database(
 
     preserved = list(preserve_dir.glob("recipe-*.db"))
     assert len(preserved) == 1
-    assert str(preserved[0]) == lines[1].removeprefix("preserved prior database: ")
+    prior_prefix = "preserved prior database: "
+    assert str(preserved[0]) == lines[1].removeprefix(prior_prefix)
 
     conn = sqlite3.connect(target)
     try:
@@ -145,7 +158,8 @@ def test_cli_replace_requires_preserve_dir(tmp_path: Path) -> None:
     _recipe_shaped_sqlite(target)
     target_before = target.read_bytes()
 
-    result = _run(["--replace", "--snapshot", str(snapshot), "--target", str(target)])
+    args = ["--replace", "--snapshot", str(snapshot), "--target", str(target)]
+    result = _run(args)
 
     assert result.returncode != 0
     assert "--preserve-dir" in result.stderr

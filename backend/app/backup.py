@@ -22,7 +22,12 @@ class BackupError(Exception):
     """A backup attempt failed; no new snapshot was published."""
 
 
-def create_backup(source: Path | str, dest_dir: Path | str, *, now: datetime | None = None) -> Path:
+def create_backup(
+    source: Path | str,
+    dest_dir: Path | str,
+    *,
+    now: datetime | None = None,
+) -> Path:
     """Snapshot the SQLite database at `source` into a new timestamped file in
     `dest_dir`. Returns the snapshot's path on success.
 
@@ -39,7 +44,9 @@ def create_backup(source: Path | str, dest_dir: Path | str, *, now: datetime | N
     try:
         dest_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise BackupError(f"cannot create destination directory {dest_dir}: {exc}") from exc
+        raise BackupError(
+            f"cannot create destination directory {dest_dir}: {exc}"
+        ) from exc
 
     # Operator-only access, enforced on every run (not just when the directory
     # is freshly created) so a destination that drifted to laxer permissions

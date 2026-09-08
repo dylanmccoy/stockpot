@@ -151,9 +151,7 @@ export function groupAvailabilityLines(
   return order.flatMap((key) => {
     const members = byKey.get(key)!;
     const toTaste = members.filter((member) => member.status === "to_taste");
-    const quantified = members.filter(
-      (member) => member.status !== "to_taste",
-    );
+    const quantified = members.filter((member) => member.status !== "to_taste");
 
     const buildRow = (
       rowMembers: AvailabilityLine[],
@@ -188,7 +186,7 @@ export function groupAvailabilityLines(
   });
 }
 
-const availabilityColumns: Column<AvailabilityRow>[] = [
+const availabilityColumns: Array<Column<AvailabilityRow>> = [
   { key: "item", header: "Ingredient", render: (r) => r.item },
   { key: "need", header: "Need", align: "end", render: (r) => r.needLabel },
   {
@@ -302,8 +300,8 @@ function CookPanel({ id, multiplier }: { id: number; multiplier: number }) {
   // The availability table and Inventory screen both read from stock; a cook
   // (or a failed cook that may have half-applied) makes them stale.
   const invalidateStockViews = () => {
-    queryClient.invalidateQueries({ queryKey: ["availability", id] });
-    queryClient.invalidateQueries({ queryKey: ["inventory"] });
+    void queryClient.invalidateQueries({ queryKey: ["availability", id] });
+    void queryClient.invalidateQueries({ queryKey: ["inventory"] });
   };
 
   const cook = useMutation({
@@ -311,8 +309,10 @@ function CookPanel({ id, multiplier }: { id: number; multiplier: number }) {
     onSuccess: () => {
       // Every stock- and history-derived view is now stale (spec §10.4).
       invalidateStockViews();
-      queryClient.invalidateQueries({ queryKey: ["cook-logs"] });
-      queryClient.invalidateQueries({ queryKey: ["recipe-cook-logs", id] });
+      void queryClient.invalidateQueries({ queryKey: ["cook-logs"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["recipe-cook-logs", id],
+      });
       toast.show("Cooked — logged to your history.", { variant: "success" });
     },
     onError: (err: unknown) => {
@@ -387,9 +387,7 @@ function HistoryPanel({ id }: { id: number }) {
 
       {query.data &&
         (logs.length === 0 ? (
-          <p className={styles.muted}>
-            Cook this recipe to start its history.
-          </p>
+          <p className={styles.muted}>Cook this recipe to start its history.</p>
         ) : (
           <>
             <p className={styles.muted}>
@@ -446,7 +444,7 @@ function RecipeDetailView({ id }: { id: number }) {
   const del = useMutation({
     mutationFn: () => recipesApi.remove(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["recipes"] });
+      void queryClient.invalidateQueries({ queryKey: ["recipes"] });
       navigate("/");
     },
     onError: () => {
@@ -494,9 +492,15 @@ function RecipeDetailView({ id }: { id: number }) {
 
   const meta: Array<[string, string]> = [];
   if (recipe.cuisine) meta.push(["Cuisine", recipe.cuisine]);
-  if (recipe.servings != null) meta.push(["Servings", String(recipe.servings)]);
-  if (recipe.prep_time != null) meta.push(["Prep", `${recipe.prep_time} min`]);
-  if (recipe.cook_time != null) meta.push(["Cook", `${recipe.cook_time} min`]);
+  if (recipe.servings !== null) {
+    meta.push(["Servings", String(recipe.servings)]);
+  }
+  if (recipe.prep_time !== null) {
+    meta.push(["Prep", `${recipe.prep_time} min`]);
+  }
+  if (recipe.cook_time !== null) {
+    meta.push(["Cook", `${recipe.cook_time} min`]);
+  }
 
   return (
     <section className={styles.page}>

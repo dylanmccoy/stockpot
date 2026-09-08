@@ -53,7 +53,7 @@ describe("auth flow", () => {
   // land the user back on /login with their target preserved.
   it.each(["missing", "malformed", "wrong scheme", "unknown token", "expired"])(
     "redirects to login when /me 401s (%s token)",
-    async (_shape) => {
+    async () => {
       setToken("some-token");
       server.use(errorHandlers.notAuthenticated("get", "/api/auth/me"));
 

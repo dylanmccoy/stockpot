@@ -8,7 +8,7 @@ interface Row {
   qty: string;
 }
 
-const columns: Column<Row>[] = [
+const columns: Array<Column<Row>> = [
   { key: "item", header: "Item", render: (r) => r.item },
   { key: "qty", header: "Quantity", render: (r) => r.qty, align: "end" },
 ];

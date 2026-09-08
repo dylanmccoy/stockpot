@@ -452,7 +452,9 @@ describe("RecipeForm create flow", () => {
     // The running backend answers a bad object element with a union-tagged
     // `loc` (`…,1,"RecipeIngredientIn","item"`) plus a losing-`str`-branch
     // sibling — frontend ticket 15. The row error must still land.
-    server.use(errorHandlers.ingredientMemberValidation(1, "item", "Field required"));
+    server.use(
+      errorHandlers.ingredientMemberValidation(1, "item", "Field required"),
+    );
     renderForm();
 
     await user.type(screen.getByLabelText(/^Title/), "Stew");

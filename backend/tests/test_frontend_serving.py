@@ -43,12 +43,13 @@ def _app(*, frontend_dist: str | None):
 
 
 def test_frontend_dist_unset_preserves_api_only_operation() -> None:
-    """The default (no `RECIPE_FRONTEND_DIST`) keeps existing API-only serving."""
+    """The default keeps existing API-only serving."""
     app, engine = _app(frontend_dist=None)
     try:
         with TestClient(app) as c:
             assert c.get("/api/health").json() == {"status": "ok"}
-            # No frontend mounted: "/" is just an unmatched route, not an entry doc.
+            # With no frontend mounted, "/" is an unmatched route rather than
+            # an entry document.
             assert c.get("/").status_code == 404
     finally:
         engine.dispose()
@@ -79,9 +80,12 @@ def test_frontend_dist_serves_built_assets(tmp_path: Path) -> None:
         engine.dispose()
 
 
-def test_missing_asset_returns_404_not_the_entry_document(tmp_path: Path) -> None:
+def test_missing_asset_returns_404_not_the_entry_document(
+    tmp_path: Path,
+) -> None:
     """An unbuilt asset under `/assets` 404s rather than silently returning
-    `index.html` — the `/assets` mount takes precedence over the 01b fallback."""
+    `index.html`; the `/assets` mount takes precedence over the 01b fallback.
+    """
     dist = _build_dist(tmp_path)
     app, engine = _app(frontend_dist=str(dist))
     try:
@@ -147,7 +151,11 @@ def test_fallback_does_not_read_the_filesystem_by_request_path(
     app, engine = _app(frontend_dist=str(dist))
     try:
         with TestClient(app) as c:
-            for path in ("/%2e%2e/secret.txt", "/recipes/%2e%2e/%2e%2e/secret.txt"):
+            paths = (
+                "/%2e%2e/secret.txt",
+                "/recipes/%2e%2e/%2e%2e/secret.txt",
+            )
+            for path in paths:
                 resp = c.get(path)
                 assert resp.status_code == 200, path
                 assert "entry document" in resp.text, path
@@ -156,7 +164,9 @@ def test_fallback_does_not_read_the_filesystem_by_request_path(
         engine.dispose()
 
 
-def test_static_serving_cannot_escape_the_assets_directory(tmp_path: Path) -> None:
+def test_static_serving_cannot_escape_the_assets_directory(
+    tmp_path: Path,
+) -> None:
     """Path traversal through the `/assets` mount must not reach sibling files —
     never expose checkout/config/database contents beside the build output.
 
@@ -173,7 +183,11 @@ def test_static_serving_cannot_escape_the_assets_directory(tmp_path: Path) -> No
     app, engine = _app(frontend_dist=str(dist))
     try:
         with TestClient(app) as c:
-            for path in ("/assets/%2e%2e/secret.txt", "/assets/..%2fsecret.txt"):
+            paths = (
+                "/assets/%2e%2e/secret.txt",
+                "/assets/..%2fsecret.txt",
+            )
+            for path in paths:
                 resp = c.get(path)
                 assert resp.status_code == 404, path
                 assert "do not serve me" not in resp.text, path
@@ -181,7 +195,9 @@ def test_static_serving_cannot_escape_the_assets_directory(tmp_path: Path) -> No
         engine.dispose()
 
 
-def test_api_routes_take_precedence_over_frontend_serving(tmp_path: Path) -> None:
+def test_api_routes_take_precedence_over_frontend_serving(
+    tmp_path: Path,
+) -> None:
     """API success/error responses are unchanged when frontend serving is on."""
     dist = _build_dist(tmp_path)
     app, engine = _app(frontend_dist=str(dist))
@@ -217,7 +233,10 @@ def test_missing_index_html_fails_clearly_at_startup(tmp_path: Path) -> None:
 
 def test_missing_frontend_dist_directory_fails_clearly(tmp_path: Path) -> None:
     does_not_exist = tmp_path / "nope"
-    settings = Settings(database_url="sqlite://", frontend_dist=str(does_not_exist))
+    settings = Settings(
+        database_url="sqlite://",
+        frontend_dist=str(does_not_exist),
+    )
     engine = make_engine(settings.database_url)
     try:
         with pytest.raises(RuntimeError, match="index.html"):

@@ -1,5 +1,6 @@
-"""In-place database replacement with writers stopped (private-household-deployment
-ticket 02c).
+"""In-place database replacement with writers stopped.
+
+Covers private-household-deployment ticket 02c.
 
 Real file-backed SQLite, the production app factory, and the real
 `create_backup` snapshot path. Each test seeds a live database through the
@@ -41,7 +42,9 @@ def _settings(db_path: Path, *, allow_registration: bool) -> Settings:
 def _client(db_path: Path, *, allow_registration: bool = False) -> TestClient:
     engine = make_engine(f"sqlite:///{db_path}")
     return TestClient(
-        create_app(_settings(db_path, allow_registration=allow_registration), engine)
+        create_app(
+            _settings(db_path, allow_registration=allow_registration), engine
+        )
     )
 
 
@@ -50,14 +53,23 @@ def _seed_live_db(db_path: Path) -> str:
     with _client(db_path, allow_registration=True) as client:
         registered = client.post(
             "/api/auth/register",
-            json={"username": USERNAME, "password": PASSWORD, "code": REGISTRATION_CODE},
+            json={
+                "username": USERNAME,
+                "password": PASSWORD,
+                "code": REGISTRATION_CODE,
+            },
         )
         assert registered.status_code == 201, registered.text
         token = registered.json()["token"]
         client.headers["Authorization"] = f"Bearer {token}"
         made = client.post(
             "/api/recipes",
-            json={"title": "Pre-snapshot Stew", "tags": [], "steps": [], "ingredients": []},
+            json={
+                "title": "Pre-snapshot Stew",
+                "tags": [],
+                "steps": [],
+                "ingredients": [],
+            },
         )
         assert made.status_code == 201, made.text
     return token
@@ -79,7 +91,8 @@ def _titles_after_fresh_login(db_path: Path) -> list[str]:
             "/api/auth/login", json={"username": USERNAME, "password": PASSWORD}
         )
         assert login.status_code == 200, login.text
-        client.headers["Authorization"] = f"Bearer {login.json()['token']}"
+        token = login.json()["token"]
+        client.headers["Authorization"] = f"Bearer {token}"
         return [r["title"] for r in client.get("/api/recipes").json()]
 
 
@@ -96,9 +109,13 @@ def test_replaces_live_database_with_the_snapshot_world(tmp_path: Path) -> None:
     token = _seed_live_db(live_db)
     snapshot = create_backup(live_db, tmp_path / "backups")
 
-    _add_recipe(live_db, token, "Post-snapshot Pie")  # diverge after the snapshot
+    _add_recipe(
+        live_db, token, "Post-snapshot Pie"
+    )  # diverge after the snapshot
 
-    result = replace_database(snapshot, live_db, preserve_dir=tmp_path / "pre-restore")
+    result = replace_database(
+        snapshot, live_db, preserve_dir=tmp_path / "pre-restore"
+    )
     assert result.target == live_db
     assert result.preserved.is_file()
 
@@ -107,13 +124,17 @@ def test_replaces_live_database_with_the_snapshot_world(tmp_path: Path) -> None:
     assert "Post-snapshot Pie" not in titles
 
 
-def test_preserved_copy_is_the_database_that_was_replaced(tmp_path: Path) -> None:
+def test_preserved_copy_is_the_database_that_was_replaced(
+    tmp_path: Path,
+) -> None:
     live_db = tmp_path / "recipe.db"
     token = _seed_live_db(live_db)
     snapshot = create_backup(live_db, tmp_path / "backups")
     _add_recipe(live_db, token, "Post-snapshot Pie")
 
-    result = replace_database(snapshot, live_db, preserve_dir=tmp_path / "pre-restore")
+    result = replace_database(
+        snapshot, live_db, preserve_dir=tmp_path / "pre-restore"
+    )
 
     # The live path now lacks the divergence...
     assert "Post-snapshot Pie" not in _titles_after_fresh_login(live_db)
@@ -141,12 +162,13 @@ def test_the_snapshots_credential_is_what_is_served_after_replacement(
     replace_database(snapshot, live_db, preserve_dir=tmp_path / "pre-restore")
 
     with _client(live_db) as client:
-        # The snapshot-era password authenticates; the post-snapshot one does not.
+        # The snapshot-era password works; the post-snapshot one does not.
         good = client.post(
             "/api/auth/login", json={"username": USERNAME, "password": PASSWORD}
         )
         assert good.status_code == 200, good.text
-        client.headers["Authorization"] = f"Bearer {good.json()['token']}"
+        token = good.json()["token"]
+        client.headers["Authorization"] = f"Bearer {token}"
         assert client.get("/api/auth/me").json()["username"] == USERNAME
 
         stale = client.post(
@@ -156,7 +178,9 @@ def test_the_snapshots_credential_is_what_is_served_after_replacement(
         assert stale.status_code == 401
 
 
-def test_restored_sessions_are_invalidated_before_service_resumes(tmp_path: Path) -> None:
+def test_restored_sessions_are_invalidated_before_service_resumes(
+    tmp_path: Path,
+) -> None:
     live_db = tmp_path / "recipe.db"
     keep_token = _seed_live_db(live_db)
 
@@ -167,7 +191,8 @@ def test_restored_sessions_are_invalidated_before_service_resumes(tmp_path: Path
         assert second.status_code == 200, second.text
         revoked_token = second.json()["token"]
         signed_out = client.post(
-            "/api/auth/logout", headers={"Authorization": f"Bearer {revoked_token}"}
+            "/api/auth/logout",
+            headers={"Authorization": f"Bearer {revoked_token}"},
         )
         assert signed_out.status_code == 204
 
@@ -202,7 +227,9 @@ def test_replaced_database_is_operator_only(tmp_path: Path) -> None:
     assert stat.S_IMODE(live_db.stat().st_mode) == 0o600
 
 
-def test_earlier_snapshots_and_the_source_snapshot_are_untouched(tmp_path: Path) -> None:
+def test_earlier_snapshots_and_the_source_snapshot_are_untouched(
+    tmp_path: Path,
+) -> None:
     live_db = tmp_path / "recipe.db"
     _seed_live_db(live_db)
     snapshot = create_backup(live_db, tmp_path / "backups")
@@ -229,13 +256,19 @@ def test_refuses_when_target_does_not_exist(tmp_path: Path) -> None:
 
     preserve_dir = tmp_path / "pre-restore"
     with pytest.raises(RestoreError, match="not found"):
-        replace_database(snapshot, tmp_path / "nope.db", preserve_dir=preserve_dir)
+        replace_database(
+            snapshot, tmp_path / "nope.db", preserve_dir=preserve_dir
+        )
 
     assert not (tmp_path / "nope.db").exists()
-    assert not preserve_dir.exists()  # nothing preserved for a target that isn't there
+    assert (
+        not preserve_dir.exists()
+    )  # nothing preserved for a target that isn't there
 
 
-def test_invalid_snapshot_leaves_target_and_takes_no_preservation(tmp_path: Path) -> None:
+def test_invalid_snapshot_leaves_target_and_takes_no_preservation(
+    tmp_path: Path,
+) -> None:
     live_db = tmp_path / "recipe.db"
     _seed_live_db(live_db)
     live_before = live_db.read_bytes()
@@ -280,7 +313,8 @@ def test_failed_preparation_leaves_target_and_keeps_the_preserved_copy(
     snapshot = create_backup(live_db, tmp_path / "backups")
     live_before = live_db.read_bytes()
 
-    def boom(_db_path: Path) -> None:
+    def boom(db_path: Path) -> None:
+        del db_path
         raise sqlite3.OperationalError("disk I/O error")
 
     monkeypatch.setattr(restore, "_invalidate_sessions", boom)
@@ -299,7 +333,9 @@ def test_failed_preparation_leaves_target_and_keeps_the_preserved_copy(
     assert not list(live_db.parent.glob(".*replacing"))
 
 
-def test_a_corrupt_target_that_cannot_be_preserved_is_not_replaced(tmp_path: Path) -> None:
+def test_a_corrupt_target_that_cannot_be_preserved_is_not_replaced(
+    tmp_path: Path,
+) -> None:
     live_db = tmp_path / "recipe.db"
     _seed_live_db(live_db)
     good_snapshot = create_backup(live_db, tmp_path / "backups")

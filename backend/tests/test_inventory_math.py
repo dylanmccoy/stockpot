@@ -26,7 +26,7 @@ Before `phase-4b`/`-4d`/`-4e` this file errored on collection / failed; from
 `phase-6a` it does so again on the ``generate_lines`` import — that is the whole
 point of a locked oracle.
 
-All numeric field comparisons use ``pytest.approx(expected, rel=1e-9, abs=1e-9)``
+Numeric field comparisons use ``pytest.approx(expected, rel=1e-9, abs=1e-9)``
 per the §2 floating-tolerance rule; conversion results are never compared by
 exact binary-float equality.
 """
@@ -64,10 +64,16 @@ def _approx_or_none(v: float | None) -> object:
 # ---------------------------------------------------------------------------
 
 
-def R(id: int, item: str, norm: str, amount: float | None, unit: str | None) -> ReqLine:
-    """``R(id, item, norm, amount, unit)`` from the §7 availability table."""
+def req(
+    line_id: int,
+    item: str,
+    norm: str,
+    amount: float | None,
+    unit: str | None,
+) -> ReqLine:
+    """``req(id, item, norm, amount, unit)`` from the §7 availability table."""
     return ReqLine(
-        ingredient_id=id,
+        ingredient_id=line_id,
         item=item,
         normalized_name=norm,
         quantity=amount,
@@ -75,12 +81,17 @@ def R(id: int, item: str, norm: str, amount: float | None, unit: str | None) -> 
     )
 
 
-def S(id: int, norm: str, bucket: str, base: float) -> StockRow:
-    """``S(id, norm, bucket, base)`` from the §7 availability table."""
-    return StockRow(id=id, match_name=norm, unit_bucket=bucket, quantity_base=base)
+def stock_row(row_id: int, norm: str, bucket: str, base: float) -> StockRow:
+    """``stock_row(id, norm, bucket, base)`` from the §7 availability table."""
+    return StockRow(
+        id=row_id,
+        match_name=norm,
+        unit_bucket=bucket,
+        quantity_base=base,
+    )
 
 
-def A(
+def availability(
     ing_id: int,
     item: str,
     norm: str,
@@ -118,7 +129,9 @@ def A(
 # ---------------------------------------------------------------------------
 
 
-def assert_avail_eq(actual: AvailabilityLineDTO, expected: AvailabilityLineDTO) -> None:
+def assert_avail_eq(
+    actual: AvailabilityLineDTO, expected: AvailabilityLineDTO
+) -> None:
     assert isinstance(actual, AvailabilityLineDTO)
     assert actual.ingredient_id == expected.ingredient_id
     assert actual.item == expected.item
@@ -142,7 +155,9 @@ def assert_avail_list_eq(
         assert_avail_eq(a, e)
 
 
-def assert_rows_eq(actual: list[RowDeduction], expected: list[RowDeduction]) -> None:
+def assert_rows_eq(
+    actual: list[RowDeduction], expected: list[RowDeduction]
+) -> None:
     assert [type(x) for x in actual] == [RowDeduction] * len(expected)
     assert [x.row_id for x in actual] == [x.row_id for x in expected]
     for a, e in zip(actual, expected):
@@ -193,7 +208,7 @@ def entry(
     }
 
 
-def L(
+def deduction_log(
     requested: float | None,
     deducted: float | None,
     before: float | None,
@@ -201,8 +216,7 @@ def L(
     applied: bool,
     reason: str,
 ) -> dict:
-    """§7 deduction shorthand: ``item="Tomatoes"``, ``normalized_name="tomato"``,
-    canonical ``requested_unit == deducted_unit == inventory_unit == "can"``."""
+    """Create a §7 deduction shorthand entry for canned tomatoes."""
     return entry(
         item="Tomatoes",
         normalized_name="tomato",
@@ -251,84 +265,162 @@ def all_available_of(lines: list[AvailabilityLineDTO]) -> bool:
 # ===========================================================================
 
 TOM = dict(id=1, item="Tomatoes", norm="tomato")
-_MISSING_REQS = [R(1, "Tomatoes", "tomato", 3, "can")]
+_MISSING_REQS = [req(1, "Tomatoes", "tomato", 3, "can")]
 
 AVAILABILITY_CASES = [
     pytest.param(
-        [R(1, "Tomatoes", "tomato", 3, "can")],
+        [req(1, "Tomatoes", "tomato", 3, "can")],
         [],
-        [A(1, "Tomatoes", "tomato", 3, "can", 3, 0, 3, "missing", False)],
+        [
+            availability(
+                1, "Tomatoes", "tomato", 3, "can", 3, 0, 3, "missing", False
+            )
+        ],
         False,
         id="missing",
     ),
     pytest.param(
         _MISSING_REQS,
-        [S(10, "tomato", "opaque:can", 1)],
-        [A(1, "Tomatoes", "tomato", 3, "can", 3, 1, 2, "short", True)],
+        [stock_row(10, "tomato", "opaque:can", 1)],
+        [
+            availability(
+                1, "Tomatoes", "tomato", 3, "can", 3, 1, 2, "short", True
+            )
+        ],
         False,
         id="compatible-short",
     ),
     pytest.param(
         _MISSING_REQS,
-        [S(10, "tomato", "opaque:can", 1), S(11, "tomato", "opaque:jar", 1)],
-        [A(1, "Tomatoes", "tomato", 3, "can", 3, 1, 2, "have_uncertain", False)],
+        [
+            stock_row(10, "tomato", "opaque:can", 1),
+            stock_row(11, "tomato", "opaque:jar", 1),
+        ],
+        [
+            availability(
+                1,
+                "Tomatoes",
+                "tomato",
+                3,
+                "can",
+                3,
+                1,
+                2,
+                "have_uncertain",
+                False,
+            )
+        ],
         False,
         id="mixed-bucket-uncertain-short",
     ),
     pytest.param(
         _MISSING_REQS,
-        [S(10, "tomato", "opaque:can", 3), S(11, "tomato", "opaque:jar", 1)],
-        [A(1, "Tomatoes", "tomato", 3, "can", 3, 3, 0, "ok", True)],
+        [
+            stock_row(10, "tomato", "opaque:can", 3),
+            stock_row(11, "tomato", "opaque:jar", 1),
+        ],
+        [availability(1, "Tomatoes", "tomato", 3, "can", 3, 3, 0, "ok", True)],
         True,
         id="compatible-covers-despite-other-bucket",
     ),
     pytest.param(
         _MISSING_REQS,
-        [S(11, "tomato", "opaque:jar", 1)],
-        [A(1, "Tomatoes", "tomato", 3, "can", 3, 0, 3, "have_uncertain", False)],
+        [stock_row(11, "tomato", "opaque:jar", 1)],
+        [
+            availability(
+                1,
+                "Tomatoes",
+                "tomato",
+                3,
+                "can",
+                3,
+                0,
+                3,
+                "have_uncertain",
+                False,
+            )
+        ],
         False,
         id="only-incompatible",
     ),
     pytest.param(
         _MISSING_REQS,
-        [S(10, "tomato", "opaque:can", 0)],
-        [A(1, "Tomatoes", "tomato", 3, "can", 3, 0, 3, "missing", False)],
+        [stock_row(10, "tomato", "opaque:can", 0)],
+        [
+            availability(
+                1, "Tomatoes", "tomato", 3, "can", 3, 0, 3, "missing", False
+            )
+        ],
         False,
         id="zero-stock-is-absent",
     ),
     pytest.param(
         [
-            R(1, "Tomatoes", "tomato", 2, "can"),
-            R(2, "Canned tomato", "tomato", 1, "can"),
+            req(1, "Tomatoes", "tomato", 2, "can"),
+            req(2, "Canned tomato", "tomato", 1, "can"),
         ],
-        [S(10, "tomato", "opaque:can", 2)],
+        [stock_row(10, "tomato", "opaque:can", 2)],
         [
-            A(1, "Tomatoes", "tomato", 2, "can", 3, 2, 1, "short", True),
-            A(2, "Canned tomato", "tomato", 1, "can", 3, 2, 1, "short", True),
+            availability(
+                1, "Tomatoes", "tomato", 2, "can", 3, 2, 1, "short", True
+            ),
+            availability(
+                2, "Canned tomato", "tomato", 1, "can", 3, 2, 1, "short", True
+            ),
         ],
         False,
         id="duplicate-members-aggregate-once",
     ),
     pytest.param(
-        [R(1, "Flour", "flour", 1, "kg")],
-        [S(10, "flour", "mass", 500)],
-        [A(1, "Flour", "flour", 1000, "g", 1000, 500, 500, "short", True)],
+        [req(1, "Flour", "flour", 1, "kg")],
+        [stock_row(10, "flour", "mass", 500)],
+        [
+            availability(
+                1, "Flour", "flour", 1000, "g", 1000, 500, 500, "short", True
+            )
+        ],
         False,
         id="canonical-mass",
     ),
     pytest.param(
-        [R(1, "Salt", "salt", None, "can")],
+        [req(1, "Salt", "salt", None, "can")],
         [],
-        [A(1, "Salt", "salt", None, "can", None, None, None, "to_taste", False)],
+        [
+            availability(
+                1,
+                "Salt",
+                "salt",
+                None,
+                "can",
+                None,
+                None,
+                None,
+                "to_taste",
+                False,
+            )
+        ],
         True,
         id="to-taste",
     ),
     # extra required case from the §7 ``test_inventory_math.py`` row:
     # ``clove`` need vs ``bulb`` stock -> ``have_uncertain``.
     pytest.param(
-        [R(1, "Garlic", "garlic", 3, "clove")],
-        [S(10, "garlic", "opaque:bulb", 1)],
-        [A(1, "Garlic", "garlic", 3, "clove", 3, 0, 3, "have_uncertain", False)],
+        [req(1, "Garlic", "garlic", 3, "clove")],
+        [stock_row(10, "garlic", "opaque:bulb", 1)],
+        [
+            availability(
+                1,
+                "Garlic",
+                "garlic",
+                3,
+                "clove",
+                3,
+                0,
+                3,
+                "have_uncertain",
+                False,
+            )
+        ],
         False,
         id="clove-need-vs-bulb-stock",
     ),
@@ -347,15 +439,30 @@ AVAILABILITY_CASES = [
     # ahead of flour because R1 is the first requirement.
     pytest.param(
         [
-            R(1, "Eggs", "egg", 3, None),
-            R(2, "Flour", "flour", 100, "g"),
-            R(3, "Eggs", "egg", None, None),
+            req(1, "Eggs", "egg", 3, None),
+            req(2, "Flour", "flour", 100, "g"),
+            req(3, "Eggs", "egg", None, None),
         ],
         [],
         [
-            A(3, "Eggs", "egg", None, "unit", None, None, None, "to_taste", False),
-            A(1, "Eggs", "egg", 3, "unit", 3, 0, 3, "missing", False),
-            A(2, "Flour", "flour", 100, "g", 100, 0, 100, "missing", False),
+            availability(
+                3,
+                "Eggs",
+                "egg",
+                None,
+                "unit",
+                None,
+                None,
+                None,
+                "to_taste",
+                False,
+            ),
+            availability(
+                1, "Eggs", "egg", 3, "unit", 3, 0, 3, "missing", False
+            ),
+            availability(
+                2, "Flour", "flour", 100, "g", 100, 0, 100, "missing", False
+            ),
         ],
         False,
         id="group-and-to-taste-emission-order",
@@ -382,9 +489,9 @@ def test_check_availability_group_fields_identical_per_member(
     expected: list[AvailabilityLineDTO],
     expected_all: bool,
 ) -> None:
-    """Interpretation-independent: every quantified member of a group repeats the
-    exact same ``group_*`` / ``status`` / ``nettable`` — stock is never spent
-    once per member."""
+    """Verify group fields repeat for every quantified group member."""
+    del expected, expected_all
+
     lines = check_availability(reqs, stock)
     by_group: dict[str, list[AvailabilityLineDTO]] = {}
     for ln in lines:
@@ -410,6 +517,8 @@ def test_check_availability_per_line_need_sums_to_group_need(
     """§5.3: "A client summing per-line ``need`` recovers ``group_need``." Holds
     across every quantified member of a ``group_key``; to-taste lines (``need``
     is ``None``) are excluded."""
+    del expected, expected_all
+
     lines = check_availability(reqs, stock)
     by_group: dict[str, list[AvailabilityLineDTO]] = {}
     for ln in lines:
@@ -423,7 +532,10 @@ def test_check_availability_per_line_need_sums_to_group_need(
 def test_check_availability_input_reorder_is_stable() -> None:
     """Reordering inventory input does not change availability values."""
     reqs = _MISSING_REQS
-    stock = [S(10, "tomato", "opaque:can", 1), S(11, "tomato", "opaque:jar", 1)]
+    stock = [
+        stock_row(10, "tomato", "opaque:can", 1),
+        stock_row(11, "tomato", "opaque:jar", 1),
+    ]
     assert_avail_list_eq(
         check_availability(reqs, list(reversed(stock))),
         check_availability(reqs, stock),
@@ -435,13 +547,13 @@ def test_check_availability_input_reorder_is_stable() -> None:
 # ===========================================================================
 #
 # ``generate_lines(reqs_by_recipe, stock) -> list[GroceryLineDTO]`` (§4.3).
-# ``G(item, norm, quantity, unit, nettable)`` is the §7 table shorthand for one
+# ``grocery(item, norm, quantity, unit, nettable)`` is the §7 shorthand for a
 # ``GroceryLineDTO``; ``quantity`` / ``unit`` are canonical. Output order is
-# exact: first-seen normalized-name, then first-seen ``add_quantities`` partition
-# order within a name (§2.2 / §7).
+# exact: first-seen normalized-name, then first-seen ``add_quantities``
+# partition order within a name (§2.2 / §7).
 
 
-def G(
+def grocery(
     item: str,
     norm: str,
     quantity: float | None,
@@ -480,37 +592,43 @@ def assert_grocery_list_eq(
 GROCERY_GENERATION_CASES = [
     # compatible-bucket stock absent -> full need, canonical, nettable.
     pytest.param(
-        [[R(1, "Tomatoes", "tomato", 2, "can")]],
+        [[req(1, "Tomatoes", "tomato", 2, "can")]],
         [],
-        [G("Tomatoes", "tomato", 2, "can", True)],
+        [grocery("Tomatoes", "tomato", 2, "can", True)],
         id="missing-opaque",
     ),
     # compatible stock short, no incompatible -> shortfall, nettable.
     pytest.param(
-        [[R(1, "Tomatoes", "tomato", 2, "can")]],
-        [S(10, "tomato", "opaque:can", 1)],
-        [G("Tomatoes", "tomato", 1, "can", True)],
+        [[req(1, "Tomatoes", "tomato", 2, "can")]],
+        [stock_row(10, "tomato", "opaque:can", 1)],
+        [grocery("Tomatoes", "tomato", 1, "can", True)],
         id="compatible-partial",
     ),
     # compatible short + incompatible present -> compatible-bucket remainder,
     # NOT nettable (the shortfall claim is uncertain).
     pytest.param(
-        [[R(1, "Tomatoes", "tomato", 3, "can")]],
-        [S(10, "tomato", "opaque:can", 1), S(11, "tomato", "opaque:jar", 1)],
-        [G("Tomatoes", "tomato", 2, "can", False)],
+        [[req(1, "Tomatoes", "tomato", 3, "can")]],
+        [
+            stock_row(10, "tomato", "opaque:can", 1),
+            stock_row(11, "tomato", "opaque:jar", 1),
+        ],
+        [grocery("Tomatoes", "tomato", 2, "can", False)],
         id="mixed-bucket-partial",
     ),
     # no compatible stock, incompatible present -> full need, NOT nettable.
     pytest.param(
-        [[R(1, "Tomatoes", "tomato", 2, "can")]],
-        [S(11, "tomato", "opaque:jar", 1)],
-        [G("Tomatoes", "tomato", 2, "can", False)],
+        [[req(1, "Tomatoes", "tomato", 2, "can")]],
+        [stock_row(11, "tomato", "opaque:jar", 1)],
+        [grocery("Tomatoes", "tomato", 2, "can", False)],
         id="only-incompatible",
     ),
     # compatible stock covers the need despite an other-bucket row -> no line.
     pytest.param(
-        [[R(1, "Tomatoes", "tomato", 2, "can")]],
-        [S(10, "tomato", "opaque:can", 3), S(11, "tomato", "opaque:jar", 1)],
+        [[req(1, "Tomatoes", "tomato", 2, "can")]],
+        [
+            stock_row(10, "tomato", "opaque:can", 3),
+            stock_row(11, "tomato", "opaque:jar", 1),
+        ],
         [],
         id="fully-covered",
     ),
@@ -519,34 +637,34 @@ GROCERY_GENERATION_CASES = [
     # writer's ("Flour", not recipe 2's "Plain flour") per decision S4.
     pytest.param(
         [
-            [R(1, "Flour", "flour", 1, "kg")],
-            [R(2, "Plain flour", "flour", 500, "g")],
+            [req(1, "Flour", "flour", 1, "kg")],
+            [req(2, "Plain flour", "flour", 500, "g")],
         ],
-        [S(10, "flour", "mass", 200)],
-        [G("Flour", "flour", 1300, "g", True)],
+        [stock_row(10, "flour", "mass", 200)],
+        [grocery("Flour", "flour", 1300, "g", True)],
         id="cross-recipe-known-consolidation",
     ),
-    # one food, two incompatible partitions (opaque `can` vs known `mass`) -> one
-    # line each, in first-seen partition order.
+    # One food, two incompatible partitions (opaque `can` vs known `mass`)
+    # produces one line each, in first-seen partition order.
     pytest.param(
         [
             [
-                R(1, "Tomatoes", "tomato", 2, "can"),
-                R(2, "Tomatoes", "tomato", 500, "g"),
+                req(1, "Tomatoes", "tomato", 2, "can"),
+                req(2, "Tomatoes", "tomato", 500, "g"),
             ]
         ],
         [],
         [
-            G("Tomatoes", "tomato", 2, "can", True),
-            G("Tomatoes", "tomato", 500, "g", True),
+            grocery("Tomatoes", "tomato", 2, "can", True),
+            grocery("Tomatoes", "tomato", 500, "g", True),
         ],
         id="first-seen-partition-order",
     ),
     # an entirely-to-taste ingredient -> one `quantity=null, unit=null` line.
     pytest.param(
-        [[R(1, "Salt", "salt", None, None)]],
+        [[req(1, "Salt", "salt", None, None)]],
         [],
-        [G("Salt", "salt", None, None, False)],
+        [grocery("Salt", "salt", None, None, False)],
         id="only-to-taste",
     ),
     # first-seen normalized-name order across recipes. The §7 table has no
@@ -558,21 +676,29 @@ GROCERY_GENERATION_CASES = [
     # requirements consolidate (50 g + 25 g -> 75 g).
     pytest.param(
         [
-            [R(1, "Flour", "flour", 100, "g"), R(2, "Sugar", "sugar", 50, "g")],
-            [R(3, "Sugar", "sugar", 25, "g"), R(4, "Butter", "butter", 30, "g")],
+            [
+                req(1, "Flour", "flour", 100, "g"),
+                req(2, "Sugar", "sugar", 50, "g"),
+            ],
+            [
+                req(3, "Sugar", "sugar", 25, "g"),
+                req(4, "Butter", "butter", 30, "g"),
+            ],
         ],
         [],
         [
-            G("Flour", "flour", 100, "g", True),
-            G("Sugar", "sugar", 75, "g", True),
-            G("Butter", "butter", 30, "g", True),
+            grocery("Flour", "flour", 100, "g", True),
+            grocery("Sugar", "sugar", 75, "g", True),
+            grocery("Butter", "butter", 30, "g", True),
         ],
         id="first-seen-name-order-across-recipes",
     ),
 ]
 
 
-@pytest.mark.parametrize("reqs_by_recipe,stock,expected", GROCERY_GENERATION_CASES)
+@pytest.mark.parametrize(
+    "reqs_by_recipe,stock,expected", GROCERY_GENERATION_CASES
+)
 def test_generate_lines_oracle(
     reqs_by_recipe: list[list[ReqLine]],
     stock: list[StockRow],
@@ -581,7 +707,9 @@ def test_generate_lines_oracle(
     assert_grocery_list_eq(generate_lines(reqs_by_recipe, stock), expected)
 
 
-@pytest.mark.parametrize("reqs_by_recipe,stock,expected", GROCERY_GENERATION_CASES)
+@pytest.mark.parametrize(
+    "reqs_by_recipe,stock,expected", GROCERY_GENERATION_CASES
+)
 def test_generate_lines_never_emits_a_negative_quantity(
     reqs_by_recipe: list[list[ReqLine]],
     stock: list[StockRow],
@@ -589,28 +717,32 @@ def test_generate_lines_never_emits_a_negative_quantity(
 ) -> None:
     """§7 interpretation-independent: grocery output never has a negative
     quantity."""
+    del expected
+
     for line in generate_lines(reqs_by_recipe, stock):
         if line.quantity is not None:
             assert line.quantity >= 0
 
 
 def test_generate_lines_fully_covered_requirement_emits_no_line() -> None:
-    """§7 interpretation-independent: compatible positive stock that fully covers
-    a requirement emits no line at all — not a zero-quantity one."""
-    assert (
-        generate_lines(
-            [[R(1, "Tomatoes", "tomato", 2, "can")]],
-            [S(10, "tomato", "opaque:can", 3), S(11, "tomato", "opaque:jar", 1)],
-        )
-        == []
+    """Verify covering stock produces no line, including no zero line."""
+    assert not generate_lines(
+        [[req(1, "Tomatoes", "tomato", 2, "can")]],
+        [
+            stock_row(10, "tomato", "opaque:can", 3),
+            stock_row(11, "tomato", "opaque:jar", 1),
+        ],
     )
 
 
 def test_generate_lines_inventory_reorder_does_not_change_output() -> None:
     """§7 interpretation-independent: reordering inventory input does not change
     grocery values."""
-    reqs = [[R(1, "Tomatoes", "tomato", 3, "can")]]
-    stock = [S(10, "tomato", "opaque:can", 1), S(11, "tomato", "opaque:jar", 1)]
+    reqs = [[req(1, "Tomatoes", "tomato", 3, "can")]]
+    stock = [
+        stock_row(10, "tomato", "opaque:can", 1),
+        stock_row(11, "tomato", "opaque:jar", 1),
+    ]
     assert_grocery_list_eq(
         generate_lines(reqs, list(reversed(stock))),
         generate_lines(reqs, stock),
@@ -618,67 +750,78 @@ def test_generate_lines_inventory_reorder_does_not_change_output() -> None:
 
 
 def test_generate_lines_empty_input_is_empty() -> None:
-    assert generate_lines([], []) == []
-    assert generate_lines([[]], []) == []
+    assert not generate_lines([], [])
+    assert not generate_lines([[]], [])
 
 
 # ===========================================================================
 # §7 — Deduction
 # ===========================================================================
 
-_DED_REQS = [R(1, "Tomatoes", "tomato", 3, "can")]
+_DED_REQS = [req(1, "Tomatoes", "tomato", 3, "can")]
 
 DEDUCTION_CASES = [
     pytest.param(
         _DED_REQS,
         [],
         [],
-        [L(3, 0, None, None, False, "not in inventory")],
+        [deduction_log(3, 0, None, None, False, "not in inventory")],
         id="not-in-inventory",
     ),
     pytest.param(
         _DED_REQS,
-        [S(11, "tomato", "opaque:jar", 2)],
+        [stock_row(11, "tomato", "opaque:jar", 2)],
         [],
-        [L(3, 0, None, None, False, "have uncertain (incompatible unit)")],
+        [
+            deduction_log(
+                3, 0, None, None, False, "have uncertain (incompatible unit)"
+            )
+        ],
         id="only-incompatible",
     ),
     pytest.param(
         _DED_REQS,
-        [S(10, "tomato", "opaque:can", 5)],
+        [stock_row(10, "tomato", "opaque:can", 5)],
         [RowDeduction(10, 2)],
-        [L(3, 3, 5, 2, True, "ok")],
+        [deduction_log(3, 3, 5, 2, True, "ok")],
         id="enough-compatible",
     ),
     pytest.param(
         _DED_REQS,
-        [S(10, "tomato", "opaque:can", 2)],
+        [stock_row(10, "tomato", "opaque:can", 2)],
         [RowDeduction(10, 0)],
-        [L(3, 2, 2, 0, True, "clamped to 0")],
+        [deduction_log(3, 2, 2, 0, True, "clamped to 0")],
         id="clamp-compatible",
     ),
     pytest.param(
         _DED_REQS,
-        [S(10, "tomato", "opaque:can", 1), S(11, "tomato", "opaque:jar", 9)],
+        [
+            stock_row(10, "tomato", "opaque:can", 1),
+            stock_row(11, "tomato", "opaque:jar", 9),
+        ],
         [RowDeduction(10, 0)],
-        [L(3, 1, 1, 0, True, "clamped to 0")],
+        [deduction_log(3, 1, 1, 0, True, "clamped to 0")],
         id="compatible-wins-over-incompatible",
     ),
     pytest.param(
         _DED_REQS,
-        [S(20, "tomato", "opaque:can", 2), S(10, "tomato", "opaque:can", 2)],
+        [
+            stock_row(20, "tomato", "opaque:can", 2),
+            stock_row(10, "tomato", "opaque:can", 2),
+        ],
         [RowDeduction(10, 0), RowDeduction(20, 1)],
         [
-            L(3, 2, 2, 0, True, "clamped to 0"),
-            L(None, 1, 2, 1, True, "ok"),
+            deduction_log(3, 2, 2, 0, True, "clamped to 0"),
+            deduction_log(None, 1, 2, 1, True, "ok"),
         ],
         id="ascending-row-id-draw",
     ),
     # extra required case from the §7 ``test_inventory_math.py`` row:
-    # kg-from-g — stock ``2000 g``, recipe ``1 kg`` -> deducted 1000, after 1000, all g.
+    # kg-from-g — stock ``2000 g``, recipe ``1 kg`` -> deducted 1000,
+    # after 1000, all g.
     pytest.param(
-        [R(1, "Flour", "flour", 1, "kg")],
-        [S(10, "flour", "mass", 2000)],
+        [req(1, "Flour", "flour", 1, "kg")],
+        [stock_row(10, "flour", "mass", 2000)],
         [RowDeduction(10, 1000)],
         [
             entry(
@@ -699,7 +842,7 @@ DEDUCTION_CASES = [
     ),
     # §7: a to-taste requirement -> no row update, one vacuous "to taste" entry.
     pytest.param(
-        [R(1, "Salt", "salt", None, None)],
+        [req(1, "Salt", "salt", None, None)],
         [],
         [],
         [
@@ -722,7 +865,9 @@ DEDUCTION_CASES = [
 ]
 
 
-@pytest.mark.parametrize("reqs,stock,expected_rows,expected_log", DEDUCTION_CASES)
+@pytest.mark.parametrize(
+    "reqs,stock,expected_rows,expected_log", DEDUCTION_CASES
+)
 def test_deduct_calc_oracle(
     reqs: list[ReqLine],
     stock: list[StockRow],
@@ -735,7 +880,9 @@ def test_deduct_calc_oracle(
     assert_log_eq(proposal.log_entries, expected_log)
 
 
-@pytest.mark.parametrize("reqs,stock,expected_rows,expected_log", DEDUCTION_CASES)
+@pytest.mark.parametrize(
+    "reqs,stock,expected_rows,expected_log", DEDUCTION_CASES
+)
 def test_deduct_calc_entries_have_all_11_keys(
     reqs: list[ReqLine],
     stock: list[StockRow],
@@ -744,8 +891,11 @@ def test_deduct_calc_entries_have_all_11_keys(
 ) -> None:
     """Every deduction log entry is a ``dict`` carrying exactly the 11 keys, in
     every branch, with ``None`` where a branch does not populate one (N7). The
-    ``CookDeductionRead`` Pydantic round-trip over these same entries is authored
-    by `phase-5a` once ``app.schemas.cook_logs`` exists."""
+    The ``CookDeductionRead`` Pydantic round-trip over these entries is
+    authored by `phase-5a` once ``app.schemas.cook_logs`` exists.
+    """
+    del expected_rows, expected_log
+
     proposal = deduct_calc(reqs, stock)
     assert proposal.log_entries, "each oracle case emits at least one entry"
     for ent in proposal.log_entries:
@@ -753,7 +903,9 @@ def test_deduct_calc_entries_have_all_11_keys(
         assert set(ent.keys()) == ELEVEN_KEYS
 
 
-@pytest.mark.parametrize("reqs,stock,expected_rows,expected_log", DEDUCTION_CASES)
+@pytest.mark.parametrize(
+    "reqs,stock,expected_rows,expected_log", DEDUCTION_CASES
+)
 def test_deduct_calc_invariants(
     reqs: list[ReqLine],
     stock: list[StockRow],
@@ -765,6 +917,8 @@ def test_deduct_calc_invariants(
     - never a negative ``new_quantity_base``;
     - for every applied entry, ``before - deducted == after`` within tolerance.
     """
+    del expected_rows, expected_log
+
     proposal = deduct_calc(reqs, stock)
     for row in proposal.row_updates:
         assert row.new_quantity_base >= 0
@@ -779,7 +933,10 @@ def test_deduct_calc_requested_only_on_first_row_of_group() -> None:
     """``requested`` is set on the first row of a group, ``None`` after."""
     proposal = deduct_calc(
         _DED_REQS,
-        [S(20, "tomato", "opaque:can", 2), S(10, "tomato", "opaque:can", 2)],
+        [
+            stock_row(20, "tomato", "opaque:can", 2),
+            stock_row(10, "tomato", "opaque:can", 2),
+        ],
     )
     requested = [e["requested"] for e in proposal.log_entries]
     assert requested[0] == pytest.approx(3, rel=REL, abs=ABS)
@@ -790,13 +947,21 @@ def test_deduct_calc_draw_order_is_ascending_row_id_not_input_order() -> None:
     """Deduction order is determined by ascending row id, not input order."""
     forward = deduct_calc(
         _DED_REQS,
-        [S(10, "tomato", "opaque:can", 2), S(20, "tomato", "opaque:can", 2)],
+        [
+            stock_row(10, "tomato", "opaque:can", 2),
+            stock_row(20, "tomato", "opaque:can", 2),
+        ],
     )
     reverse = deduct_calc(
         _DED_REQS,
-        [S(20, "tomato", "opaque:can", 2), S(10, "tomato", "opaque:can", 2)],
+        [
+            stock_row(20, "tomato", "opaque:can", 2),
+            stock_row(10, "tomato", "opaque:can", 2),
+        ],
     )
-    assert_rows_eq(forward.row_updates, [RowDeduction(10, 0), RowDeduction(20, 1)])
+    assert_rows_eq(
+        forward.row_updates, [RowDeduction(10, 0), RowDeduction(20, 1)]
+    )
     assert_rows_eq(reverse.row_updates, forward.row_updates)
     assert_log_eq(reverse.log_entries, forward.log_entries)
 

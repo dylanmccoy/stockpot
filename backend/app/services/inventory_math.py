@@ -13,10 +13,11 @@ Phase status (``docs/plan.md`` §Independent contract-test gate):
 - ``phase-4e`` — ``deduct_calc`` / ``_entry`` (§4.5).
 - ``phase-6b`` — ``generate_lines`` / ``GroceryLineDTO`` (§4.3).
 
-The §7 oracle cases in ``tests/test_inventory_math.py`` were authored and locked
-at ``phase-4a``: add-to-inventory passes from ``phase-4b`` on, availability from
-``phase-4d`` on, deduction from ``phase-4e`` on. The grocery-generation rows were
-authored and locked at ``phase-6a`` and pass from ``phase-6b`` on.
+The §7 oracle cases in ``tests/test_inventory_math.py`` were authored and
+locked at ``phase-4a``: add-to-inventory passes from ``phase-4b`` on,
+availability from ``phase-4d`` on, deduction from ``phase-4e`` on. The
+grocery-generation rows were authored and locked at ``phase-6a`` and pass from
+``phase-6b`` on.
 """
 
 from __future__ import annotations
@@ -24,7 +25,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from app.normalize import normalize_name
-from app.units import Quantity, add_quantities, bucket_of, canon_unit, normalize_unit_token, to_base
+from app.units import (
+    Quantity,
+    add_quantities,
+    bucket_of,
+    canon_unit,
+    normalize_unit_token,
+    to_base,
+)
 
 # --------------------------------------------------------------------------- #
 # Frozen DTOs (spec.md §4). Every service takes / returns these.
@@ -74,7 +82,8 @@ class GroceryLineDTO:
     item: str
     normalized_name: str
     quantity: float | None  # canonical; None = no amount to claim
-    unit: str | None  # canonical unit label; None only for the entirely-to-taste line
+    # Canonical unit label; None only for the entirely-to-taste line.
+    unit: str | None
     nettable: bool
 
 
@@ -137,10 +146,13 @@ def add_to_inventory_calc(
     else:
         add_base = to_base(a, tok)[0]
     normalized_item = normalize_name(display_item)
+    normalized_match_name = (
+        normalize_name(match_name)
+        if match_name is not None
+        else normalized_item
+    )
     return InventoryDelta(
-        match_name=(
-            normalize_name(match_name) if match_name is not None else normalized_item
-        ),
+        match_name=normalized_match_name,
         unit_bucket=bucket,
         item=display_item,
         normalized_name=normalized_item,
@@ -157,13 +169,16 @@ def add_to_inventory_calc(
 
 @dataclass(frozen=True)
 class GroupAgg:
-    """One ``aggregate`` group, keyed by ``(normalized_name, bucket)`` (§4.1)."""
+    """An aggregate group keyed by normalized name and unit bucket (§4.1)."""
 
     norm: str
     bucket: str
-    need_base: float  # Σ own_need_base over quantified members (canonical unit)
-    members: list[tuple[int, float]]  # (ingredient_id, own_need_base), position order
-    to_taste_members: list[int]  # ingredient ids with quantity is None, position order
+    # Sum of member needs in the canonical unit.
+    need_base: float
+    # (ingredient_id, own_need_base) pairs in position order.
+    members: list[tuple[int, float]]
+    # Ingredient ids with no quantity, in position order.
+    to_taste_members: list[int]
     display_item: str  # first member's item, any kind (decision S4)
 
 
@@ -171,8 +186,8 @@ def _own_need_base(quantity: float, unit: str | None) -> float:
     """One requirement's need in the group's canonical unit.
 
     ``to_base`` already handles every known token — including the bare COUNT
-    tokens (``None`` / ``unit`` / ``dozen`` / ``pair``). It returns ``None`` only
-    for an opaque / unknown unit, where the raw amount *is* the canonical amount
+    tokens (``None`` / ``unit`` / ``dozen`` / ``pair``). It returns ``None``
+    only for an opaque / unknown unit, where the raw amount *is* canonical
     (spec.md §4.1: "``to_base(qty*M, unit).amount`` (known dims) or ``qty*M``
     (opaque / count)").
     """
@@ -180,13 +195,15 @@ def _own_need_base(quantity: float, unit: str | None) -> float:
     return quantity if converted is None else converted[0]
 
 
-def aggregate(reqs: list[ReqLine], M: float = 1.0) -> dict[tuple[str, str], GroupAgg]:
-    """Group requirements by ``(normalized_name, bucket_of(unit))`` (spec.md §4.1).
+def aggregate(
+    reqs: list[ReqLine], multiplier: float = 1.0
+) -> dict[tuple[str, str], GroupAgg]:
+    """Group requirements by name and ``bucket_of(unit)`` (spec.md §4.1).
 
     ``ReqLine.quantity`` already has the recipe multiplier folded in (the router
-    builds it that way), so ``M`` defaults to ``1.0``; ``check_availability`` /
-    cook call this without it. Groups are returned in first-seen order; within a
-    group ``members`` and ``to_taste_members`` keep stored (position) order.
+    builds it that way), so ``multiplier`` defaults to ``1.0``;
+    ``check_availability`` and cook call this without it. Groups are returned in
+    first-seen order; within a group, members keep stored (position) order.
     """
     groups: dict[tuple[str, str], dict] = {}
     for ing in reqs:
@@ -202,7 +219,7 @@ def aggregate(reqs: list[ReqLine], M: float = 1.0) -> dict[tuple[str, str], Grou
         if ing.quantity is None:
             slot["to_taste"].append(ing.ingredient_id)
             continue
-        own = _own_need_base(ing.quantity * M, ing.unit)
+        own = _own_need_base(ing.quantity * multiplier, ing.unit)
         slot["members"].append((ing.ingredient_id, own))
         slot["need_base"] += own
     return {
@@ -229,9 +246,9 @@ def check_availability(
     """Per-ingredient availability against current stock (spec.md §4.2).
 
     One line per requirement. To-taste members of a group emit first (vacuous
-    line, decision SD1), then the quantified members repeat the group's ``group_*``
-    / ``status`` / ``nettable`` verbatim — stock is aggregated once per group,
-    never spent per member.
+    line, decision SD1), then the quantified members repeat the group's
+    ``group_*`` / ``status`` / ``nettable`` verbatim. Stock is aggregated once
+    per group, never spent per member.
     """
     items = {r.ingredient_id: r.item for r in reqs}
     out: list[AvailabilityLineDTO] = []
@@ -259,7 +276,11 @@ def check_availability(
         if not g.members:  # group had only to-taste rows
             continue
 
-        pos = [r for r in stock if r.match_name == g.norm and r.quantity_base > 0]
+        pos = [
+            r
+            for r in stock
+            if r.match_name == g.norm and r.quantity_base > 0
+        ]
         compat = [r for r in pos if r.unit_bucket == g.bucket]
         incomp = [r for r in pos if r.unit_bucket != g.bucket]
 
@@ -269,13 +290,28 @@ def check_availability(
             if short <= 0:
                 gstatus, nettable, ghave, gshort = "ok", True, have, 0.0
             elif incomp:
-                gstatus, nettable, ghave, gshort = "have_uncertain", False, have, short
+                gstatus, nettable, ghave, gshort = (
+                    "have_uncertain",
+                    False,
+                    have,
+                    short,
+                )
             else:
                 gstatus, nettable, ghave, gshort = "short", True, have, short
         elif incomp:
-            gstatus, nettable, ghave, gshort = "have_uncertain", False, 0.0, g.need_base
+            gstatus, nettable, ghave, gshort = (
+                "have_uncertain",
+                False,
+                0.0,
+                g.need_base,
+            )
         else:
-            gstatus, nettable, ghave, gshort = "missing", False, 0.0, g.need_base
+            gstatus, nettable, ghave, gshort = (
+                "missing",
+                False,
+                0.0,
+                g.need_base,
+            )
 
         for ing_id, own_need_base in g.members:
             out.append(
@@ -323,7 +359,8 @@ def generate_lines(
                 ing.normalized_name,
                 {"quantities": [], "display_item": ing.item, "to_taste": False},
             )
-            slot["display_item"] = slot["display_item"] or ing.item  # first writer wins
+            # Keep the first non-empty display item.
+            slot["display_item"] = slot["display_item"] or ing.item
             if ing.quantity is None:
                 slot["to_taste"] = True
                 continue
@@ -336,7 +373,11 @@ def generate_lines(
         for q in add_quantities(slot["quantities"]):
             bucket = bucket_of(q.unit)
             canon = canon_unit(bucket)
-            pos = [iv for iv in stock if iv.match_name == norm and iv.quantity_base > 0]
+            pos = [
+                iv
+                for iv in stock
+                if iv.match_name == norm and iv.quantity_base > 0
+            ]
             compat = [iv for iv in pos if iv.unit_bucket == bucket]
             incomp = [iv for iv in pos if iv.unit_bucket != bucket]
             need_base = (
@@ -346,11 +387,18 @@ def generate_lines(
             )
 
             if q.amount is None:
-                out.append(GroceryLineDTO(display_item, norm, None, canon, False))
+                line = GroceryLineDTO(display_item, norm, None, canon, False)
+                out.append(line)
                 emitted = True
             elif not compat:
                 out.append(
-                    GroceryLineDTO(display_item, norm, need_base, canon, nettable=(not pos))
+                    GroceryLineDTO(
+                        display_item,
+                        norm,
+                        need_base,
+                        canon,
+                        nettable=not pos,
+                    )
                 )
                 emitted = True
             else:
@@ -360,7 +408,7 @@ def generate_lines(
                     continue  # covered -> no line
                 out.append(
                     GroceryLineDTO(
-                        display_item, norm, short, canon, nettable=(not incomp)
+                        display_item, norm, short, canon, nettable=not incomp
                     )
                 )
                 emitted = True
@@ -377,10 +425,11 @@ def generate_lines(
 
 
 def deduct_calc(reqs: list[ReqLine], stock: list[StockRow]) -> DeductProposal:
-    """Propose the inventory draw-down for ``POST /api/recipes/{id}/cook`` (spec.md §4.5).
+    """Propose inventory draw-down when cooking a recipe (spec.md §4.5).
 
     Pure: builds a working copy ``live`` of every stock row's ``quantity_base``
-    and never mutates ``stock``. Per ``(normalized_name, bucket)`` group it draws
+    and never mutates ``stock``. Per ``(normalized_name, bucket)`` group, it
+    draws
     the compatible bucket down in **ascending row-id order** (decision SD2),
     clamping each row at zero and logging ``"clamped to 0"`` for any unmet
     remainder — even when incompatible-bucket stock exists (cook does **not**

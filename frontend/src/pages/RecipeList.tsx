@@ -89,8 +89,12 @@ function toggle(list: string[], value: string): string[] {
 
 function timeSummary(recipe: RecipeRead): string | null {
   const parts: string[] = [];
-  if (recipe.prep_time != null) parts.push(`${recipe.prep_time} min prep`);
-  if (recipe.cook_time != null) parts.push(`${recipe.cook_time} min cook`);
+  if (recipe.prep_time !== null) {
+    parts.push(`${recipe.prep_time} min prep`);
+  }
+  if (recipe.cook_time !== null) {
+    parts.push(`${recipe.cook_time} min cook`);
+  }
   return parts.length ? parts.join(" · ") : null;
 }
 
@@ -239,7 +243,7 @@ export default function RecipeList() {
 
   function handleCreated(list: GroceryListRead) {
     // spec §10.5: a new list makes the /groceries index (ticket 12b) stale.
-    queryClient.invalidateQueries({ queryKey: ["grocery"] });
+    void queryClient.invalidateQueries({ queryKey: ["grocery"] });
     toast.show("Grocery list created.", { variant: "success" });
     setDialogOpen(false);
     setSelected(new Set());

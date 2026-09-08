@@ -9,7 +9,6 @@ from typing import Optional
 
 from app.units import OPAQUE_TOKENS, normalize_unit_token, parse_unit
 
-
 # Unicode vulgar fractions
 _VULGAR_FRACTIONS = {
     "½": 0.5,
@@ -27,7 +26,7 @@ _TO_TASTE_RE = re.compile(r"\bto\s+taste\b", re.IGNORECASE)
 
 
 def _is_unit_word(candidate: str) -> bool:
-    """True if candidate is a known synonym or a deliberately-opaque unit token."""
+    """Return whether candidate is a known or deliberately opaque unit token."""
     if parse_unit(candidate) is not None:
         return True
     normalized = normalize_unit_token(candidate)
@@ -44,7 +43,8 @@ def _parse_number(s: str) -> Optional[float]:
     - Mixed number: 1 1/2
     - Vulgar fraction: ½
 
-    Returns None if parsing fails, or if the result is 0, negative, or non-finite.
+    Returns None if parsing fails, or if the result is 0, negative, or
+    non-finite.
     """
     s = s.strip()
 
@@ -105,12 +105,13 @@ def parse_ingredient(text: str) -> dict:
     """Parse an ingredient line.
 
     Returns:
-        {"quantity": float | None, "unit": str | None, "item": str, "note": str | None}
+        A dictionary containing the parsed quantity, unit, item, and note.
 
     Contract:
     - Never raises for non-blank input
     - item is always non-empty
-    - quantity is either a positive finite float or None (never 0, negative, or non-finite)
+    - quantity is either a positive finite float or None (never 0, negative, or
+      non-finite)
     """
     # Start with a clean working copy
     working = text.strip()
@@ -134,10 +135,13 @@ def parse_ingredient(text: str) -> dict:
     # Step 2: Extract parenthetical notes (anywhere, not just trailing)
     # Look for any (...)  in the text
     paren_match = re.search(r"\(([^)]+)\)", working)
-    if paren_match and note is None:  # Only extract if we haven't found "to taste"
+    # Only extract if we haven't found "to taste".
+    if paren_match and note is None:
         note = paren_match.group(1).strip()
         # Remove the parenthetical from working
-        working = working[: paren_match.start()] + " " + working[paren_match.end() :]
+        before_note = working[: paren_match.start()]
+        after_note = working[paren_match.end() :]
+        working = before_note + " " + after_note
         working = " ".join(working.split())  # Normalize whitespace
 
     # Step 3: Try to extract leading number (quantity)
@@ -150,11 +154,14 @@ def parse_ingredient(text: str) -> dict:
                 quantity = parsed_qty
                 working = working[1:].strip()
 
-    # Try to parse a number at the start (if we haven't found quantity yet)
+    # Try to parse a number at the start (if no quantity has been found yet).
     if quantity is None and working:
         # Look for a number pattern at the start
         # Matches: 123, 1.5, 1/2, 1 1/2
-        number_pattern = r"^(?:(\d+(?:\.\d+)?)\s+(\d+)/(\d+)|(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?))"
+        number_pattern = (
+            r"^(?:(\d+(?:\.\d+)?)\s+(\d+)/(\d+)|"
+            r"(\d+(?:\.\d+)?)/(\d+(?:\.\d+)?)|(\d+(?:\.\d+)?))"
+        )
         match = re.match(number_pattern, working)
         if match:
             if match.group(1):  # Mixed number
@@ -202,7 +209,7 @@ def parse_ingredient(text: str) -> dict:
     if not item:
         item = "ingredient"
 
-    # Step 7: If "to taste" was found, null the quantity (even if one was parsed)
+    # Step 7: If "to taste" was found, null the quantity even if one was parsed.
     if to_taste_found:
         quantity = None
 

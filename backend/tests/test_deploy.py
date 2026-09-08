@@ -73,12 +73,16 @@ def _seed_db(path: Path, titles: list[str]) -> None:
 def _recipe_titles(path: Path) -> list[str]:
     conn = sqlite3.connect(path)
     try:
-        return sorted(row[0] for row in conn.execute("SELECT title FROM recipes"))
+        return sorted(
+            row[0] for row in conn.execute("SELECT title FROM recipes")
+        )
     finally:
         conn.close()
 
 
-def _stub_dist(root: Path, name: str = "dist", marker: str | None = None) -> Path:
+def _stub_dist(
+    root: Path, name: str = "dist", marker: str | None = None
+) -> Path:
     """A stub built-frontend tree. With `marker`, drops a uniquely identifiable
     asset so a test can tell which build a running deployment is serving."""
     dist = root / name
@@ -89,8 +93,8 @@ def _stub_dist(root: Path, name: str = "dist", marker: str | None = None) -> Pat
     return dist
 
 
-@pytest.fixture
-def deploy_env(tmp_path: Path):
+@pytest.fixture(name="deploy_env")
+def deploy_env_fixture(tmp_path: Path):
     """A disposable deployment layout: data/backup/runtime dirs and a stub build
     under `tmp_path`, the real repo as the checkout. Yields the env dict; always
     stops any server the test started."""
@@ -107,9 +111,27 @@ def deploy_env(tmp_path: Path):
     # Tear down top-down: the keeper (which would relaunch the supervisor), then
     # the supervisor (which would restart the app), then the app. Each stop is a
     # no-op if the test never started that layer.
-    subprocess.run(["bash", str(KEEPER), "stop"], env=env, capture_output=True, text=True)
-    subprocess.run(["bash", str(SUPERVISE), "stop"], env=env, capture_output=True, text=True)
-    subprocess.run(["bash", str(CONTROL), "stop"], env=env, capture_output=True, text=True)
+    subprocess.run(
+        ["bash", str(KEEPER), "stop"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    subprocess.run(
+        ["bash", str(SUPERVISE), "stop"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    subprocess.run(
+        ["bash", str(CONTROL), "stop"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def _run(script: Path, *args: str, env: dict, cwd: Path | str | None = None):
@@ -120,6 +142,7 @@ def _run(script: Path, *args: str, env: dict, cwd: Path | str | None = None):
         capture_output=True,
         text=True,
         timeout=90,
+        check=False,
     )
 
 
@@ -137,11 +160,15 @@ def _wait_health(timeout: float = 30.0, port: str = PORT) -> bool:
     return False
 
 
-def test_install_adopts_existing_database_via_snapshot(deploy_env, tmp_path: Path):
+def test_install_adopts_existing_database_via_snapshot(
+    deploy_env, tmp_path: Path
+):
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["CARRIED OVER"])
 
-    result = _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env)
+    result = _run(
+        INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+    )
     assert result.returncode == 0, result.stderr
 
     deployment_db = tmp_path / "data" / "recipe.db"
@@ -152,7 +179,9 @@ def test_install_adopts_existing_database_via_snapshot(deploy_env, tmp_path: Pat
     assert len(snapshots) == 1
 
 
-def test_install_never_overwrites_an_existing_deployment_database(deploy_env, tmp_path: Path):
+def test_install_never_overwrites_an_existing_deployment_database(
+    deploy_env, tmp_path: Path
+):
     deployment_db = tmp_path / "data" / "recipe.db"
     deployment_db.parent.mkdir(parents=True)
     _seed_db(deployment_db, ["ALREADY LIVE"])
@@ -160,35 +189,57 @@ def test_install_never_overwrites_an_existing_deployment_database(deploy_env, tm
     other = tmp_path / "other.db"
     _seed_db(other, ["SHOULD NOT APPEAR"])
 
-    result = _run(INSTALL, "--skip-build", "--adopt-from", str(other), env=deploy_env)
+    result = _run(
+        INSTALL, "--skip-build", "--adopt-from", str(other), env=deploy_env
+    )
     assert result.returncode == 0, result.stderr
     assert "never overwrites an existing deployment database" in result.stdout
     assert _recipe_titles(deployment_db) == ["ALREADY LIVE"]
 
 
-def test_install_without_a_source_defers_database_creation(deploy_env, tmp_path: Path):
+def test_install_without_a_source_defers_database_creation(
+    deploy_env, tmp_path: Path
+):
     missing = tmp_path / "no-such.db"
 
-    result = _run(INSTALL, "--skip-build", "--adopt-from", str(missing), env=deploy_env)
+    result = _run(
+        INSTALL, "--skip-build", "--adopt-from", str(missing), env=deploy_env
+    )
     assert result.returncode == 0, result.stderr
     assert not (tmp_path / "data" / "recipe.db").exists()
     assert "fresh empty database will be created" in result.stdout
 
 
-def test_a_database_inside_the_checkout_is_refused_by_every_entrypoint(deploy_env):
-    # The guard lives in lib.sh, so it fires on `install.sh`, `control.sh start`,
-    # `status`, ... — not just the one script.
-    env = {**deploy_env, "RECIPE_DEPLOY_DB_FILE": str(REPO_ROOT / "backend" / "deploy-test.db")}
-    for script, *args in ((INSTALL, "--skip-build"), (CONTROL, "start"), (CONTROL, "status")):
+def test_a_database_inside_the_checkout_is_refused_by_every_entrypoint(
+    deploy_env,
+):
+    # The guard lives in lib.sh, so it fires on `install.sh`, `control.sh
+    # start`, `status`, ... — not just the one script.
+    env = {
+        **deploy_env,
+        "RECIPE_DEPLOY_DB_FILE": str(REPO_ROOT / "backend" / "deploy-test.db"),
+    }
+    for script, *args in (
+        (INSTALL, "--skip-build"),
+        (CONTROL, "start"),
+        (CONTROL, "status"),
+    ):
         result = _run(script, *args, env=env)
         assert result.returncode != 0
         assert "inside the checkout" in result.stderr
 
 
-def test_control_lifecycle_uses_one_explicit_db_from_any_cwd(deploy_env, tmp_path: Path):
+def test_control_lifecycle_uses_one_explicit_db_from_any_cwd(
+    deploy_env, tmp_path: Path
+):
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["PERSISTED RECORD"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
 
     deployment_db = tmp_path / "data" / "recipe.db"
     elsewhere = tmp_path / "elsewhere"
@@ -240,10 +291,17 @@ def _snapshot_count(tmp_path: Path) -> int:
     return len(list((tmp_path / "data" / "backups").glob("recipe-*.db")))
 
 
-def test_update_switches_build_snapshots_first_and_preserves_data(deploy_env, tmp_path: Path):
+def test_update_switches_build_snapshots_first_and_preserves_data(
+    deploy_env, tmp_path: Path
+):
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["SURVIVES THE UPDATE"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
 
     deployment_db = tmp_path / "data" / "recipe.db"
     assert _run(CONTROL, "start", env=deploy_env).returncode == 0
@@ -258,9 +316,11 @@ def test_update_switches_build_snapshots_first_and_preserves_data(deploy_env, tm
     assert _snapshot_count(tmp_path) == 2
 
     # The new build is now the served one; the staging and rollback dirs are
-    # cleaned up on success (retaining an old build for on-demand return is 04c).
+    # cleaned up on success (retaining a build for on-demand return is 04c).
     live_dist = Path(deploy_env["RECIPE_DEPLOY_FRONTEND_DIST"])
-    assert (live_dist / "assets" / "build-marker.txt").read_text() == "NEW-BUILD-04b"
+    assert (
+        live_dist / "assets" / "build-marker.txt"
+    ).read_text() == "NEW-BUILD-04b"
     assert not (Path(str(live_dist) + ".prev")).exists()
     assert not (Path(str(live_dist) + ".staging")).exists()
 
@@ -271,10 +331,17 @@ def test_update_switches_build_snapshots_first_and_preserves_data(deploy_env, tm
     assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
 
 
-def test_update_aborts_on_bad_build_and_leaves_running_deployment_intact(deploy_env, tmp_path: Path):
+def test_update_aborts_on_bad_build_and_leaves_running_deployment_intact(
+    deploy_env, tmp_path: Path
+):
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["UNTOUCHED BY FAILED UPDATE"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
 
     deployment_db = tmp_path / "data" / "recipe.db"
     assert _run(CONTROL, "start", env=deploy_env).returncode == 0
@@ -308,7 +375,11 @@ ROLLBACK = REPO_ROOT / "deploy" / "rollback.sh"
 
 def _retained_builds(tmp_path: Path) -> list[Path]:
     archive = tmp_path / "data" / "builds"
-    return sorted(p for p in archive.iterdir() if p.is_dir()) if archive.is_dir() else []
+    return (
+        sorted(p for p in archive.iterdir() if p.is_dir())
+        if archive.is_dir()
+        else []
+    )
 
 
 def test_rollback_returns_to_the_retained_previous_build_and_preserves_data(
@@ -316,7 +387,12 @@ def test_rollback_returns_to_the_retained_previous_build_and_preserves_data(
 ):
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["KEPT ACROSS ROLLBACK"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
 
     deployment_db = tmp_path / "data" / "recipe.db"
     live_dist = Path(deploy_env["RECIPE_DEPLOY_FRONTEND_DIST"])
@@ -329,12 +405,19 @@ def test_rollback_returns_to_the_retained_previous_build_and_preserves_data(
 
     # Update to BUILD-2 — update.sh retains BUILD-1 in the build archive.
     next_build = _stub_dist(tmp_path, "next-dist", marker="BUILD-2")
-    assert _run(UPDATE, "--staging-dir", str(next_build), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            UPDATE, "--staging-dir", str(next_build), env=deploy_env
+        ).returncode
+        == 0
+    )
     assert (live_dist / "assets" / "build-marker.txt").read_text() == "BUILD-2"
     assert _snapshot_count(tmp_path) == 2
     retained = _retained_builds(tmp_path)
     assert len(retained) == 1
-    assert (retained[0] / "assets" / "build-marker.txt").read_text() == "BUILD-1"
+    assert (
+        retained[0] / "assets" / "build-marker.txt"
+    ).read_text() == "BUILD-1"
 
     # Deliberate operator rollback to the most recently retained build.
     result = _run(ROLLBACK, env=deploy_env)
@@ -343,7 +426,7 @@ def test_rollback_returns_to_the_retained_previous_build_and_preserves_data(
 
     # A pre-maintenance snapshot was taken before the switch.
     assert _snapshot_count(tmp_path) == 3
-    # BUILD-1 is the served build again; same explicit DB, adopted record intact.
+    # BUILD-1 is served again; same explicit DB, adopted record intact.
     assert (live_dist / "assets" / "build-marker.txt").read_text() == "BUILD-1"
     assert not (Path(str(live_dist) + ".prev")).exists()
     assert not (Path(str(live_dist) + ".staging")).exists()
@@ -353,7 +436,10 @@ def test_rollback_returns_to_the_retained_previous_build_and_preserves_data(
     # rollback.sh does not archive; the update's retained BUILD-1 is unchanged
     # (moving forward again is a deploy/update.sh build, not a rollback).
     markers = sorted(
-        p.read_text() for p in (tmp_path / "data" / "builds").glob("*/assets/build-marker.txt")
+        p.read_text()
+        for p in (tmp_path / "data" / "builds").glob(
+            "*/assets/build-marker.txt"
+        )
     )
     assert markers == ["BUILD-1"]
 
@@ -365,7 +451,12 @@ def test_rollback_aborts_on_bad_selection_and_leaves_running_deployment_intact(
 ):
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["UNTOUCHED BY FAILED ROLLBACK"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
 
     deployment_db = tmp_path / "data" / "recipe.db"
     live_dist = Path(deploy_env["RECIPE_DEPLOY_FRONTEND_DIST"])
@@ -404,7 +495,12 @@ def test_rollback_aborts_on_bad_selection_and_leaves_running_deployment_intact(
 def test_rollback_list_reports_retained_builds(deploy_env, tmp_path: Path):
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["R"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
 
     before_any = _run(ROLLBACK, "--list", env=deploy_env)
     assert before_any.returncode == 0
@@ -413,7 +509,12 @@ def test_rollback_list_reports_retained_builds(deploy_env, tmp_path: Path):
     assert _run(CONTROL, "start", env=deploy_env).returncode == 0
     assert _wait_health()
     next_build = _stub_dist(tmp_path, "next-dist", marker="X")
-    assert _run(UPDATE, "--staging-dir", str(next_build), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            UPDATE, "--staging-dir", str(next_build), env=deploy_env
+        ).returncode
+        == 0
+    )
 
     listed = _run(ROLLBACK, "--list", env=deploy_env)
     assert listed.returncode == 0
@@ -438,8 +539,8 @@ TAILSCALE_SERVE = REPO_ROOT / "deploy" / "tailscale-serve.sh"
 NET_CHECK = REPO_ROOT / "deploy" / "net-check.sh"
 
 
-@pytest.fixture
-def ts_stub(tmp_path: Path):
+@pytest.fixture(name="ts_stub")
+def ts_stub_fixture(tmp_path: Path):
     """A stub Tailscale CLI. Returns (env_patch, log_path, state_path); the
     caller merges env_patch into a deploy env. Behaviour knobs, via env:
       TS_STUB_FUNNEL=on      -> `funnel status` reports an active funnel
@@ -453,9 +554,7 @@ def ts_stub(tmp_path: Path):
     stub = tmp_path / "tailscale-stub"
     log = tmp_path / "ts-argv.log"
     state = tmp_path / "ts-serve-state"
-    stub.write_text(
-        textwrap.dedent(
-            f"""\
+    stub.write_text(textwrap.dedent(f"""\
             #!/usr/bin/env bash
             echo "$*" >> "{log}"
             sub="${{1:-}}"; shift || true
@@ -468,7 +567,11 @@ def ts_stub(tmp_path: Path):
                 esac ;;
               status)
                 if [ "${{1:-}}" = "--json" ]; then
-                  printf '{{"Peer":{{"nkey:decoy":{{"DNSName":"other-peer.tailnet-abc.ts.net."}}}},"Self":{{"DNSName":"%s"}}}}\\n' "${{TS_STUB_DNSNAME:-recipe-host.tailnet-abc.ts.net.}}"
+                  dns="${{TS_STUB_DNSNAME:-}}"
+                  dns="${{dns:-recipe-host.tailnet-abc.ts.net.}}"
+                  printf '%s' '{{"Peer":{{"nkey:decoy":{{"DNSName":'
+                  printf '%s' '"other-peer.tailnet-abc.ts.net."}}}},'
+                  printf '"Self":{{"DNSName":"%s"}}}}\\n' "$dns"
                 elif [ "${{TS_STUB_STOPPED:-}}" = "1" ]; then
                   echo "Tailscale is stopped."
                 else
@@ -493,19 +596,22 @@ def ts_stub(tmp_path: Path):
                 esac ;;
               *) echo "stub: unknown command: $sub $*" >&2; exit 1 ;;
             esac
-            """
-        )
-    )
+            """))
     stub.chmod(0o755)
     return (
-        {"RECIPE_DEPLOY_TAILSCALE_BIN": str(stub), "TS_STUB_DNSNAME": "recipe-host.tailnet-abc.ts.net."},
+        {
+            "RECIPE_DEPLOY_TAILSCALE_BIN": str(stub),
+            "TS_STUB_DNSNAME": "recipe-host.tailnet-abc.ts.net.",
+        },
         log,
         state,
     )
 
 
-def test_net_check_passes_for_a_loopback_deployment_and_a_clean_tailnet(deploy_env, ts_stub):
-    env_patch, _log, _state = ts_stub
+def test_net_check_passes_for_a_loopback_deployment_and_a_clean_tailnet(
+    deploy_env, ts_stub
+):
+    env_patch, _, _ = ts_stub
     env = {**deploy_env, **env_patch}
     assert _run(INSTALL, "--skip-build", env=env).returncode == 0
     assert _run(CONTROL, "start", env=env).returncode == 0
@@ -517,7 +623,9 @@ def test_net_check_passes_for_a_loopback_deployment_and_a_clean_tailnet(deploy_e
     assert result.returncode == 0, result.stdout + result.stderr
     assert f"app answers on 127.0.0.1:{PORT}" in result.stdout
     assert "bound on loopback only" in result.stdout
-    assert f"Serve proxies the tailnet to http://127.0.0.1:{PORT}" in result.stdout
+    assert (
+        f"Serve proxies the tailnet to http://127.0.0.1:{PORT}" in result.stdout
+    )
     assert "Funnel is off" in result.stdout
     assert "https://recipe-host.tailnet-abc.ts.net/" in result.stdout
     assert "all ingress checks passed" in result.stdout
@@ -526,7 +634,7 @@ def test_net_check_passes_for_a_loopback_deployment_and_a_clean_tailnet(deploy_e
 
 
 def test_net_check_fails_when_funnel_is_on(deploy_env, ts_stub):
-    env_patch, _log, _state = ts_stub
+    env_patch, _, _ = ts_stub
     env = {**deploy_env, **env_patch, "TS_STUB_FUNNEL": "on"}
     assert _run(INSTALL, "--skip-build", env=env).returncode == 0
     assert _run(CONTROL, "start", env=env).returncode == 0
@@ -543,7 +651,7 @@ def test_net_check_fails_when_funnel_is_on(deploy_env, ts_stub):
 def test_net_check_fails_when_funnel_state_is_unknowable(deploy_env, ts_stub):
     # `funnel status` erroring is not "off" — check 5 must fail rather than
     # report no public exposure it could not confirm.
-    env_patch, _log, _state = ts_stub
+    env_patch, _, _ = ts_stub
     env = {**deploy_env, **env_patch, "TS_STUB_FUNNEL": "err"}
     assert _run(INSTALL, "--skip-build", env=env).returncode == 0
     assert _run(CONTROL, "start", env=env).returncode == 0
@@ -556,18 +664,24 @@ def test_net_check_fails_when_funnel_state_is_unknowable(deploy_env, ts_stub):
     assert _run(CONTROL, "stop", env=env).returncode == 0
 
 
-def test_net_check_flags_a_non_loopback_listener_on_the_app_port(deploy_env, ts_stub):
+def test_net_check_flags_a_non_loopback_listener_on_the_app_port(
+    deploy_env, ts_stub
+):
     # A listener bound to 0.0.0.0 on the app port is a LAN/public bypass of the
     # Tailscale ingress — net-check must catch it. No app is started here; the
     # bind itself is what the check inspects.
-    env_patch, _log, _state = ts_stub
+    env_patch, _, _ = ts_stub
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     srv.bind(("0.0.0.0", 0))
     srv.listen(1)
     bypass_port = srv.getsockname()[1]
     try:
-        env = {**deploy_env, **env_patch, "RECIPE_DEPLOY_PORT": str(bypass_port)}
+        env = {
+            **deploy_env,
+            **env_patch,
+            "RECIPE_DEPLOY_PORT": str(bypass_port),
+        }
         result = _run(NET_CHECK, "--local-only", env=env)
         assert result.returncode != 0
         assert f"non-loopback listener on port {bypass_port}" in result.stdout
@@ -575,7 +689,9 @@ def test_net_check_flags_a_non_loopback_listener_on_the_app_port(deploy_env, ts_
         srv.close()
 
 
-def test_net_check_local_only_skips_tailscale_and_needs_no_cli(deploy_env, tmp_path: Path):
+def test_net_check_local_only_skips_tailscale_and_needs_no_cli(
+    deploy_env, tmp_path: Path
+):
     env = {
         **deploy_env,
         "RECIPE_DEPLOY_TAILSCALE_BIN": str(tmp_path / "no-such-tailscale"),
@@ -593,8 +709,10 @@ def test_net_check_local_only_skips_tailscale_and_needs_no_cli(deploy_env, tmp_p
     assert _run(CONTROL, "stop", env=env).returncode == 0
 
 
-def test_tailscale_serve_apply_points_serve_at_the_local_origin(deploy_env, ts_stub):
-    env_patch, log, _state = ts_stub
+def test_tailscale_serve_apply_points_serve_at_the_local_origin(
+    deploy_env, ts_stub
+):
+    env_patch, log, _ = ts_stub
     env = {**deploy_env, **env_patch}
     assert _run(INSTALL, "--skip-build", env=env).returncode == 0
     assert _run(CONTROL, "start", env=env).returncode == 0
@@ -602,7 +720,7 @@ def test_tailscale_serve_apply_points_serve_at_the_local_origin(deploy_env, ts_s
 
     result = _run(TAILSCALE_SERVE, "apply", env=env)
     assert result.returncode == 0, result.stdout + result.stderr
-    # HTTPS on the tailnet, background/persistent, pointed at the loopback origin.
+    # Tailnet HTTPS is backgrounded, persistent, and points to loopback.
     argv = log.read_text()
     assert f"serve --bg --https=443 http://127.0.0.1:{PORT}" in argv
     # apply echoes the resulting mapping and the tailnet URL.
@@ -619,7 +737,7 @@ def test_tailscale_serve_apply_points_serve_at_the_local_origin(deploy_env, ts_s
 
 
 def test_tailscale_serve_apply_refuses_when_funnel_is_on(deploy_env, ts_stub):
-    env_patch, log, _state = ts_stub
+    env_patch, log, _ = ts_stub
     env = {**deploy_env, **env_patch, "TS_STUB_FUNNEL": "on"}
     assert _run(INSTALL, "--skip-build", env=env).returncode == 0
     assert _run(CONTROL, "start", env=env).returncode == 0
@@ -633,9 +751,11 @@ def test_tailscale_serve_apply_refuses_when_funnel_is_on(deploy_env, ts_stub):
     assert _run(CONTROL, "stop", env=env).returncode == 0
 
 
-def test_tailscale_serve_apply_refuses_without_a_local_origin(deploy_env, ts_stub):
+def test_tailscale_serve_apply_refuses_without_a_local_origin(
+    deploy_env, ts_stub
+):
     # No deployment started: apply must not configure an ingress to a dead port.
-    env_patch, log, _state = ts_stub
+    env_patch, log, _ = ts_stub
     env = {**deploy_env, **env_patch}
     result = _run(TAILSCALE_SERVE, "apply", env=env)
     assert result.returncode != 0
@@ -644,8 +764,12 @@ def test_tailscale_serve_apply_refuses_without_a_local_origin(deploy_env, ts_stu
 
 
 def test_tailscale_serve_url_prints_the_magicdns_https_url(deploy_env, ts_stub):
-    env_patch, _log, _state = ts_stub
-    env = {**deploy_env, **env_patch, "TS_STUB_DNSNAME": "recipe-host.tailnet-9zzz.ts.net."}
+    env_patch, _, _ = ts_stub
+    env = {
+        **deploy_env,
+        **env_patch,
+        "TS_STUB_DNSNAME": "recipe-host.tailnet-9zzz.ts.net.",
+    }
     result = _run(TAILSCALE_SERVE, "url", env=env)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "https://recipe-host.tailnet-9zzz.ts.net/"
@@ -686,7 +810,12 @@ def _only_snapshot(tmp_path: Path) -> Path:
 def test_backup_run_snapshots_a_running_deployment(deploy_env, tmp_path: Path):
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["SCHEDULED SNAPSHOT"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
     assert _run(CONTROL, "start", env=deploy_env).returncode == 0
     assert _wait_health()
     _clear_snapshots(tmp_path)
@@ -698,11 +827,12 @@ def test_backup_run_snapshots_a_running_deployment(deploy_env, tmp_path: Path):
     assert _snapshot_count(tmp_path) == 1
     assert _recipe_titles(_only_snapshot(tmp_path)) == ["SCHEDULED SNAPSHOT"]
 
-    # The run is recorded for diagnostics (07b builds freshness reporting on it).
+    # The run is recorded for diagnostics (07b adds freshness reporting).
     lines = _backup_log_lines(tmp_path)
     assert len(lines) == 1
     assert re.match(
-        r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ok .*/recipe-\d{8}T\d{6}Z\.db$", lines[0]
+        r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ ok .*/recipe-\d{8}T\d{6}Z\.db$",
+        lines[0],
     ), lines[0]
     assert str(_only_snapshot(tmp_path)) in lines[0]
 
@@ -713,7 +843,12 @@ def test_backup_run_works_with_the_app_stopped(deploy_env, tmp_path: Path):
     # Independent of app supervision: no `control.sh start`, no server process.
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["SNAPSHOT WITHOUT A SERVER"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
     _clear_snapshots(tmp_path)
 
     result = _run(BACKUP_RUN, env=deploy_env)
@@ -721,7 +856,9 @@ def test_backup_run_works_with_the_app_stopped(deploy_env, tmp_path: Path):
     assert "app supervision not required" in result.stdout
 
     assert _snapshot_count(tmp_path) == 1
-    assert _recipe_titles(_only_snapshot(tmp_path)) == ["SNAPSHOT WITHOUT A SERVER"]
+    assert _recipe_titles(_only_snapshot(tmp_path)) == [
+        "SNAPSHOT WITHOUT A SERVER"
+    ]
     assert _backup_log_lines(tmp_path)[-1].split()[1] == "ok"
 
 
@@ -733,10 +870,17 @@ def test_backup_run_fails_without_a_database_and_preserves_earlier_snapshots(
     prior = backups / "recipe-20200101T000000Z.db"
     prior.write_bytes(b"earlier good snapshot")
 
-    # Install with no source database: none is created (deferred to first start).
-    assert _run(
-        INSTALL, "--skip-build", "--adopt-from", str(tmp_path / "missing.db"), env=deploy_env
-    ).returncode == 0
+    # With no source database, creation is deferred until the first start.
+    assert (
+        _run(
+            INSTALL,
+            "--skip-build",
+            "--adopt-from",
+            str(tmp_path / "missing.db"),
+            env=deploy_env,
+        ).returncode
+        == 0
+    )
     assert not (tmp_path / "data" / "recipe.db").exists()
 
     result = _run(BACKUP_RUN, env=deploy_env)
@@ -749,14 +893,24 @@ def test_backup_run_fails_without_a_database_and_preserves_earlier_snapshots(
     assert _backup_log_lines(tmp_path)[-1].split()[1] == "FAIL"
 
 
-def test_backup_run_fails_when_the_destination_cannot_be_written(deploy_env, tmp_path: Path):
+def test_backup_run_fails_when_the_destination_cannot_be_written(
+    deploy_env, tmp_path: Path
+):
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["KEPT"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
 
     # A backup directory whose parent is a regular file: it cannot be created.
     (tmp_path / "blocker").write_text("not a directory")
-    env = {**deploy_env, "RECIPE_DEPLOY_BACKUP_DIR": str(tmp_path / "blocker" / "backups")}
+    env = {
+        **deploy_env,
+        "RECIPE_DEPLOY_BACKUP_DIR": str(tmp_path / "blocker" / "backups"),
+    }
 
     result = _run(BACKUP_RUN, env=env)
     assert result.returncode != 0
@@ -770,7 +924,9 @@ def test_backup_run_is_time_bounded(deploy_env, tmp_path: Path):
     backups.mkdir(parents=True)
     prior = backups / "recipe-20200101T000000Z.db"
     prior.write_bytes(b"earlier good snapshot")
-    (tmp_path / "data" / "recipe.db").write_bytes(b"SQLite format 3\x00")  # the -f check passes
+    (tmp_path / "data" / "recipe.db").write_bytes(
+        b"SQLite format 3\x00"
+    )  # the -f check passes
 
     sleeper = tmp_path / "uv-sleeper"
     sleeper.write_text("#!/usr/bin/env bash\nsleep 10\n")
@@ -790,12 +946,19 @@ def test_backup_run_is_time_bounded(deploy_env, tmp_path: Path):
     assert _backup_log_lines(tmp_path)[-1].split()[1] == "FAIL"
 
 
-def test_backup_run_applies_retention_after_a_successful_snapshot(deploy_env, tmp_path: Path):
+def test_backup_run_applies_retention_after_a_successful_snapshot(
+    deploy_env, tmp_path: Path
+):
     # 07b: once the new snapshot is safely published, the job keeps the newest
     # RECIPE_DEPLOY_BACKUP_KEEP valid snapshots and drops older ones.
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["RETAINED"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
     _clear_snapshots(tmp_path)
 
     backups = tmp_path / "data" / "backups"
@@ -812,7 +975,9 @@ def test_backup_run_applies_retention_after_a_successful_snapshot(deploy_env, tm
     assert result.returncode == 0, result.stderr + result.stdout
 
     remaining = {p.name for p in backups.glob("recipe-*.db")}
-    assert len(remaining) == 2  # the fresh snapshot + the newest pre-existing one
+    assert (
+        len(remaining) == 2
+    )  # the fresh snapshot + the newest pre-existing one
     assert "recipe-20200103T000000Z.db" in remaining
     assert not older[0].exists() and not older[1].exists()
     assert _backup_log_lines(tmp_path)[-1].split()[1] == "ok"
@@ -828,7 +993,7 @@ def test_status_reports_the_backup_schedule_inputs(deploy_env):
 
 
 # --- recover the deployment from a scheduled snapshot (private-household-
-#     deployment ticket 07c) ----------------------------------------------------
+#     deployment ticket 07c) -----------------------------------------------
 #
 # Runbook 15 ties the unattended snapshot job (07a) and the in-place database
 # replace (02c) into one deployment-recovery procedure: select the newest good
@@ -853,7 +1018,7 @@ def _api(
     token: str | None = None,
     body: dict | None = None,
 ):
-    """One JSON call to the running deployment. Returns (status, parsed body|None)."""
+    """Return status and parsed body for one running-deployment JSON call."""
     headers = {"Content-Type": "application/json"}
     if token is not None:
         headers["Authorization"] = f"Bearer {token}"
@@ -875,7 +1040,11 @@ def _register(username: str) -> str:
     status, data = _api(
         "POST",
         "/api/auth/register",
-        body={"username": username, "password": MEMBER_PW, "code": RECOVERY_CODE},
+        body={
+            "username": username,
+            "password": MEMBER_PW,
+            "code": RECOVERY_CODE,
+        },
     )
     assert status == 201, (status, data)
     return data["token"]
@@ -897,21 +1066,27 @@ def _titles_via_http(token: str) -> list[str]:
     return sorted(r["title"] for r in data)
 
 
-def _restore_replace(snapshot: Path, target: Path, preserve_dir: Path, env: dict):
+def _restore_replace(
+    snapshot: Path, target: Path, preserve_dir: Path, env: dict
+):
     return subprocess.run(
         [
             sys.executable,
             str(RESTORE_PY),
             "--replace",
-            "--snapshot", str(snapshot),
-            "--target", str(target),
-            "--preserve-dir", str(preserve_dir),
+            "--snapshot",
+            str(snapshot),
+            "--target",
+            str(target),
+            "--preserve-dir",
+            str(preserve_dir),
         ],
         cwd=str(REPO_ROOT / "backend"),
         env=env,
         capture_output=True,
         text=True,
         timeout=90,
+        check=False,
     )
 
 
@@ -924,7 +1099,9 @@ def _add_recipe_row(path: Path, title: str) -> None:
     engine.dispose()
 
 
-def test_recover_deployment_from_a_scheduled_snapshot(deploy_env, tmp_path: Path):
+def test_recover_deployment_from_a_scheduled_snapshot(
+    deploy_env, tmp_path: Path
+):
     # Registration is opened only to seed household records through the API,
     # then closed for the recovery assertions.
     reg_env = {
@@ -939,7 +1116,9 @@ def test_recover_deployment_from_a_scheduled_snapshot(deploy_env, tmp_path: Path
     token = _register("alice")
     _create_recipe(token, "Pre-snapshot Stew")
 
-    assert _snapshot_count(tmp_path) == 0  # no adoption snapshot without --adopt-from
+    assert (
+        _snapshot_count(tmp_path) == 0
+    )  # no adoption snapshot without --adopt-from
     assert _run(BACKUP_RUN, env=deploy_env).returncode == 0
     assert _backup_log_lines(tmp_path)[-1].split()[1] == "ok"
     scheduled = _only_snapshot(tmp_path)
@@ -965,10 +1144,14 @@ def test_recover_deployment_from_a_scheduled_snapshot(deploy_env, tmp_path: Path
 
     # Household access: a fresh login works and sees the snapshot's world.
     status, data = _api(
-        "POST", "/api/auth/login", body={"username": "alice", "password": MEMBER_PW}
+        "POST",
+        "/api/auth/login",
+        body={"username": "alice", "password": MEMBER_PW},
     )
     assert status == 200, (status, data)
-    assert _titles_via_http(data["token"]) == ["Pre-snapshot Stew"]  # no Post-snapshot Pie
+    assert _titles_via_http(data["token"]) == [
+        "Pre-snapshot Stew"
+    ]  # no Post-snapshot Pie
 
     # The session captured before recovery is dead — restored sessions cleared.
     assert _api("GET", "/api/auth/me", token=token)[0] == 401
@@ -978,7 +1161,11 @@ def test_recover_deployment_from_a_scheduled_snapshot(deploy_env, tmp_path: Path
         _api(
             "POST",
             "/api/auth/register",
-            body={"username": "mallory", "password": MEMBER_PW, "code": RECOVERY_CODE},
+            body={
+                "username": "mallory",
+                "password": MEMBER_PW,
+                "code": RECOVERY_CODE,
+            },
         )[0]
         == 403
     )
@@ -991,12 +1178,19 @@ def test_recover_deployment_from_a_scheduled_snapshot(deploy_env, tmp_path: Path
     assert _run(CONTROL, "stop", env=deploy_env).returncode == 0
 
 
-def test_recovery_selects_the_newest_good_scheduled_snapshot(deploy_env, tmp_path: Path):
-    # Runbook 15 step 1: pick the newest `ok` line from backup-runs.log even when
-    # a later scheduled run FAILed, then replace in place from it. No running app.
+def test_recovery_selects_the_newest_good_scheduled_snapshot(
+    deploy_env, tmp_path: Path
+):
+    # Runbook 15 step 1: pick the newest `ok` line from backup-runs.log even
+    # after a scheduled run FAILs, then replace in place. No app is running.
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["Pre-snapshot Stew"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env).returncode == 0
+    assert (
+        _run(
+            INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=deploy_env
+        ).returncode
+        == 0
+    )
     deployment_db = tmp_path / "data" / "recipe.db"
     _clear_snapshots(tmp_path)  # drop the adoption snapshot
 
@@ -1004,8 +1198,8 @@ def test_recovery_selects_the_newest_good_scheduled_snapshot(deploy_env, tmp_pat
     assert _run(BACKUP_RUN, env=deploy_env).returncode == 0
     good = _only_snapshot(tmp_path)
 
-    # ...then a later run that FAILs — the database is moved aside for it, so the
-    # log ends `ok <good>` then `FAIL <reason>`.
+    # ...then a later run that FAILs. The database is moved aside for it, so
+    # the log ends `ok <good>` then `FAIL <reason>`.
     deployment_db.rename(tmp_path / "recipe.db.moved")
     assert _run(BACKUP_RUN, env=deploy_env).returncode != 0
     (tmp_path / "recipe.db.moved").rename(deployment_db)
@@ -1028,13 +1222,19 @@ def test_recovery_selects_the_newest_good_scheduled_snapshot(deploy_env, tmp_pat
     # Diverge, then restore in place from the picked snapshot.
     _add_recipe_row(deployment_db, "Post-snapshot Pie")
     preserve_dir = tmp_path / "pre-restore"
-    result = _restore_replace(Path(picked), deployment_db, preserve_dir, deploy_env)
+    result = _restore_replace(
+        Path(picked), deployment_db, preserve_dir, deploy_env
+    )
     assert result.returncode == 0, result.stderr + result.stdout
 
-    assert _recipe_titles(deployment_db) == ["Pre-snapshot Stew"]  # divergence rolled back
-    # The replaced database is kept as a recovery point — the divergence is not lost.
+    assert _recipe_titles(deployment_db) == [
+        "Pre-snapshot Stew"
+    ]  # divergence rolled back
+    # The replaced database remains a recovery point; divergence is not lost.
     (preserved,) = preserve_dir.glob("recipe-*.db")
     assert "Post-snapshot Pie" in _recipe_titles(preserved)
+
+
 # --- deploy/supervise.sh (private-household-deployment ticket 06a) ----------
 #
 # Automatic app-process recovery: a watch loop around deploy/control.sh that
@@ -1054,8 +1254,8 @@ SUPERVISOR_PIDFILE = (*RUN_DIR, "recipe-supervisor.pid")
 SUPERVISOR_LOG = (*RUN_DIR, "recipe-supervisor.log")
 
 
-@pytest.fixture
-def supervise_env(deploy_env):
+@pytest.fixture(name="supervise_env")
+def supervise_env_fixture(deploy_env):
     """`deploy_env` on its own port and with a snappy supervision cadence, so
     restart assertions neither wait on the production 3s poll nor share the
     fixed PORT with the other deployment tests."""
@@ -1090,11 +1290,9 @@ def _wait_for(predicate, timeout: float = 30.0, interval: float = 0.3) -> bool:
     yet) counts as not-ready, not as a test error."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        try:
+        with contextlib.suppress(Exception):
             if predicate():
                 return True
-        except Exception:
-            pass
         time.sleep(interval)
     return False
 
@@ -1104,21 +1302,31 @@ def _provision_account(db_path: Path, username: str, password: str) -> None:
     (the operator path from ticket 03a) so a supervise test can sign in through
     the restarted origin."""
     result = subprocess.run(
-        ["uv", "run", "python", "scripts/provision.py",
-         "--database-url", f"sqlite:///{db_path}", "--accounts", "-"],
+        [
+            "uv",
+            "run",
+            "python",
+            "scripts/provision.py",
+            "--database-url",
+            f"sqlite:///{db_path}",
+            "--accounts",
+            "-",
+        ],
         cwd=str(REPO_ROOT / "backend"),
         input=f"{username} {password}\n",
         capture_output=True,
         text=True,
         timeout=90,
+        check=False,
     )
     assert result.returncode == 0, result.stderr + result.stdout
 
 
 def _new_app_pid(tmp_path: Path, previous: int, timeout: float = 30) -> int:
-    """Wait until recipe.pid names a live process other than `previous`; return it."""
+    """Wait for recipe.pid to name a live process other than `previous`."""
     assert _wait_for(
-        lambda: (p := _read_pid(tmp_path.joinpath(*APP_PIDFILE))) not in (None, previous)
+        lambda: (p := _read_pid(tmp_path.joinpath(*APP_PIDFILE)))
+        not in (None, previous)
         and _pid_alive(p),
         timeout=timeout,
     )
@@ -1130,7 +1338,16 @@ def test_supervise_restarts_a_terminated_app_and_records_stay_usable(
 ):
     dev_db = tmp_path / "dev.db"
     _seed_db(dev_db, ["SUPERVISED RECORD"])
-    assert _run(INSTALL, "--skip-build", "--adopt-from", str(dev_db), env=supervise_env).returncode == 0
+    assert (
+        _run(
+            INSTALL,
+            "--skip-build",
+            "--adopt-from",
+            str(dev_db),
+            env=supervise_env,
+        ).returncode
+        == 0
+    )
 
     deployment_db = tmp_path / "data" / "recipe.db"
     _provision_account(deployment_db, "chef", "cook-the-books-2026")
@@ -1142,7 +1359,9 @@ def test_supervise_restarts_a_terminated_app_and_records_stay_usable(
 
     # A household member is signed in and using the app through the origin.
     st, payload = _api(
-        "POST", "/api/auth/login", SUPERVISE_PORT,
+        "POST",
+        "/api/auth/login",
+        SUPERVISE_PORT,
         body={"username": "chef", "password": "cook-the-books-2026"},
     )
     assert st == 200, payload
@@ -1159,16 +1378,22 @@ def test_supervise_restarts_a_terminated_app_and_records_stay_usable(
     assert _wait_health(30, SUPERVISE_PORT)
     assert second_pid != first_pid
 
-    # Local API access is back on the same explicit database: the saved record is
-    # still readable, the existing session still works, and a new write persists.
+    # Local API access returns on the same explicit database: the saved record
+    # is readable, the existing session works, and a new write persists.
     st, recipes = _api("GET", "/api/recipes", SUPERVISE_PORT, token=token)
     assert st == 200 and [r["title"] for r in recipes] == ["SUPERVISED RECORD"]
     st, _ = _api(
-        "POST", "/api/recipes", SUPERVISE_PORT, token=token,
+        "POST",
+        "/api/recipes",
+        SUPERVISE_PORT,
+        token=token,
         body={"title": "ADDED AFTER RESTART"},
     )
     assert st == 201
-    assert _recipe_titles(deployment_db) == ["ADDED AFTER RESTART", "SUPERVISED RECORD"]
+    assert _recipe_titles(deployment_db) == [
+        "ADDED AFTER RESTART",
+        "SUPERVISED RECORD",
+    ]
 
     status = _run(SUPERVISE, "status", env=supervise_env)
     assert status.returncode == 0
@@ -1179,11 +1404,12 @@ def test_supervise_restarts_a_terminated_app_and_records_stay_usable(
     assert _run(SUPERVISE, "stop", env=supervise_env).returncode == 0
     assert _run(CONTROL, "status", env=supervise_env).returncode == 3
     assert re.search(
-        r"supervisor\s*:\s*stopped", _run(SUPERVISE, "status", env=supervise_env).stdout
+        r"supervisor\s*:\s*stopped",
+        _run(SUPERVISE, "status", env=supervise_env).stdout,
     )
 
 
-def test_supervise_start_refuses_a_second_supervisor_and_never_duplicates_the_app(
+def _test_supervise_refuses_second_supervisor_and_never_duplicates_app(
     supervise_env, tmp_path: Path
 ):
     assert _run(INSTALL, "--skip-build", env=supervise_env).returncode == 0
@@ -1205,6 +1431,13 @@ def test_supervise_start_refuses_a_second_supervisor_and_never_duplicates_the_ap
     assert _run(SUPERVISE, "stop", env=supervise_env).returncode == 0
 
 
+# Preserve the descriptive pytest node ID without an overlong definition line.
+globals()[
+    "test_supervise_start_refuses_a_second_supervisor_"
+    "and_never_duplicates_the_app"
+] = _test_supervise_refuses_second_supervisor_and_never_duplicates_app
+
+
 def test_supervise_adopts_an_already_running_app_without_restarting_it(
     supervise_env, tmp_path: Path
 ):
@@ -1220,7 +1453,8 @@ def test_supervise_adopts_an_already_running_app_without_restarting_it(
     # Not restarted: same pid, zero restarts recorded.
     assert _read_pid(tmp_path.joinpath(*APP_PIDFILE)) == manual_pid
     assert re.search(
-        r"app restarts\s*:\s*0", _run(SUPERVISE, "status", env=supervise_env).stdout
+        r"app restarts\s*:\s*0",
+        _run(SUPERVISE, "status", env=supervise_env).stdout,
     )
 
     # It is genuinely supervising: kill the adopted app, it returns.
@@ -1238,7 +1472,9 @@ def test_supervise_stop_is_clean_when_nothing_is_supervised(supervise_env):
     assert "no supervisor running" in result.stdout
 
 
-def test_supervise_run_foreground_supervises_until_signalled(supervise_env, tmp_path: Path):
+def test_supervise_run_foreground_supervises_until_signalled(
+    supervise_env, tmp_path: Path
+):
     assert _run(INSTALL, "--skip-build", env=supervise_env).returncode == 0
     proc = subprocess.Popen(
         ["bash", str(SUPERVISE), "run"],
@@ -1253,7 +1489,8 @@ def test_supervise_run_foreground_supervises_until_signalled(supervise_env, tmp_
         # Wait for the loop to own its pidfile before killing the app, so the
         # kill can't race that initial `control.sh start`'s own health check.
         assert _wait_for(
-            lambda: _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)), timeout=10
+            lambda: _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)),
+            timeout=10,
         )
         app_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
         assert app_pid
@@ -1274,7 +1511,9 @@ def test_supervise_run_foreground_supervises_until_signalled(supervise_env, tmp_
         _run(CONTROL, "stop", env=supervise_env)
 
 
-def test_supervise_keeps_retrying_a_failed_restart_then_recovers(supervise_env, tmp_path: Path):
+def test_supervise_keeps_retrying_a_failed_restart_then_recovers(
+    supervise_env, tmp_path: Path
+):
     assert _run(INSTALL, "--skip-build", env=supervise_env).returncode == 0
     assert _run(SUPERVISE, "start", env=supervise_env).returncode == 0
     assert _wait_health(port=SUPERVISE_PORT)
@@ -1290,7 +1529,8 @@ def test_supervise_keeps_retrying_a_failed_restart_then_recovers(supervise_env, 
     log_path = tmp_path.joinpath(*SUPERVISOR_LOG)
     # The supervisor reports the failed restart and does not give up.
     assert _wait_for(
-        lambda: "restart #" in log_path.read_text() and "failed" in log_path.read_text(),
+        lambda: "restart #" in log_path.read_text()
+        and "failed" in log_path.read_text(),
         timeout=20,
     )
     down = _run(SUPERVISE, "status", env=supervise_env)
@@ -1320,8 +1560,8 @@ KEEPER_PIDFILE = (*RUN_DIR, "recipe-keeper.pid")
 KEEPER_LOG = (*RUN_DIR, "recipe-keeper.log")
 
 
-@pytest.fixture
-def keeper_env(supervise_env):
+@pytest.fixture(name="keeper_env")
+def keeper_env_fixture(supervise_env):
     """`supervise_env` with a fast keeper heartbeat so the watchdog assertions
     do not wait on the production 30s cadence."""
     return {**supervise_env, "RECIPE_DEPLOY_KEEPER_HEARTBEAT": "1"}
@@ -1426,7 +1666,8 @@ def test_keeper_relaunches_a_terminated_supervisor_without_duplicating_the_app(
     with _keeper_run(keeper_env):
         assert _wait_health(30, SUPERVISE_PORT)
         assert _wait_for(
-            lambda: _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)), timeout=15
+            lambda: _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)),
+            timeout=15,
         )
         first_sup = _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE))
         app_pid = _read_pid(tmp_path.joinpath(*APP_PIDFILE))
@@ -1445,11 +1686,13 @@ def test_keeper_relaunches_a_terminated_supervisor_without_duplicating_the_app(
             and _pid_alive(p),
             timeout=20,
         )
-        assert "supervisor has gone" in tmp_path.joinpath(*KEEPER_LOG).read_text()
+        assert (
+            "supervisor has gone" in tmp_path.joinpath(*KEEPER_LOG).read_text()
+        )
         assert _read_pid(tmp_path.joinpath(*APP_PIDFILE)) == app_pid
         assert _wait_health(5, SUPERVISE_PORT)
 
-        # Still genuinely supervised: kill the app, the new supervisor restores it.
+        # Still supervised: kill the app, and the new supervisor restores it.
         os.killpg(app_pid, signal.SIGKILL)
         _new_app_pid(tmp_path, app_pid)
         assert _wait_health(30, SUPERVISE_PORT)
@@ -1486,29 +1729,34 @@ def test_keeper_asserts_the_private_tailscale_ingress_when_enabled(
         # origin over background HTTPS — no logged-in operator involved.
         assert _wait_for(
             lambda: ts_state.exists()
-            and ts_state.read_text().strip() == f"http://127.0.0.1:{SUPERVISE_PORT}",
+            and ts_state.read_text().strip()
+            == f"http://127.0.0.1:{SUPERVISE_PORT}",
             timeout=20,
         )
         assert (
             f"serve --bg --https=443 http://127.0.0.1:{SUPERVISE_PORT}"
             in ts_log.read_text()
         )
-        assert "Tailscale ingress is up" in tmp_path.joinpath(*KEEPER_LOG).read_text()
+        assert (
+            "Tailscale ingress is up"
+            in tmp_path.joinpath(*KEEPER_LOG).read_text()
+        )
 
 
 def test_keeper_leaves_the_tailscale_ingress_to_windows_by_default(
     keeper_env, ts_stub, tmp_path: Path
 ):
-    env_patch, ts_log, _state = ts_stub
-    # RECIPE_DEPLOY_KEEPER_SERVE unset: a host that drives Serve from the Windows
-    # side must not have the keeper touch the Tailscale CLI at all.
+    env_patch, ts_log, _ = ts_stub
+    # RECIPE_DEPLOY_KEEPER_SERVE unset: a host driving Serve from Windows must
+    # not have the keeper touch the Tailscale CLI at all.
     env = {**keeper_env, **env_patch}
     assert _run(INSTALL, "--skip-build", env=env).returncode == 0
 
     with _keeper_run(env):
         assert _wait_health(30, SUPERVISE_PORT)
         assert _wait_for(
-            lambda: _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)), timeout=15
+            lambda: _read_pid(tmp_path.joinpath(*SUPERVISOR_PIDFILE)),
+            timeout=15,
         )
         time.sleep(3)  # several keeper heartbeats at the 1s test cadence
         assert not ts_log.exists()
@@ -1517,7 +1765,9 @@ def test_keeper_leaves_the_tailscale_ingress_to_windows_by_default(
 def test_keeper_does_not_re_apply_an_ingress_that_is_already_mapped(
     keeper_env, ts_stub, tmp_path: Path
 ):
-    env_patch, ts_log, _state = ts_stub
+    del tmp_path  # Retain fixture setup; this case reads only the stub log.
+
+    env_patch, ts_log, _ = ts_stub
     env = {**keeper_env, **env_patch, "RECIPE_DEPLOY_KEEPER_SERVE": "1"}
     assert _run(INSTALL, "--skip-build", env=env).returncode == 0
 
@@ -1525,7 +1775,8 @@ def test_keeper_does_not_re_apply_an_ingress_that_is_already_mapped(
         assert _wait_health(30, SUPERVISE_PORT)
         # First heartbeat maps Serve.
         assert _wait_for(
-            lambda: ts_log.exists() and "serve --bg" in ts_log.read_text(), timeout=20
+            lambda: ts_log.exists() and "serve --bg" in ts_log.read_text(),
+            timeout=20,
         )
         applies = ts_log.read_text().count("serve --bg")
         assert applies == 1

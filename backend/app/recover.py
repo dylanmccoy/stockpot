@@ -65,9 +65,10 @@ def recover_password(
     try:
         RegisterRequest(username=username, password=new_password)
     except ValidationError as exc:
-        raise RecoverError(
-            f"invalid recovery input: {'; '.join(e['msg'] for e in exc.errors())}"
-        ) from exc
+        errors = exc.errors()
+        validation_messages = "; ".join(error["msg"] for error in errors)
+        message = f"invalid recovery input: {validation_messages}"
+        raise RecoverError(message) from exc
 
     # Fail before touching SQLite for a `sqlite:///` path that isn't there —
     # otherwise the connect below creates a stray 0-byte file on a typo'd URL.
@@ -89,9 +90,9 @@ def recover_password(
 
         try:
             with Session(engine) as db:
-                user = db.scalar(
-                    select(User).where(func.lower(User.username) == username.lower())
-                )
+                target_username = username.lower()
+                username_matches = func.lower(User.username) == target_username
+                user = db.scalar(select(User).where(username_matches))
                 if user is None:
                     raise RecoverError(
                         f"no such account: {username!r} — nothing was changed"

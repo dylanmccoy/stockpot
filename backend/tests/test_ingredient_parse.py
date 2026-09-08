@@ -78,7 +78,7 @@ def test_adversarial_corpus_contract(text: str) -> None:
     assert r["note"] is None or isinstance(r["note"], str)
 
 
-# --- number forms ---------------------------------------------------------------
+# --- number forms -----------------------------------------------------------
 
 VULGAR_FRACTIONS = [
     ("½", 0.5),
@@ -115,10 +115,14 @@ def test_decimal_and_integer_quantity() -> None:
 
 # --- unit handling ------------------------------------------------------------
 
+
 def test_unit_stored_as_written_not_singularized() -> None:
-    assert parse_ingredient("1 1/2 cups flour")["unit"] == "cups"     # not "cup"
-    assert parse_ingredient("2 Tbsp. butter")["unit"] == "tbsp"       # lowered, "." stripped
-    assert parse_ingredient("3 CLOVES garlic")["unit"] == "cloves"    # opaque unit, as written
+    assert parse_ingredient("1 1/2 cups flour")["unit"] == "cups"  # not "cup"
+    # Lowercase the unit and strip its trailing period.
+    assert parse_ingredient("2 Tbsp. butter")["unit"] == "tbsp"
+    assert (
+        parse_ingredient("3 CLOVES garlic")["unit"] == "cloves"
+    )  # opaque unit, as written
 
 
 def test_token_after_number_that_is_not_a_unit_word_stays_in_item() -> None:
@@ -128,6 +132,7 @@ def test_token_after_number_that_is_not_a_unit_word_stays_in_item() -> None:
 
 
 # --- item handling ----------------------------------------------------------
+
 
 def test_no_leading_number_yields_bare_item() -> None:
     r = parse_ingredient("freshly ground black pepper")
@@ -156,6 +161,7 @@ def test_garbage_falls_back_to_raw_line() -> None:
 
 
 # --- note handling ----------------------------------------------------------
+
 
 def test_to_taste_sets_note_and_nulls_quantity() -> None:
     r = parse_ingredient("salt to taste")

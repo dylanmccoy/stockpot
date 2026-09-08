@@ -1,3 +1,5 @@
+"""Configure and expose the Recipe API FastAPI application."""
+
 import math
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,8 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from app.config import Settings, settings
-from app.database import Base, engine, make_session_factory
+from app.config import Settings, settings as default_settings
+from app.database import Base, engine as default_engine, make_session_factory
 from app.routers import auth, cook_logs, grocery, inventory, recipes
 
 
@@ -24,6 +26,7 @@ def get_settings(request: Request) -> Settings:
 
 def _to_409(request: Request, exc: IntegrityError) -> JSONResponse:
     """Handle IntegrityError (unique/FK/check violations) as 409 Conflict."""
+    del request, exc
     return JSONResponse(status_code=409, content={"detail": "conflict"})
 
 
@@ -48,22 +51,27 @@ def _scrub_non_finite(value: Any) -> Any:
 async def _validation_error_to_422(
     request: Request, exc: RequestValidationError
 ) -> JSONResponse:
-    """FastAPI's default 422 body, made encodable (spec.md §Mechanical defaults)."""
+    """Return FastAPI's default 422 body in an encodable form."""
+    del request
     return JSONResponse(
         status_code=422,
         content={"detail": _scrub_non_finite(jsonable_encoder(exc.errors()))},
     )
 
 
-def _to_409_if_locked_else_500(request: Request, exc: OperationalError) -> JSONResponse:
+def _to_409_if_locked_else_500(
+    request: Request,
+    exc: OperationalError,
+) -> JSONResponse:
     """Handle OperationalError: 409 for database locks, re-raise for others."""
+    del request
     error_str = str(exc.orig)
     if "database is locked" in error_str or "database is busy" in error_str:
         return JSONResponse(status_code=409, content={"detail": "conflict"})
     raise exc
 
 
-def _mount_frontend(app: FastAPI, frontend_dist: str) -> None:
+def _mount_frontend(application: FastAPI, frontend_dist: str) -> None:
     """Serve the built frontend's entry document, public assets, and the
     client-side-route fallback.
 
@@ -92,13 +100,17 @@ def _mount_frontend(app: FastAPI, frontend_dist: str) -> None:
 
     assets_dir = dist_dir / "assets"
     if assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+        application.mount(
+            "/assets",
+            StaticFiles(directory=assets_dir),
+            name="frontend-assets",
+        )
 
-    @app.get("/", include_in_schema=False)
+    @application.get("/", include_in_schema=False)
     def frontend_entry() -> FileResponse:
         return FileResponse(index_path)
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @application.get("/{full_path:path}", include_in_schema=False)
     def frontend_fallback(full_path: str) -> FileResponse:
         # "api" is unreachable in practice (every real API route is matched
         # first); "assets" only matters when assets_dir doesn't exist above,
@@ -115,15 +127,16 @@ def create_app(settings: Settings, engine: Engine) -> FastAPI:
     """Factory to create the FastAPI app with given settings and engine."""
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(lifespan_app: FastAPI):
+        del lifespan_app
         Base.metadata.create_all(bind=engine)
         yield
 
-    app = FastAPI(title="Recipe API", lifespan=lifespan)
-    app.state.settings = settings
-    app.state.session_factory = make_session_factory(engine)
+    application = FastAPI(title="Recipe API", lifespan=lifespan)
+    application.state.settings = settings
+    application.state.session_factory = make_session_factory(engine)
 
-    app.add_middleware(
+    application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_methods=["*"],
@@ -131,22 +144,34 @@ def create_app(settings: Settings, engine: Engine) -> FastAPI:
         allow_credentials=False,
     )
 
-    app.add_exception_handler(RequestValidationError, _validation_error_to_422)
-    app.add_exception_handler(IntegrityError, _to_409)
-    app.add_exception_handler(OperationalError, _to_409_if_locked_else_500)
+    application.add_exception_handler(
+        RequestValidationError,
+        _validation_error_to_422,
+    )
+    application.add_exception_handler(IntegrityError, _to_409)
+    application.add_exception_handler(
+        OperationalError,
+        _to_409_if_locked_else_500,
+    )
 
-    for r in (auth.router, recipes.router, inventory.router, cook_logs.router, grocery.router):
-        app.include_router(r)
+    for router in (
+        auth.router,
+        recipes.router,
+        inventory.router,
+        cook_logs.router,
+        grocery.router,
+    ):
+        application.include_router(router)
 
-    @app.get("/api/health")
+    @application.get("/api/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
     if settings.frontend_dist:
-        _mount_frontend(app, settings.frontend_dist)
+        _mount_frontend(application, settings.frontend_dist)
 
-    return app
+    return application
 
 
 # Module-level app for `uvicorn app.main:app`.
-app = create_app(settings, engine)
+app = create_app(default_settings, default_engine)

@@ -32,6 +32,7 @@ timeout.
 """
 
 import time
+from contextlib import suppress
 
 import pytest
 from sqlalchemy.exc import OperationalError
@@ -42,11 +43,22 @@ from app.database import make_engine
 # that long; an instant failure means the timeout PRAGMA never ran.
 _MIN_WAIT_SECONDS = 3.0
 _MAX_WAIT_SECONDS = 30.0  # generous upper bound; only trips on a real hang
+_CREATE_TABLE_SQL = "CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)"
+
+
+def _hang_message(elapsed: float) -> str:
+    return f"second writer hung for {elapsed:.2f}s"
+
+
+def _early_failure_message(elapsed: float) -> str:
+    return (
+        f"second writer failed after only {elapsed:.2f}s; "
+        "the write lock was not genuinely held (no real busy-wait occurred)"
+    )
 
 
 def test_connect_listener_pragmas(test_engine) -> None:
-    """The fixture engine (production `make_engine`, in-memory StaticPool) applies
-    the `connect` listener PRAGMAs to every DBAPI connection."""
+    """Verify the fixture engine applies the production connection PRAGMAs."""
     with test_engine.connect() as conn:
         assert conn.exec_driver_sql("PRAGMA foreign_keys").scalar() == 1
         assert conn.exec_driver_sql("PRAGMA busy_timeout").scalar() == 5000
@@ -57,13 +69,14 @@ def test_begin_immediate_serializes_writers(tmp_path) -> None:
     write transaction, the second connection's write blocks and then times out
     under `busy_timeout` -- it must raise `OperationalError` ("database is
     locked"), and only after waiting, not instantly."""
-    engine = make_engine(f"sqlite:///{tmp_path / 'parity.db'}")
+    database = tmp_path / "parity.db"
+    engine = make_engine(f"sqlite:///{database}")
     holder = None
     holder_txn = None
     contender = None
     try:
         with engine.begin() as setup:
-            setup.exec_driver_sql("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+            setup.exec_driver_sql(_CREATE_TABLE_SQL)
             setup.exec_driver_sql("INSERT INTO t (id, v) VALUES (1, 0)")
 
         # Connection 1 opens a transaction. The `begin` listener turns this into
@@ -84,18 +97,15 @@ def test_begin_immediate_serializes_writers(tmp_path) -> None:
         elapsed = time.monotonic() - start
 
         orig = str(excinfo.value.orig)
-        assert "database is locked" in orig or "database is busy" in orig, orig
-        assert elapsed >= _MIN_WAIT_SECONDS, (
-            f"second writer failed after only {elapsed:.2f}s; the write lock was "
-            "not genuinely held (no real busy-wait occurred)"
-        )
-        assert elapsed < _MAX_WAIT_SECONDS, f"second writer hung for {elapsed:.2f}s"
+        is_locked = "database is locked" in orig
+        is_busy = "database is busy" in orig
+        assert is_locked or is_busy, orig
+        assert elapsed >= _MIN_WAIT_SECONDS, _early_failure_message(elapsed)
+        assert elapsed < _MAX_WAIT_SECONDS, _hang_message(elapsed)
     finally:
         if holder_txn is not None:
-            try:
+            with suppress(Exception):
                 holder_txn.rollback()
-            except Exception:
-                pass
         if holder is not None:
             holder.close()
         if contender is not None:

@@ -1,4 +1,4 @@
-"""Isolated recovery-rehearsal behavior (private-household-deployment ticket 02b).
+"""Isolated recovery-rehearsal behavior (deployment ticket 02b).
 
 Real file-backed SQLite, the production app factory, and the real
 `create_backup` snapshot path — recovery is only meaningful end to end: seed a
@@ -36,9 +36,8 @@ def _settings(db_path: Path, *, allow_registration: bool) -> Settings:
 
 def _client(db_path: Path, *, allow_registration: bool) -> TestClient:
     engine = make_engine(f"sqlite:///{db_path}")
-    return TestClient(
-        create_app(_settings(db_path, allow_registration=allow_registration), engine)
-    )
+    settings = _settings(db_path, allow_registration=allow_registration)
+    return TestClient(create_app(settings, engine))
 
 
 def _seed_live_db(db_path: Path) -> str:
@@ -46,14 +45,23 @@ def _seed_live_db(db_path: Path) -> str:
     with _client(db_path, allow_registration=True) as client:
         registered = client.post(
             "/api/auth/register",
-            json={"username": USERNAME, "password": PASSWORD, "code": REGISTRATION_CODE},
+            json={
+                "username": USERNAME,
+                "password": PASSWORD,
+                "code": REGISTRATION_CODE,
+            },
         )
         assert registered.status_code == 201, registered.text
         token = registered.json()["token"]
         client.headers["Authorization"] = f"Bearer {token}"
         made = client.post(
             "/api/recipes",
-            json={"title": "Pre-snapshot Stew", "tags": [], "steps": [], "ingredients": []},
+            json={
+                "title": "Pre-snapshot Stew",
+                "tags": [],
+                "steps": [],
+                "ingredients": [],
+            },
         )
         assert made.status_code == 201, made.text
     return token
@@ -78,7 +86,12 @@ def test_recovers_snapshot_world_without_later_changes(tmp_path: Path) -> None:
         client.headers["Authorization"] = f"Bearer {token}"
         later = client.post(
             "/api/recipes",
-            json={"title": "Post-snapshot Pie", "tags": [], "steps": [], "ingredients": []},
+            json={
+                "title": "Post-snapshot Pie",
+                "tags": [],
+                "steps": [],
+                "ingredients": [],
+            },
         )
         assert later.status_code == 201, later.text
 
@@ -92,14 +105,17 @@ def test_recovers_snapshot_world_without_later_changes(tmp_path: Path) -> None:
             "/api/auth/login", json={"username": USERNAME, "password": PASSWORD}
         )
         assert login.status_code == 200, login.text
-        client.headers["Authorization"] = f"Bearer {login.json()['token']}"
+        token = login.json()["token"]
+        client.headers["Authorization"] = f"Bearer {token}"
         titles = [r["title"] for r in client.get("/api/recipes").json()]
 
     assert "Pre-snapshot Stew" in titles
     assert "Post-snapshot Pie" not in titles
 
 
-def test_recovered_database_refuses_snapshot_session_tokens(tmp_path: Path) -> None:
+def test_recovered_database_refuses_snapshot_session_tokens(
+    tmp_path: Path,
+) -> None:
     live_db = tmp_path / "live.db"
     snapshot_token = _seed_live_db(live_db)
     snapshot = create_backup(live_db, tmp_path / "backups")
@@ -115,7 +131,8 @@ def test_recovered_database_refuses_snapshot_session_tokens(tmp_path: Path) -> N
 
     with _client(target, allow_registration=False) as client:
         refused = client.get(
-            "/api/auth/me", headers={"Authorization": f"Bearer {snapshot_token}"}
+            "/api/auth/me",
+            headers={"Authorization": f"Bearer {snapshot_token}"},
         )
         assert refused.status_code == 401
 
@@ -123,15 +140,18 @@ def test_recovered_database_refuses_snapshot_session_tokens(tmp_path: Path) -> N
             "/api/auth/login", json={"username": USERNAME, "password": PASSWORD}
         )
         assert login.status_code == 200, login.text
+        token = login.json()["token"]
         fresh = client.get(
             "/api/auth/me",
-            headers={"Authorization": f"Bearer {login.json()['token']}"},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert fresh.status_code == 200
         assert fresh.json()["username"] == USERNAME
 
 
-def test_a_session_revoked_before_the_snapshot_is_not_revived(tmp_path: Path) -> None:
+def test_a_session_revoked_before_the_snapshot_is_not_revived(
+    tmp_path: Path,
+) -> None:
     live_db = tmp_path / "live.db"
     keep_token = _seed_live_db(live_db)
 
@@ -165,7 +185,9 @@ def test_a_session_revoked_before_the_snapshot_is_not_revived(tmp_path: Path) ->
         assert login.status_code == 200, login.text
 
 
-def test_recovers_a_snapshot_whose_path_contains_a_space(tmp_path: Path) -> None:
+def test_recovers_a_snapshot_whose_path_contains_a_space(
+    tmp_path: Path,
+) -> None:
     live_db = tmp_path / "live.db"
     _seed_live_db(live_db)
 
@@ -184,7 +206,9 @@ def test_recovers_a_snapshot_whose_path_contains_a_space(tmp_path: Path) -> None
         assert login.status_code == 200, login.text
 
 
-def test_live_database_and_snapshot_are_untouched_by_recovery(tmp_path: Path) -> None:
+def test_live_database_and_snapshot_are_untouched_by_recovery(
+    tmp_path: Path,
+) -> None:
     live_db = tmp_path / "live.db"
     _seed_live_db(live_db)
     snapshot = create_backup(live_db, tmp_path / "backups")
@@ -232,7 +256,9 @@ def test_garbage_snapshot_creates_no_target(tmp_path: Path) -> None:
     assert not target.exists()
 
 
-def test_valid_sqlite_that_is_not_a_recipe_database_is_rejected(tmp_path: Path) -> None:
+def test_valid_sqlite_that_is_not_a_recipe_database_is_rejected(
+    tmp_path: Path,
+) -> None:
     other = tmp_path / "other.db"
     conn = sqlite3.connect(other)
     conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY)")

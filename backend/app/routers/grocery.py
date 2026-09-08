@@ -44,7 +44,8 @@ def _get_or_404(db: Session, list_id: int) -> GroceryList:
     row = db.get(GroceryList, list_id, options=_EAGER)
     if row is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Grocery list not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Grocery list not found",
         )
     return row
 
@@ -56,12 +57,16 @@ def _get_item_or_404(
     item = next((it for it in grocery_list.items if it.id == item_id), None)
     if item is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Grocery list item not found"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Grocery list item not found",
         )
     return grocery_list, item
 
 
-def _check_line_mutable(grocery_list: GroceryList, item: GroceryListItem) -> None:
+def _check_line_mutable(
+    grocery_list: GroceryList,
+    item: GroceryListItem,
+) -> None:
     """`409` if the line is frozen (`added_to_inventory`) or the list is
     archived — shared PATCH/DELETE guard (spec.md §5.6)."""
     if item.added_to_inventory or grocery_list.status == "archived":
@@ -93,7 +98,11 @@ def _stock_rows(db: Session) -> list[StockRow]:
     ]
 
 
-@router.post("", response_model=GroceryListRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=GroceryListRead,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_grocery_list(
     payload: GroceryListCreate, current_user: CurrentUser, db: SessionDep
 ) -> GroceryList:
@@ -136,8 +145,11 @@ def create_grocery_list(
                     ingredient_id=ing.id,
                     item=ing.item,
                     normalized_name=ing.normalized_name,
-                    # A to-taste ingredient stays `None` — never `None * multiplier` (R-1).
-                    quantity=None if ing.quantity is None else ing.quantity * multiplier,
+                    # A to-taste ingredient stays `None` — never
+                    # `None * multiplier` (R-1).
+                    quantity=None
+                    if ing.quantity is None
+                    else ing.quantity * multiplier,
                     unit=ing.unit,
                 )
                 for ing in recipes[rid].ingredients
@@ -202,8 +214,8 @@ def delete_grocery_list(list_id: int, db: SessionDep) -> None:
 def add_grocery_item(
     list_id: int, payload: GroceryListItemIn, db: SessionDep
 ) -> GroceryListItem:
-    """Hand-add a manual line (spec.md §5.6). `404` list missing, `409` archived.
-    Amounts are stored exactly as typed — no conversion."""
+    """Hand-add a manual line (spec.md §5.6). `404` list missing,
+    `409` archived. Amounts are stored exactly as typed — no conversion."""
     grocery_list = _get_or_404(db, list_id)
     if grocery_list.status == "archived":
         raise HTTPException(
@@ -273,7 +285,10 @@ def update_grocery_item(
     return item
 
 
-@router.delete("/{list_id}/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{list_id}/items/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 def delete_grocery_item(list_id: int, item_id: int, db: SessionDep) -> None:
     """`404` list or line missing; `409` if the line is frozen or the list is
     archived (decision S5, spec.md §5.6)."""
@@ -325,7 +340,8 @@ def submit_grocery_list(
         stmt = stmt.on_conflict_do_update(
             index_elements=["match_name", "unit_bucket"],
             set_={
-                "quantity_base": InventoryItem.quantity_base + stmt.excluded.quantity_base,
+                "quantity_base": InventoryItem.quantity_base
+                + stmt.excluded.quantity_base,
                 "display_unit": func.coalesce(
                     stmt.excluded.display_unit, InventoryItem.display_unit
                 ),

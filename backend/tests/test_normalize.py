@@ -16,17 +16,21 @@ from app.normalize import normalize_name
 # --- spec.md §2.1 "Locked normalization oracles (R-7)" -----------------------
 
 LOCKED_ORACLES = [
-    ("  Diced Tomatoes! ", "tomato"),      # trim, case, punctuation, descriptor, irregular
-    ("large eggs", "egg"),                 # descriptor + trailing -s
-    ("chopped   red onions", "red onion"), # whitespace + final-token-only singularization
-    ("fresh tomatoes", "fresh tomato"),    # identity-bearing word retained
-    ("ground beef", "ground beef"),        # identity-bearing word retained
-    ("berries", "berry"),                  # -ies rule
-    ("boxes", "box"),                      # -xes rule
-    ("potatoes", "potato"),                # irregular map before suffix rules
-    ("glass", "glass"),                    # terminal -ss retained
-    ("Chef's   choice", "chefs choice"),   # punctuation removal + whitespace
-    ("!!!", ""),                           # valid degenerate result
+    # Trim, case, punctuation, descriptor, and irregular singularization.
+    ("  Diced Tomatoes! ", "tomato"),
+    ("large eggs", "egg"),  # descriptor + trailing -s
+    (
+        "chopped   red onions",
+        "red onion",
+    ),  # whitespace + final-token-only singularization
+    ("fresh tomatoes", "fresh tomato"),  # identity-bearing word retained
+    ("ground beef", "ground beef"),  # identity-bearing word retained
+    ("berries", "berry"),  # -ies rule
+    ("boxes", "box"),  # -xes rule
+    ("potatoes", "potato"),  # irregular map before suffix rules
+    ("glass", "glass"),  # terminal -ss retained
+    ("Chef's   choice", "chefs choice"),  # punctuation removal + whitespace
+    ("!!!", ""),  # valid degenerate result
 ]
 
 
@@ -38,9 +42,23 @@ def test_locked_normalization_oracles(raw: str, expected: str) -> None:
 # --- LEADING_DESCRIPTORS: stripped when leading (spec.md §2.1 step 4) --------
 
 LEADING_DESCRIPTORS = [
-    "diced", "chopped", "minced", "sliced", "shredded", "grated", "crushed",
-    "cubed", "julienned", "large", "small", "medium", "jumbo", "boneless",
-    "skinless", "ripe", "peeled",
+    "diced",
+    "chopped",
+    "minced",
+    "sliced",
+    "shredded",
+    "grated",
+    "crushed",
+    "cubed",
+    "julienned",
+    "large",
+    "small",
+    "medium",
+    "jumbo",
+    "boneless",
+    "skinless",
+    "ripe",
+    "peeled",
 ]
 
 
@@ -66,8 +84,16 @@ def test_descriptor_not_stripped_when_not_leading() -> None:
 # --- identity-bearing words: never stripped (spec.md §2.1 "Not stripped") ----
 
 IDENTITY_BEARING = [
-    "fresh", "dried", "ground", "cooked", "raw",
-    "smoked", "frozen", "canned", "roasted", "toasted",
+    "fresh",
+    "dried",
+    "ground",
+    "cooked",
+    "raw",
+    "smoked",
+    "frozen",
+    "canned",
+    "roasted",
+    "toasted",
 ]
 
 
@@ -77,6 +103,7 @@ def test_identity_bearing_word_retained(word: str) -> None:
 
 
 # --- singularization: final token only --------------------------------------
+
 
 def test_only_final_token_is_singularized() -> None:
     # "oats" would singularize to "oat" if the rule touched non-final tokens.
@@ -99,21 +126,21 @@ IRREGULAR = [
 ]
 
 SUFFIX_RULES = [
-    ("berries", "berry"),      # -ies -> -y
-    ("cherries", "cherry"),    # -ies -> -y
-    ("glasses", "glass"),      # -ses -> drop -es
-    ("boxes", "box"),          # -xes -> drop -es
-    ("fizzes", "fizz"),        # -zes -> drop -es
-    ("peaches", "peach"),      # -ches -> drop -es
-    ("squashes", "squash"),    # -shes -> drop -es
-    ("dishes", "dish"),        # -shes -> drop -es
-    ("mangoes", "mango"),      # -oes -> -o
-    ("heroes", "hero"),        # -oes -> -o
-    ("eggs", "egg"),           # trailing -s (not -ss) -> drop -s
-    ("onions", "onion"),       # trailing -s (not -ss) -> drop -s
-    ("glass", "glass"),        # ends -ss -> unchanged
-    ("grass", "grass"),        # ends -ss -> unchanged
-    ("beef", "beef"),          # no trailing -s -> unchanged
+    ("berries", "berry"),  # -ies -> -y
+    ("cherries", "cherry"),  # -ies -> -y
+    ("glasses", "glass"),  # -ses -> drop -es
+    ("boxes", "box"),  # -xes -> drop -es
+    ("fizzes", "fizz"),  # -zes -> drop -es
+    ("peaches", "peach"),  # -ches -> drop -es
+    ("squashes", "squash"),  # -shes -> drop -es
+    ("dishes", "dish"),  # -shes -> drop -es
+    ("mangoes", "mango"),  # -oes -> -o
+    ("heroes", "hero"),  # -oes -> -o
+    ("eggs", "egg"),  # trailing -s (not -ss) -> drop -s
+    ("onions", "onion"),  # trailing -s (not -ss) -> drop -s
+    ("glass", "glass"),  # ends -ss -> unchanged
+    ("grass", "grass"),  # ends -ss -> unchanged
+    ("beef", "beef"),  # no trailing -s -> unchanged
 ]
 
 
@@ -127,7 +154,8 @@ def test_singularization_suffix_rules(raw: str, expected: str) -> None:
     assert normalize_name(raw) == expected
 
 
-# --- punctuation / whitespace ---------------------------------------------------
+# --- punctuation / whitespace ----------------------------------------------
+
 
 def test_punctuation_dropped_whitespace_collapsed() -> None:
     assert normalize_name("Chef's   choice") == "chefs choice"
@@ -139,6 +167,7 @@ def test_hyphen_is_preserved() -> None:
 
 
 # --- degenerate results -------------------------------------------------------
+
 
 @pytest.mark.parametrize("raw", ["!!!", "", "   ", "@#$%^&*()", "  ...  "])
 def test_degenerate_input_returns_empty_string(raw: str) -> None:

@@ -60,7 +60,10 @@ def main(argv: list[str] | None = None) -> int:
         "--keep",
         type=int,
         default=DEFAULT_KEEP,
-        help=f"Valid snapshots to retain, newest first (default {DEFAULT_KEEP}).",
+        help=(
+            "Valid snapshots to retain, newest first "
+            f"(default {DEFAULT_KEEP})."
+        ),
     )
     parser.add_argument(
         "--max-age-hours",
@@ -129,7 +132,10 @@ def main(argv: list[str] | None = None) -> int:
 def _print_report(report: BackupReport, *, quiet: bool) -> None:
     if not quiet:
         if report.latest_success is not None:
-            print(f"latest success  : {report.latest_success.name}  ({format_age(report.age)} old)")
+            print(
+                f"latest success  : {report.latest_success.name}  "
+                f"({format_age(report.age)} old)"
+            )
             print(f"                  {report.latest_success.path}")
         else:
             print("latest success  : NONE on local disk")
@@ -140,18 +146,30 @@ def _print_report(report: BackupReport, *, quiet: bool) -> None:
         else:
             print("latest failure  : none recorded")
 
-        print(f"valid snapshots : {len(report.valid)}  (retention keeps newest {report.keep})")
+        print(
+            f"valid snapshots : {len(report.valid)}  "
+            f"(retention keeps newest {report.keep})"
+        )
         if report.incomplete:
             names = ", ".join(p.name for p in report.incomplete)
-            print(f"incomplete      : {len(report.incomplete)} not counted — {names}")
+            print(
+                f"incomplete      : {len(report.incomplete)} "
+                f"not counted — {names}"
+            )
         if report.unreadable:
             names = ", ".join(p.name for p in report.unreadable)
-            print(f"unreadable      : {len(report.unreadable)} not counted — {names}")
+            print(
+                f"unreadable      : {len(report.unreadable)} "
+                f"not counted — {names}"
+            )
 
     problem = report.problem
     if problem is None:
         if not quiet:
-            print(f"status          : OK — within the {format_age(report.max_age)} recovery target")
+            print(
+                "status          : OK — within the "
+                f"{format_age(report.max_age)} recovery target"
+            )
     else:
         print(f"status          : STALE — {problem}", file=sys.stderr)
 

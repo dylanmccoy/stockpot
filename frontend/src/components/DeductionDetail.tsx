@@ -47,7 +47,7 @@ function rangeLabel(
   return `${left} → ${right}${tail}`;
 }
 
-const columns: Column<Row>[] = [
+const columns: Array<Column<Row>> = [
   { key: "item", header: "Ingredient", render: (d) => d.item },
   {
     key: "amount",

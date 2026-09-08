@@ -1,7 +1,8 @@
 """Pure unit conversion and quantity management module.
 
 Implements deterministic unit parsing and conversion per spec.md §2.2.
-No third-party dependencies. Dimensions: MASS (base g), VOLUME (base ml), COUNT (base unit).
+No third-party dependencies. Dimensions: MASS (base g), VOLUME (base ml),
+COUNT (base unit).
 """
 
 from dataclasses import dataclass
@@ -95,28 +96,30 @@ _UNIT_TABLE: dict[str, UnitDef] = {
 }
 
 # Deliberately unknown tokens: exact-string match only
-OPAQUE_TOKENS = frozenset({
-    "clove",
-    "slice",
-    "piece",
-    "stick",
-    "can",
-    "package",
-    "pkg",
-    "jar",
-    "bottle",
-    "box",
-    "bag",
-    "head",
-    "bulb",
-    "bunch",
-    "sprig",
-    "pinch",
-    "handful",
-    "dash",
-    "splash",
-    "to taste",
-})
+OPAQUE_TOKENS = frozenset(
+    {
+        "clove",
+        "slice",
+        "piece",
+        "stick",
+        "can",
+        "package",
+        "pkg",
+        "jar",
+        "bottle",
+        "box",
+        "bag",
+        "head",
+        "bulb",
+        "bunch",
+        "sprig",
+        "pinch",
+        "handful",
+        "dash",
+        "splash",
+        "to taste",
+    }
+)
 
 
 def normalize_unit_token(s: Optional[str]) -> Optional[str]:
@@ -151,7 +154,8 @@ def parse_unit(s: Optional[str]) -> Optional[UnitDef]:
     normalize_unit_token then dict lookup; normalized None is the COUNT token;
     a non-None token absent from the table => unknown/opaque (return None)
 
-    Always returns the same instance from _UNIT_TABLE (same object identity for is checks).
+    Always returns the same instance from _UNIT_TABLE (same object identity
+    for is checks).
     """
     normalized = normalize_unit_token(s)
 
@@ -167,7 +171,9 @@ def parse_unit(s: Optional[str]) -> Optional[UnitDef]:
     return None
 
 
-def to_base(amount: float, unit: Optional[str]) -> Optional[tuple[float, Dimension]]:
+def to_base(
+    amount: float, unit: Optional[str]
+) -> Optional[tuple[float, Dimension]]:
     """Convert a quantity to base units.
 
     unit resolves to None-token  -> (amount, COUNT)
@@ -184,7 +190,9 @@ def to_base(amount: float, unit: Optional[str]) -> Optional[tuple[float, Dimensi
     return (base_amount, parsed.dimension)
 
 
-def from_base(amount: float, dim: Dimension, unit: Optional[str]) -> Optional[float]:
+def from_base(
+    amount: float, dim: Dimension, unit: Optional[str]
+) -> Optional[float]:
     """Convert from base units back to the specified unit.
 
     unit None / canonical-for-dim -> amount        (already base)
@@ -208,7 +216,8 @@ def from_base(amount: float, dim: Dimension, unit: Optional[str]) -> Optional[fl
 def compatible(a: Optional[str], b: Optional[str]) -> bool:
     """Check if two units are compatible (same dimension).
 
-    both resolve to a known UnitDef of the same Dimension; a None token counts as COUNT
+    Both resolve to a known UnitDef of the same Dimension; a None token counts
+    as COUNT.
     """
     parsed_a = parse_unit(a)
     parsed_b = parse_unit(b)
@@ -284,14 +293,14 @@ def add_quantities(qs: list[Quantity]) -> list[Quantity]:
             bucket_order.append(bucket)
             buckets[bucket] = ([], [], q.unit)
 
-        base_amounts, all_none_flags, first_unit = buckets[bucket]
+        base_amounts, all_none_flags, _ = buckets[bucket]
 
         # Check if this specific quantity has a None amount
         all_none_flags.append(q.amount is None)
 
         # If the amount is None, treat it as 0 for summation
         if q.amount is None:
-            # For known units, we need to convert to base; for opaque, just use 0
+            # Known units need base conversion; opaque units simply use zero.
             if bucket in ("mass", "volume", "count"):
                 base_amounts.append(0.0)
             else:
@@ -316,7 +325,7 @@ def add_quantities(qs: list[Quantity]) -> list[Quantity]:
     result: list[Quantity] = []
 
     for bucket in bucket_order:
-        base_amounts, all_none_flags, first_unit = buckets[bucket]
+        base_amounts, all_none_flags, _ = buckets[bucket]
 
         # Check if ALL amounts in this partition are None
         if all(flag for flag in all_none_flags):
@@ -329,19 +338,11 @@ def add_quantities(qs: list[Quantity]) -> list[Quantity]:
 
             # Convert from base to canonical unit if needed
             if bucket in ("mass", "volume", "count"):
-                # Determine dimension
-                if bucket == "mass":
-                    dim = Dimension.MASS
-                elif bucket == "volume":
-                    dim = Dimension.VOLUME
-                else:
-                    dim = Dimension.COUNT
-
                 # Get canonical unit
                 canonical = canon_unit(bucket)
 
                 # For known units, the total is already in base units
-                # The result should be in canonical units (which is the base for each dimension)
+                # The result uses the canonical base unit for each dimension.
                 result.append(Quantity(total_base, canonical))
             else:
                 # Opaque bucket - total_base is the raw sum

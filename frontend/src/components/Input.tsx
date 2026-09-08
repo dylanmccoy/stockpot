@@ -34,7 +34,7 @@ function useWiring(props: Wired) {
 export const Input = forwardRef<
   HTMLInputElement,
   InputHTMLAttributes<HTMLInputElement>
->(function Input({ className, ...rest }, ref) {
+>(({ className, ...rest }, ref) => {
   const w = useWiring({ ...rest, className });
   return (
     <input
@@ -52,7 +52,7 @@ export const Input = forwardRef<
 export const Textarea = forwardRef<
   HTMLTextAreaElement,
   TextareaHTMLAttributes<HTMLTextAreaElement>
->(function Textarea({ className, ...rest }, ref) {
+>(({ className, ...rest }, ref) => {
   const w = useWiring({ ...rest, className });
   return (
     <textarea
@@ -70,7 +70,7 @@ export const Textarea = forwardRef<
 export const Select = forwardRef<
   HTMLSelectElement,
   SelectHTMLAttributes<HTMLSelectElement>
->(function Select({ className, ...rest }, ref) {
+>(({ className, ...rest }, ref) => {
   const w = useWiring({ ...rest, className });
   return (
     <select

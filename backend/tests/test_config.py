@@ -2,11 +2,11 @@
 
 Direct construction, no HTTP — prior art: `test_engine_listeners.py`.
 
-`session_ttl_days` is `Field(30, ge=0)`. `0` is legal and meaningful: it issues an
-instantly-expired token, which is how `test_auth.py` exercises the expiry branch
-without reaching into the database. A negative value is nonsense — it would issue
-tokens that are already dead — so it fails at `Settings` construction rather than
-at the first login.
+`session_ttl_days` is `Field(30, ge=0)`. `0` is legal and meaningful: it issues
+an instantly-expired token, which is how `test_auth.py` exercises the expiry
+branch without reaching into the database. A negative value is nonsense — it
+would issue tokens that are already dead — so it fails at `Settings`
+construction rather than at the first login.
 """
 
 import pytest
@@ -21,7 +21,8 @@ def test_session_ttl_days_defaults_to_30() -> None:
 
 def test_session_ttl_days_zero_is_accepted() -> None:
     """`0` is legal: an instantly-expired token."""
-    assert Settings(database_url="sqlite://", session_ttl_days=0).session_ttl_days == 0
+    settings = Settings(database_url="sqlite://", session_ttl_days=0)
+    assert settings.session_ttl_days == 0
 
 
 def test_session_ttl_days_negative_raises_validation_error() -> None:

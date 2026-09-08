@@ -1,7 +1,8 @@
 """Operator CLI: provision household login accounts (root README.md
 "Household account provisioning").
 
-    uv run python scripts/provision.py --accounts /path/outside/the/checkout/accounts.txt
+    uv run python scripts/provision.py \
+        --accounts /path/outside/the/checkout/accounts.txt
 
 Run it with the deployment stopped. Each non-blank, non-`#` line of the
 accounts file is `<username> <password>` (split on the first run of
@@ -23,6 +24,7 @@ with no schema.
 from __future__ import annotations
 
 import argparse
+import locale
 import sys
 from pathlib import Path
 
@@ -66,9 +68,16 @@ def main(argv: list[str] | None = None) -> int:
     database_url = args.database_url or settings.database_url
 
     try:
-        text = sys.stdin.read() if args.accounts == "-" else Path(args.accounts).read_text()
+        text = (
+            sys.stdin.read()
+            if args.accounts == "-"
+            else Path(args.accounts).read_text(
+                encoding=locale.getpreferredencoding(False)
+            )
+        )
     except OSError as exc:
-        print(f"provision failed: cannot read accounts file: {exc}", file=sys.stderr)
+        error = f"provision failed: cannot read accounts file: {exc}"
+        print(error, file=sys.stderr)
         return 1
 
     try:
@@ -80,12 +89,15 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"database: {database_url}")
     if result.created:
-        print(f"provisioned: {', '.join(result.created)}")
+        created = ", ".join(result.created)
+        print(f"provisioned: {created}")
     if result.skipped:
-        print(f"already existed (skipped): {', '.join(result.skipped)}")
+        skipped = ", ".join(result.skipped)
+        print(f"already existed (skipped): {skipped}")
+    registration_check = "confirm POST /api/auth/register returns 403."
     print(
         "registration stays closed — start the app without "
-        "RECIPE_ALLOW_REGISTRATION and confirm POST /api/auth/register returns 403."
+        f"RECIPE_ALLOW_REGISTRATION and {registration_check}"
     )
     return 0
 

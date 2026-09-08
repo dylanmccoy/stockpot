@@ -30,10 +30,10 @@ Phase 6 with a matching file-backed HTTP submit-race smoke.
 
 from __future__ import annotations
 
-import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from threading import Thread
 
 import pytest
 from fastapi import FastAPI
@@ -48,12 +48,15 @@ from app.main import create_app
 
 _PASSWORD = "correct horse battery"
 _REG_CODE = "conc"
+_NO_OP_UPDATE = "UPDATE inventory_items SET quantity_base = quantity_base"
 
 # The serialization test lowers busy_timeout so it does not sit out the 5 s
-# production default; a genuine lock wait still has to take a real fraction of it.
+# production default; a genuine lock wait still has to take a real fraction of
+# it.
 _TEST_BUSY_TIMEOUT_MS = 200
 _LOCK_WAIT_FLOOR_S = 0.08  # below this, no real busy-wait happened
-_LOCK_WAIT_CEILING_S = 4.0  # above this, we are hitting the 5 s production default
+# Above this, we are hitting the 5 s production default.
+_LOCK_WAIT_CEILING_S = 4.0
 
 
 def _build_file_app(
@@ -62,14 +65,19 @@ def _build_file_app(
     url = f"sqlite:///{db_path}"
     engine = make_engine(url)
     app = create_app(
-        Settings(database_url=url, allow_registration=True, registration_code=_REG_CODE),
+        Settings(
+            database_url=url,
+            allow_registration=True,
+            registration_code=_REG_CODE,
+        ),
         engine,
     )
     if busy_timeout_ms is not None:
         # Registered after make_engine's own `connect` listener, so this PRAGMA
         # runs last and lowers the 5000 ms default for the test.
         @event.listens_for(engine, "connect")
-        def _lower_busy_timeout(dbapi_conn, _record):  # noqa: ANN001
+        def _lower_busy_timeout(dbapi_conn, record):  # noqa: ANN001
+            del record
             cur = dbapi_conn.cursor()
             cur.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
             cur.close()
@@ -77,13 +85,16 @@ def _build_file_app(
     return app, engine
 
 
-def _register(client: TestClient, *, username: str = "racer", code: str = _REG_CODE) -> None:
+def _register(
+    client: TestClient, *, username: str = "racer", code: str = _REG_CODE
+) -> None:
     reg = client.post(
         "/api/auth/register",
         json={"username": username, "password": _PASSWORD, "code": code},
     )
     assert reg.status_code == 201, reg.text
-    client.headers["Authorization"] = f"Bearer {reg.json()['token']}"
+    token = reg.json()["token"]
+    client.headers["Authorization"] = f"Bearer {token}"
 
 
 # ===========================================================================
@@ -95,7 +106,10 @@ def _seed_tomato_row(client: TestClient) -> int:
     """A registered user plus one opaque `can`-bucket inventory row
     (`quantity_base = 5`), reachable both over HTTP and by the raw SQL below."""
     _register(client)
-    resp = client.post("/api/inventory", json={"item": "Tomatoes", "quantity": 5, "unit": "can"})
+    resp = client.post(
+        "/api/inventory",
+        json={"item": "Tomatoes", "quantity": 5, "unit": "can"},
+    )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
 
@@ -108,7 +122,8 @@ def test_begin_immediate_serializes_two_writers_and_the_second_sees_fresh_data(
     after a real wait, not instantly. After A commits, B's retry reads A's
     committed value, not the value B tried to write."""
     app, engine = _build_file_app(
-        tmp_path / "concurrency-serialize.db", busy_timeout_ms=_TEST_BUSY_TIMEOUT_MS
+        tmp_path / "concurrency-serialize.db",
+        busy_timeout_ms=_TEST_BUSY_TIMEOUT_MS,
     )
     try:
         with TestClient(app) as client:
@@ -119,7 +134,10 @@ def test_begin_immediate_serializes_two_writers_and_the_second_sees_fresh_data(
         try:
             first_txn = first.begin()  # BEGIN IMMEDIATE via the listener
             first.execute(
-                text("UPDATE inventory_items SET quantity_base = 4 WHERE match_name = 'tomato'")
+                text(
+                    "UPDATE inventory_items SET quantity_base = 4 "
+                    "WHERE match_name = 'tomato'"
+                )
             )
 
             started = time.monotonic()
@@ -134,13 +152,18 @@ def test_begin_immediate_serializes_two_writers_and_the_second_sees_fresh_data(
             elapsed = time.monotonic() - started
 
             orig = str(excinfo.value.orig)
-            assert "database is locked" in orig or "database is busy" in orig, orig
+            is_locked = "database is locked" in orig
+            is_busy = "database is busy" in orig
+            assert is_locked or is_busy, orig
             assert _LOCK_WAIT_FLOOR_S <= elapsed < _LOCK_WAIT_CEILING_S, elapsed
 
             first_txn.commit()
 
             fresh = second.execute(
-                text("SELECT quantity_base FROM inventory_items WHERE match_name = 'tomato'")
+                text(
+                    "SELECT quantity_base FROM inventory_items "
+                    "WHERE match_name = 'tomato'"
+                )
             ).scalar_one()
             assert fresh == pytest.approx(4.0)
         finally:
@@ -164,12 +187,14 @@ def test_held_write_lock_maps_to_409_not_500_over_http(tmp_path: Path) -> None:
 
             holder = engine.connect()
             try:
-                holder_txn = holder.begin()  # BEGIN IMMEDIATE -- holds the write lock
-                holder.execute(
-                    text("UPDATE inventory_items SET quantity_base = quantity_base")
-                )
+                # BEGIN IMMEDIATE holds the write lock.
+                holder_txn = holder.begin()
+                holder.execute(text(_NO_OP_UPDATE))
 
-                resp = client.patch(f"/api/inventory/{item_id}", json={"quantity": 2, "unit": "can"})
+                resp = client.patch(
+                    f"/api/inventory/{item_id}",
+                    json={"quantity": 2, "unit": "can"},
+                )
 
                 assert resp.status_code == 409, resp.text
                 assert resp.json() == {"detail": "conflict"}
@@ -189,8 +214,10 @@ def test_held_write_lock_maps_to_409_not_500_over_http(tmp_path: Path) -> None:
 # ===========================================================================
 
 
-@pytest.fixture
-def cook_race_env(tmp_path: Path) -> Iterator[tuple[TestClient, FastAPI, int]]:
+@pytest.fixture(name="cook_race_env")
+def cook_race_environment(
+    tmp_path: Path,
+) -> Iterator[tuple[TestClient, FastAPI, int]]:
     """Authed client + the app under test + a recipe id.
 
     The app is handed back so a worker thread can build its own `TestClient`
@@ -213,7 +240,8 @@ def cook_race_env(tmp_path: Path) -> Iterator[tuple[TestClient, FastAPI, int]]:
         ).json()["id"]
         assert (
             client.post(
-                "/api/inventory", json={"item": "Tomatoes", "quantity": 5, "unit": "can"}
+                "/api/inventory",
+                json={"item": "Tomatoes", "quantity": 5, "unit": "can"},
             ).status_code
             == 201
         )
@@ -236,9 +264,10 @@ def test_two_concurrent_cooks_do_not_lose_an_update_and_scale_the_to_taste_line(
     def cook(key: int) -> None:
         worker = TestClient(app)
         worker.headers["Authorization"] = token
-        results[key] = worker.post(f"/api/recipes/{rid}/cook", json={"multiplier": 2})
+        cook_url = f"/api/recipes/{rid}/cook"
+        results[key] = worker.post(cook_url, json={"multiplier": 2})
 
-    threads = [threading.Thread(target=cook, args=(k,)) for k in range(2)]
+    threads = [Thread(target=cook, args=(k,)) for k in range(2)]
     for thread in threads:
         thread.start()
     for thread in threads:
@@ -269,7 +298,11 @@ def test_two_concurrent_cooks_do_not_lose_an_update_and_scale_the_to_taste_line(
 
     # before/after chains are an honest 5->3->1 across the two logs.
     pairs = sorted(
-        (log["deductions"][0]["before"], log["deductions"][0]["after"]) for log in logs
+        (
+            log["deductions"][0]["before"],
+            log["deductions"][0]["after"],
+        )
+        for log in logs
     )
     assert pairs == [(3.0, 1.0), (5.0, 3.0)]
 
@@ -281,7 +314,8 @@ def test_two_concurrent_cooks_do_not_lose_an_update_and_scale_the_to_taste_line(
 
 def _mk_recipe(client: TestClient, ingredients: list[dict]) -> int:
     resp = client.post(
-        "/api/recipes", json={"title": "Concurrency fixture", "ingredients": ingredients}
+        "/api/recipes",
+        json={"title": "Concurrency fixture", "ingredients": ingredients},
     )
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]
@@ -295,7 +329,9 @@ def _mk_grocery(client: TestClient, recipe_ids: list[int]) -> dict:
 
 def _line_by_norm(items: list[dict], norm: str) -> dict:
     matches = [it for it in items if it["normalized_name"] == norm]
-    assert len(matches) == 1, f"expected exactly one {norm!r} line, got {len(matches)}"
+    match_count = len(matches)
+    error = f"expected exactly one {norm!r} line, got {match_count}"
+    assert match_count == 1, error
     return matches[0]
 
 
@@ -306,19 +342,27 @@ def _seed_checked_grocery_line(client: TestClient) -> int:
     rid = _mk_recipe(client, [{"item": "Flour", "quantity": 500, "unit": "g"}])
     gl = _mk_grocery(client, [rid])
     line = _line_by_norm(gl["items"], "flour")
-    resp = client.patch(f"/api/grocery/{gl['id']}/items/{line['id']}", json={"checked": True})
+    grocery_id = gl["id"]
+    line_id = line["id"]
+    resp = client.patch(
+        f"/api/grocery/{grocery_id}/items/{line_id}",
+        json={"checked": True},
+    )
     assert resp.status_code == 200, resp.text
     return gl["id"]
 
 
-def test_two_concurrent_submits_apply_the_checked_line_at_most_once(tmp_path: Path) -> None:
+def test_two_concurrent_submits_apply_the_checked_line_at_most_once(
+    tmp_path: Path,
+) -> None:
     """The submit-race side of §6: two real HTTP submits of the same list race
     over a file-backed DB. `BEGIN IMMEDIATE` serializes them, so the checked
     line is applied exactly once -- inventory reflects one application, not
     two, and the line is frozen once with a canonical `applied_quantity`. The
     accepted phase-6a oracle for this case (`test_grocery_contract.py` section
     C) is unchanged; this is the domain-independent smoke for Phase 6 close."""
-    app, engine = _build_file_app(tmp_path / "grocery-submit-race.db")  # production 5 s busy_timeout
+    # Use the production 5 s busy timeout.
+    app, engine = _build_file_app(tmp_path / "grocery-submit-race.db")
     try:
         with TestClient(app) as client:
             gid = _seed_checked_grocery_line(client)
@@ -331,7 +375,7 @@ def test_two_concurrent_submits_apply_the_checked_line_at_most_once(tmp_path: Pa
                 worker.headers["Authorization"] = token
                 results[key] = worker.post(f"/api/grocery/{gid}/submit")
 
-            threads = [threading.Thread(target=submit, args=(k,)) for k in range(2)]
+            threads = [Thread(target=submit, args=(key,)) for key in range(2)]
             for thread in threads:
                 thread.start()
             for thread in threads:
@@ -347,7 +391,13 @@ def test_two_concurrent_submits_apply_the_checked_line_at_most_once(tmp_path: Pa
             assert line["applied_quantity"] == pytest.approx(500.0)
 
             inv = client.get("/api/inventory").json()
-            row = next(r for r in inv if r["match_name"] == "flour" and r["unit_bucket"] == "mass")
-            assert row["quantity_base"] == pytest.approx(500.0)  # applied once, not 1000
+            row = next(
+                item
+                for item in inv
+                if item["match_name"] == "flour"
+                if item["unit_bucket"] == "mass"
+            )
+            # Applied once, not 1000.
+            assert row["quantity_base"] == pytest.approx(500.0)
     finally:
         engine.dispose()
