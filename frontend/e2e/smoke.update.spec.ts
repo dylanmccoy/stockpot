@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   UPDATE_HANDOFF_FILE,
   UPDATE_SEED_PASSWORD,
@@ -46,14 +46,14 @@ test.beforeAll(() => {
   handoff = JSON.parse(readFileSync(UPDATE_HANDOFF_FILE, "utf8")) as Handoff;
 });
 
-async function logIn(page: import("@playwright/test").Page) {
+async function logIn(page: Page) {
   await page.getByLabel("Username").fill(UPDATE_SEED_USERNAME);
   await page.getByLabel("Password").fill(UPDATE_SEED_PASSWORD);
   await page.getByRole("button", { name: "Log in" }).click();
   await expect(page.getByRole("heading", { name: "Recipes" })).toBeVisible();
 }
 
-async function addRecipe(page: import("@playwright/test").Page, title: string) {
+async function addRecipe(page: Page, title: string) {
   await page.getByRole("link", { name: "Add recipe" }).click();
   await page.getByLabel(/^Title/).fill(title);
   await page.getByRole("button", { name: "Save recipe" }).click();

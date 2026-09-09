@@ -1,5 +1,5 @@
-.PHONY: help install test test-backend test-frontend build typecheck \
-        dev-backend dev-frontend db-reset
+.PHONY: help install lint lint-backend lint-frontend test test-backend \
+        test-frontend build typecheck dev-backend dev-frontend db-reset
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -8,6 +8,14 @@ help: ## Show this help
 install: ## Install backend + frontend dependencies
 	cd backend && uv sync
 	cd frontend && npm install
+
+lint: lint-backend lint-frontend ## Run backend + frontend linters
+
+lint-backend: ## Lint Python with Google's Pylint profile
+	cd backend && uv run pylint app scripts tests
+
+lint-frontend: ## Lint TypeScript/JavaScript with Google TypeScript Style
+	cd frontend && npm run lint
 
 test: test-backend test-frontend ## Run all tests
 

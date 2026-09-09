@@ -318,12 +318,12 @@ describe("groupAvailabilityLines", () => {
     ]);
 
     expect(rows).toHaveLength(2);
-    expect(rows.map((row) => [row.item, row.statusLabel, row.needLabel])).toEqual(
-      [
-        ["salt to taste", "To taste", "—"],
-        ["salt for brine", "Short 15 g", "20 g"],
-      ],
-    );
+    expect(
+      rows.map((row) => [row.item, row.statusLabel, row.needLabel]),
+    ).toEqual([
+      ["salt to taste", "To taste", "—"],
+      ["salt for brine", "Short 15 g", "20 g"],
+    ]);
     expect(new Set(rows.map((row) => row.groupKey))).toHaveLength(2);
   });
 });
@@ -403,7 +403,8 @@ describe("RecipeDetail body", () => {
 
 // ── made history (per-recipe panel, spec §10.8) ──────────────────────────────
 
-const historyRegion = () => screen.getByRole("region", { name: "Made history" });
+const historyRegion = () =>
+  screen.getByRole("region", { name: "Made history" });
 
 describe("RecipeDetail made history", () => {
   it("lists cooks from `[recipe-cook-logs, id]`, newest first, with a count header", async () => {
@@ -436,9 +437,7 @@ describe("RecipeDetail made history", () => {
     expect(rows[0]).toHaveTextContent("×7");
     expect(rows[1]).toHaveTextContent("×3");
 
-    expect(
-      queryClient.getQueryData(["recipe-cook-logs", 1]),
-    ).toHaveLength(2);
+    expect(queryClient.getQueryData(["recipe-cook-logs", 1])).toHaveLength(2);
   });
 
   it("a no-deduction cook shows 'stock not changed' and no detail table", async () => {
@@ -495,9 +494,7 @@ describe("RecipeDetail made history", () => {
 
   it("offers a retry when the history call fails", async () => {
     useRecipe(detailRecipe);
-    server.use(
-      errorHandlers.serverError("get", "/api/recipes/:id/cook-logs"),
-    );
+    server.use(errorHandlers.serverError("get", "/api/recipes/:id/cook-logs"));
     renderDetail();
     await screen.findByRole("heading", { name: "Buttermilk Pancakes" });
 
@@ -729,9 +726,9 @@ describe("RecipeDetail availability", () => {
           multiplier: m,
           lines: availabilityReport.lines.map((l) => ({
             ...l,
-            need: l.need == null ? null : l.need * m,
-            group_need: l.group_need == null ? null : l.group_need * m,
-            group_short: l.group_short == null ? null : l.group_short * m,
+            need: l.need === null ? null : l.need * m,
+            group_need: l.group_need === null ? null : l.group_need * m,
+            group_short: l.group_short === null ? null : l.group_short * m,
           })),
         });
       }),

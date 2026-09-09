@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import {
   DEPLOY_REGISTRATION_CODE,
   DEPLOY_SEED_PASSWORD,
@@ -19,10 +19,7 @@ import {
 
 const TOKEN_KEY = "recipe.token";
 
-async function logIn(
-  page: import("@playwright/test").Page,
-  password = DEPLOY_SEED_PASSWORD,
-) {
+async function logIn(page: Page, password = DEPLOY_SEED_PASSWORD) {
   await page.getByLabel("Username").fill(DEPLOY_SEED_USERNAME);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Log in" }).click();

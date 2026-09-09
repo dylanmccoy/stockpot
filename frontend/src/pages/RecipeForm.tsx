@@ -827,7 +827,7 @@ function useRecipeRedirect(extraKey?: QueryKey) {
   return {
     onSuccess: (recipe: RecipeRead) => {
       if (extraKey) queryClient.setQueryData(extraKey, recipe);
-      queryClient.invalidateQueries({ queryKey: ["recipes"] });
+      void queryClient.invalidateQueries({ queryKey: ["recipes"] });
       navigate(`/recipes/${recipe.id}`);
     },
     onError: (error: unknown) => {

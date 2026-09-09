@@ -53,7 +53,7 @@ export interface TokenResponse {
 
 /** A single FastAPI validation error entry (`detail` array element). */
 export interface ValidationIssue {
-  loc: (string | number)[];
+  loc: Array<string | number>;
   msg: string;
   type: string;
 }

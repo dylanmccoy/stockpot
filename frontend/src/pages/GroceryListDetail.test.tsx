@@ -286,7 +286,11 @@ describe("GroceryListDetail", () => {
     // Both keys must be present (possibly null) — the backend schema has no
     // default for them, so omitting either 422s (ticket 18 re-diff).
     await waitFor(() =>
-      expect(postedBody).toEqual({ item: "napkins", quantity: null, unit: null }),
+      expect(postedBody).toEqual({
+        item: "napkins",
+        quantity: null,
+        unit: null,
+      }),
     );
   });
 

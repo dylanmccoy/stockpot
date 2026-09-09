@@ -76,8 +76,8 @@ export function isUnionBranchNoise(issue: ValidationIssue): boolean {
  *  `list[Object]` field whose own nested key is snake_case from being
  *  mis-collapsed. A *trailing* tag (element neither branch validated — no field
  *  named) is left for `isUnionBranchNoise` to drop. */
-function normalizeLoc(loc: (string | number)[]): (string | number)[] {
-  const out: (string | number)[] = [];
+function normalizeLoc(loc: Array<string | number>): Array<string | number> {
+  const out: Array<string | number> = [];
   loc.forEach((seg, i) => {
     const interiorTag =
       typeof seg === "string" &&
