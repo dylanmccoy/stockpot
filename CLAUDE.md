@@ -80,6 +80,16 @@ header point you at the exact sections.
   it (`.scratch/backend-v1/plan.md` §"Phase scope fence").
 - Frontend work reads `.scratch/backend-v1/spec.md` as the contract.
 
+## Active efforts
+
+| Effort (`.scratch/<slug>/`) | Status |
+| --- | --- |
+| `backend-v1` | archived — shipped, spec/plan frozen |
+| `backend-v1-grilling` | archived — decisions folded into `backend-v1/spec.md` |
+| `frontend-v1` | archived — shipped, all tickets `done` |
+| `private-household-deployment` | active — implementation done; ticket 08 awaiting real-host commissioning |
+| `post-v1-route` | active — ongoing research/backlog (wayfinder map) |
+
 ## Agent skills
 
 - **Issue tracker** — issues and specs as markdown files under
