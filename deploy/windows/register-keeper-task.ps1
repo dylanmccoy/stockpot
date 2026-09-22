@@ -11,7 +11,7 @@
       wsl.exe -d <Distro> -- <Bash> <Checkout>/deploy/wsl-keeper.sh run
 
   While that command runs the WSL distribution stays up (a distro stops when its
-  last process exits — a systemd service *inside* WSL cannot hold it open), and
+  last process exits - a systemd service *inside* WSL cannot hold it open), and
   deploy/wsl-keeper.sh keeps exactly one deploy/supervise.sh (ticket 06a), and
   so the app, running above it. Closing the IDE and every terminal changes
   nothing: the keeper belongs to Task Scheduler, not to a shell.
@@ -20,7 +20,7 @@
     * Principal  : the invoking user, LogonType S4U (no interactive logon, no
                    stored password). If WSL refuses to start under S4U on your
                    host, re-run with -LogonType Password (prompts once).
-    * Triggers   : three, built natively —
+    * Triggers   : three, built natively -
                      - AtStartup: starts the keeper when Windows boots, before
                        any interactive logon (ticket 06c). Paired with the S4U
                        principal below it needs nobody signed in. Omit with
@@ -41,7 +41,7 @@
                    after `wsl --shutdown`), Task Scheduler restarts it after one
                    minute, up to 999 times. A clean stop (SIGTERM to the keeper,
                    exit 0) is left stopped on purpose.
-    * Unbounded  : ExecutionTimeLimit 0 — the keeper is meant to run forever.
+    * Unbounded  : ExecutionTimeLimit 0 - the keeper is meant to run forever.
     * Power      : starts and keeps running on battery, and is not stopped when
                    the machine leaves idle. Host sleep/hibernate still stops the
                    service (spec item 24); pass -ConfigurePower to also set the
@@ -91,7 +91,7 @@
 .PARAMETER ConfigurePower
   Also run `powercfg /change standby-timeout-ac 0` and
   `hibernate-timeout-ac 0` so an idle host on AC power does not sleep and drop
-  household members (spec items 7, 24). Off by default — it changes a
+  household members (spec items 7, 24). Off by default - it changes a
   machine-wide setting. Battery timeouts and a laptop's lid-close action are
   left to the owner.
 
@@ -151,11 +151,11 @@ if ($Unregister) {
 $action = New-ScheduledTaskAction -Execute $WslPath -Argument $wslArgs
 
 # Independent triggers, each built natively (no copying .Repetition between
-# trigger objects — that assignment is inconsistent across PowerShell versions):
-#   * AtStartup — starts the keeper when Windows boots, before any interactive
+# trigger objects - that assignment is inconsistent across PowerShell versions):
+#   * AtStartup - starts the keeper when Windows boots, before any interactive
 #     logon (ticket 06c). Dropped by -NoBootTrigger.
-#   * AtLogOn for this user — starts the keeper when the owner signs in.
-#   * -Once at registration time, repeating every $RepetitionMinutes forever —
+#   * AtLogOn for this user - starts the keeper when the owner signs in.
+#   * -Once at registration time, repeating every $RepetitionMinutes forever -
 #     the recovery path after a controlled `wsl --shutdown` while the owner
 #     stays logged in, and it also starts the keeper immediately on register.
 # MultipleInstances = IgnoreNew (below) makes any later trigger firing a no-op
@@ -167,7 +167,7 @@ if (-not $NoBootTrigger) {
 $triggers += (New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME")
 $triggers += (New-ScheduledTaskTrigger -Once -At (Get-Date) `
     -RepetitionInterval (New-TimeSpan -Minutes $RepetitionMinutes) `
-    -RepetitionDuration ([TimeSpan]::MaxValue))
+    -RepetitionDuration (New-TimeSpan -Days 3650))
 
 # ExecutionTimeLimit 0 = run indefinitely. Restart the action if it exits
 # non-zero (e.g. wsl.exe returning after `wsl --shutdown`); a clean keeper stop
@@ -212,7 +212,7 @@ Write-Host "  restart  : on non-zero exit, after 1 min, up to 999 times; no exec
 Write-Host "  logon    : $LogonType"
 Write-Host "  command  : $WslPath $wslArgs"
 
-# Read the task back and confirm the repetition actually attached — the
+# Read the task back and confirm the repetition actually attached - the
 # recovery-after-`wsl --shutdown` path depends on it, and Task Scheduler
 # behaviour here varies by Windows / PowerShell version (spec item 6: inspect
 # the host before trusting exact settings).
@@ -253,7 +253,7 @@ if ($ConfigurePower) {
 else {
   Write-Host ""
   Write-Host "Pair with host power settings so the machine does not sleep while it"
-  Write-Host "should be serving (runbook 17) — re-run with -ConfigurePower, or by hand on AC:"
+  Write-Host "should be serving (runbook 17) - re-run with -ConfigurePower, or by hand on AC:"
   Write-Host "  powercfg /change standby-timeout-ac 0"
   Write-Host "  powercfg /change hibernate-timeout-ac 0"
 }
@@ -263,7 +263,7 @@ Write-Host "start it now:  Start-ScheduledTask -TaskName '$TaskName'"
 Write-Host "check it:      wsl.exe -d $Distro -- $Bash '$scriptPath' status"
 Write-Host ""
 if (-not $NoBootTrigger) {
-  Write-Host "Boot-before-login (ticket 06c): also make the private HTTPS ingress unattended —"
+  Write-Host "Boot-before-login (ticket 06c): also make the private HTTPS ingress unattended -"
   Write-Host "  1. enable Tailscale 'run unattended' on Windows (tray > Preferences), and"
   Write-Host "  2. set RECIPE_DEPLOY_KEEPER_SERVE=1 in deploy/deploy.env so the keeper"
   Write-Host "     re-asserts Serve after a reboot with nobody logged in."

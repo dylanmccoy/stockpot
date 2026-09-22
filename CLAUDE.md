@@ -87,7 +87,7 @@ header point you at the exact sections.
 | `backend-v1` | archived — shipped, spec/plan frozen |
 | `backend-v1-grilling` | archived — decisions folded into `backend-v1/spec.md` |
 | `frontend-v1` | archived — shipped, all tickets `done` |
-| `private-household-deployment` | active — implementation done; ticket 08 awaiting real-host commissioning |
+| `private-household-deployment` | archived — shipped, host commissioning (ticket 08) complete |
 | `post-v1-route` | active — ongoing research/backlog (wayfinder map) |
 
 ## Agent skills

@@ -738,8 +738,14 @@ the restart / access checks and the one-day target is runbook 15.
 cd backend
 
 # 1. stop writers — nothing may be writing the target database.
-deploy/control.sh stop          # or however this host runs the app (runbook 8);
-                                # deployment process control is runbook 6 onward.
+#    `deploy/control.sh stop` only kills the app process: on a host running
+#    the WSL-lifetime keeper (runbook 17/18), its supervisor treats that as a
+#    crash and relaunches the app within one heartbeat, racing the restore's
+#    file-swap. On such a host, stop from the top of that chain instead:
+deploy/wsl-keeper.sh stop       # keeper + supervisor + app together; not
+                                 # auto-restarted by the Scheduled Task.
+# (No keeper/supervisor on this host? `deploy/control.sh stop` alone is fine —
+# deployment process control is runbook 6 onward.)
 
 # 2 + 3. preserve the current database, then replace it with the snapshot.
 uv run python scripts/restore.py --replace \
@@ -748,7 +754,9 @@ uv run python scripts/restore.py --replace \
   --preserve-dir /path/outside/the/checkout/pre-restore
 
 # 4. restart against the same explicit database and health-check.
-deploy/control.sh start
+#    Stopped via wsl-keeper.sh above? Resume the same way:
+Start-ScheduledTask -TaskName RecipeAppWslKeeper   # from Windows; or
+deploy/wsl-keeper.sh run &                          # by hand, from WSL
 deploy/control.sh status        # resolved config + GET /api/health
 ```
 
