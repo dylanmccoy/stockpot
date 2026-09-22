@@ -54,7 +54,7 @@ household isolation.
 
 | # | Track | Contents | Gate |
 |---|---|---|---|
-| 1 | **Deploy** | `.scratch/private-household-deployment/spec.md` — ready-for-agent | Ticket 01 |
+| 1 | **Deploy** | `.scratch/private-household-deployment/spec.md` — shipped, host-commissioned | ~~01~~ |
 | 2 | **Friction pass** | Edit-recipe button · create grocery list from a recipe · "what can we make now" | — |
 | 3 | **Recipe entry** | URL import (`recipe-scrapers`, SSRF-guarded fetch) | ~~02~~ · ~~10~~ · ~~06~~ · ticket 09 |
 | 4 | **Inventory upkeep** | One of receipts / staples / undo — which one is ticket 07 | Alembic (ticket 08) |
@@ -77,14 +77,14 @@ household isolation.
   optional, `yields`/`total_time` never required. `ingredient_groups()` is used
   for clean lines; the group purpose text is a deliberate loss.
   Supersedes the API in `features.md` § URL import.
+- [Does the Tailscale → Windows → WSL network path actually work?](issues/01-verify-tailscale-wsl-path.md):
+  Yes, all six checklist steps passed on the target host, including reboot
+  without interactive login and Tailscale/WSL restart recovery — no
+  configuration beyond the deployment spec's own runbooks was needed. Verified
+  as part of `.scratch/private-household-deployment/` ticket 08 commissioning.
 
 ## Not yet specified
 
-- **Fallback host topology** — if ticket 01 shows the Windows Tailscale Serve →
-  Windows localhost → WSL composition doesn't hold, something has to replace it
-  (WSL mirrored networking, the app running natively on Windows, Tailscale
-  inside WSL, different hardware). Can't phrase the choice until we know which
-  hop fails.
 - **Whether multi-line ingredient paste rides with URL import** — it's the
   natural fallback for an unsupported site, so ticket 06 may pull it in.
 - **What the friction pass actually contains** — ticket 03 may add items nobody
