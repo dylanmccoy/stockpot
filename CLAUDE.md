@@ -72,12 +72,13 @@ header point you at the exact sections.
 
 **Doc partition.**
 
-- Backend v1 planning lives in `docs/` (`spec.md`, `plan.md`, `phases/`,
-  `issues.md`, `decisions.md`, `features.md`).
+- Backend v1 planning is archived under `.scratch/backend-v1/` (`spec.md`,
+  `plan.md`, `issues/phase-*.md`, `issues/issues.md`); `docs/decisions.md` and
+  `docs/features.md` remain live in `docs/`.
 - Frontend planning lives in `docs/frontend/` and is **not backend implementation
   authority** — a backend phase must not read it as a requirement source or edit
-  it (`docs/plan.md` §"Phase scope fence").
-- Frontend work reads `docs/spec.md` as the contract.
+  it (`.scratch/backend-v1/plan.md` §"Phase scope fence").
+- Frontend work reads `.scratch/backend-v1/spec.md` as the contract.
 
 ## Agent skills
 

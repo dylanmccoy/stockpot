@@ -38,10 +38,12 @@ If a worktree or branch with that name already exists, stop and ask.
 
 ### Read the spec by section, never whole
 
-The ticket's **Spec:** field names the exact anchors to read (e.g. `docs/spec.md`
-§5.5, §2.2). `docs/spec.md` is ~1700 lines and `docs/frontend/spec.md` ~930 — a
-whole-file `Read` of either burns ~15–20k tokens before you have written
-anything.
+The ticket's **Spec:** field names the exact anchors to read (e.g.
+`.scratch/backend-v1/spec.md` §5.5, §2.2, or `docs/frontend/spec.md` §5). Spec
+files run 300–1700+ lines — a whole-file `Read` of one burns ~15–20k tokens
+before you have written anything. **If the cited path doesn't exist, stop and
+ask rather than searching the repo for it** — a wrong guess costs far more
+context than the question does.
 
 For each spec file a ticket cites:
 
@@ -52,9 +54,9 @@ For each spec file a ticket cites:
 3. `Read` with `offset`/`limit` bounded to that range. Only widen if a section
    forward-references another you genuinely need.
 
-Do not read `docs/features.md`, `docs/decisions.md`, `docs/plan.md`, the
-`docs/phases/` files, or the other app's spec unless the ticket's **Spec:** /
-**Files:** / **Tests:** header points at them.
+Do not read `docs/features.md`, `docs/decisions.md`, an effort's `plan.md`/
+`map.md`, its `issues/phase-*.md` files, or the other app's spec unless the
+ticket's **Spec:** / **Files:** / **Tests:** header points at them.
 
 ### Slices
 

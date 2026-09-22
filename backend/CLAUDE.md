@@ -7,14 +7,16 @@ the navigation map that keeps each `/implement` inside the smart zone.
 
 ## Read only what the ticket cites
 
-`docs/spec.md` is ~1700 lines. Do **not** read it whole. Every feature area maps
-to 2–3 sections and one test file — read those, nothing else. The ticket's
-**Spec:** field names the exact anchors.
+`.scratch/backend-v1/spec.md` is ~1700 lines (v1 planning was archived there
+from `docs/spec.md` — the `docs/` path no longer exists). Do **not** read it
+whole. Every feature area maps to 2–3 sections and one test file — read those,
+nothing else. The ticket's **Spec:** field names the exact anchors.
 
-To read one section: `grep -nE '^#{1,6} ' docs/spec.md` for the line-numbered
-heading list, then `Read` with `offset`/`limit` bounded to the cited section.
+To read one section: `grep -nE '^#{1,6} ' .scratch/backend-v1/spec.md` for the
+line-numbered heading list, then `Read` with `offset`/`limit` bounded to the
+cited section.
 
-| Area | `docs/spec.md` §§ | Test file |
+| Area | `.scratch/backend-v1/spec.md` §§ | Test file |
 | --- | --- | --- |
 | `normalize.py` (food-name canonicalization) | 2.1 | `tests/test_normalize.py` |
 | `units.py` (unit tokens, buckets, to/from base, `Quantity`) | 2.2 | `tests/test_units.py` |
@@ -30,9 +32,9 @@ heading list, then `Read` with `offset`/`limit` bounded to the cited section.
 | Concurrency / transactions | 6 | `tests/test_transactions.py`, `tests/test_concurrency.py` |
 | Locked contract oracles (R-7) | 7 "Locked contract oracles" | per oracle-lock ticket |
 
-All data-model tables live in `docs/spec.md` §1. Phase checkboxes to tick on
-close: `docs/phases/phase-N.md`. Ticket dependency order and the R-7 rules:
-`.scratch/backend-v1/issues/README.md`.
+All data-model tables live in `.scratch/backend-v1/spec.md` §1. Phase checkboxes
+to tick on close: `.scratch/backend-v1/issues/phase-N.md`. Ticket dependency
+order and the R-7 rules: `.scratch/backend-v1/issues/README.md`.
 
 ## File map (`backend/app/`)
 
@@ -66,10 +68,11 @@ close: `docs/phases/phase-N.md`. Ticket dependency order and the R-7 rules:
 - The three R-7 oracle-lock tickets (`phase-4a`, `-5a`, `-6a`) deliver an
   **accepted, locked, non-green** black-box suite. They do not go green. Every
   other ticket ends `cd backend && uv run pytest` green.
-- `docs/spec.md` is edited only via a paired spec+test change when a locked
-  oracle proves it wrong (`docs/plan.md` §Independent contract-test gate).
+- `.scratch/backend-v1/spec.md` is edited only via a paired spec+test change
+  when a locked oracle proves it wrong (`.scratch/backend-v1/plan.md`
+  §Independent contract-test gate).
 - Do not read `docs/frontend/` — it is not backend implementation authority
-  (`docs/plan.md` §"Phase scope fence").
+  (`.scratch/backend-v1/plan.md` §"Phase scope fence").
 
 ## Commands
 

@@ -201,7 +201,7 @@ Notes on E2E coverage vs the MSW flow test:
   inline-banner surface per `spec.md` §6; the `"registration disabled"` string
   itself is locked in `src/pages/Login.test.tsx` vs MSW.
 
-> **Cross-track note (backend conformance).** `docs/spec.md` §Mechanical
+> **Cross-track note (backend conformance).** `.scratch/backend-v1/spec.md` §Mechanical
 > defaults guarantees datetimes serialize as `…+00:00`, but the running backend
 > (Pydantic 2.13) emits `…Z` with microseconds (e.g.
 > `2026-09-02T20:23:30.628187Z`). The frontend absorbs both (`lib/format.ts`

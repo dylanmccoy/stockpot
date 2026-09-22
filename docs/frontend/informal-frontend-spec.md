@@ -39,7 +39,7 @@ It answers two questions:
 |---|---|---|
 | `frontend/**` | frontend track | Full rewrite expected; current skeleton is throwaway (§5, R-3). |
 | `docs/frontend/**` | frontend track | This doc + any future frontend planning. |
-| `backend/**`, `docs/spec.md`, `docs/plan.md`, `docs/phases/**`, `docs/issues.md`, `docs/decisions.md` | backend track | Frontend track reads these as the contract; does not edit them. |
+| `backend/**`, `.scratch/backend-v1/spec.md`, `.scratch/backend-v1/plan.md`, `.scratch/backend-v1/issues/phase-*.md`, `.scratch/backend-v1/issues/issues.md`, `docs/decisions.md` | backend track | Frontend track reads these as the contract; does not edit them. |
 | `docs/features.md` | backend track owns the file | Frontend track may read §"Frontend (React SPA)" for intent; edits go through the backend doc process. |
 | `.github/workflows/ci.yml`, `Makefile` | shared | The `frontend` CI job and `make test-frontend` already exist and must stay green. |
 
@@ -50,7 +50,7 @@ It answers two questions:
 - `frontend/src/types.ts` is contractually hand-maintained, not generated
   (`features.md` decision #5). Same discipline: when `spec.md` changes, update
   §6 here and `types.ts` together, and diff them against the spec.
-- Watch `git log -- docs/spec.md` during Phases 2–6. Any spec change in a
+- Watch `git log -- .scratch/backend-v1/spec.md` (`git log --follow -- docs/spec.md` for pre-archive history) during Phases 2–6. Any spec change in a
   contract-test gate (§7, R-1..R-10 risks) can move a shape this doc mirrors.
 
 ---

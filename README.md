@@ -5,9 +5,10 @@ logging with optional stock deduction, and netted grocery lists — served by a
 FastAPI + SQLAlchemy + SQLite backend, with a React + TypeScript (Vite)
 frontend as its client.
 
-> **Direction:** `docs/plan.md` is the backend-v1 delivery roadmap and
-> `docs/spec.md` is its technical contract. Deferred work (v2 and beyond) lives
-> in `docs/features.md`.
+> **Direction:** `.scratch/backend-v1/plan.md` is the backend-v1 delivery
+> roadmap and `.scratch/backend-v1/spec.md` is its technical contract (both
+> archived there from `docs/` once v1 shipped). Deferred work (v2 and beyond)
+> lives in `docs/features.md`.
 
 ## Layout
 
@@ -114,8 +115,8 @@ Sessions are opaque bearer tokens (`Authorization: Bearer <token>`), minted by
 - Accepted security posture (deliberate, not oversights, for a trusted LAN
   deployment): session tokens are stored in plaintext, there is no HTTPS
   in-app, no login rate-limiting, `/docs` is unauthenticated, and every
-  authenticated user has full read/write on all data. See `docs/spec.md`
-  "Accepted security posture" for the complete list.
+  authenticated user has full read/write on all data. See
+  `.scratch/backend-v1/spec.md` "Accepted security posture" for the complete list.
 
 ## Operating the server
 
@@ -1281,7 +1282,7 @@ guarantees are the runbook 17 cases.
 
 ## v1 workflows
 
-The full contract lives in `docs/spec.md`; this is the shape of it.
+The full contract lives in `.scratch/backend-v1/spec.md`; this is the shape of it.
 
 - **Recipes** — structured ingredients (each either a parsed line or a
   pasted-string line the parser resolves), steps, tags. Full CRUD.

@@ -10,9 +10,9 @@ Import direction is one-way:
 ## Read only what the ticket cites
 
 `docs/frontend/spec.md` is ~930 lines. Read the sections the ticket's **Spec:**
-field names, nothing else. §5 there is a **non-normative mirror** of `docs/spec.md`
-§5 — use it; only open the backend spec when a ticket says to (the integrate-*
-tickets do, for a re-diff).
+field names, nothing else. §5 there is a **non-normative mirror** of
+`.scratch/backend-v1/spec.md` §5 — use it; only open the backend spec when a
+ticket says to (the integrate-* tickets do, for a re-diff).
 
 To read one section: `grep -nE '^#{1,6} ' docs/frontend/spec.md` for the
 line-numbered heading list, then `Read` with `offset`/`limit` bounded to the
@@ -48,7 +48,7 @@ markers: `.scratch/frontend-v1/issues/`.
 
 | Path | Responsibility |
 | --- | --- |
-| `types.ts` | Hand-maintained mirror of `docs/spec.md` §5 (R-1). Change it and `docs/frontend/spec.md` §5 together. |
+| `types.ts` | Hand-maintained mirror of `.scratch/backend-v1/spec.md` §5 (R-1). Change it and `docs/frontend/spec.md` §5 together. |
 | `api/client.ts` | The one `fetch` wrapper: `/api` prefix, `Authorization: Bearer` from `localStorage`, both FastAPI error shapes → thrown `ApiError`, 204 handling, 401 seam. |
 | `api/{auth,recipes,inventory,cookLogs,grocery}.ts` | Thin typed adapters (R-2). All resource calls go through these. |
 | `auth/` | `AuthProvider` + `useAuth` + `context.ts`. Token in `localStorage` under `recipe.token`; `me` hydration; cache drop on 401. |
@@ -56,7 +56,7 @@ markers: `.scratch/frontend-v1/issues/`.
 | `lib/` | Pure leaf helpers under the locked-oracle gate (`*.oracle.test.ts`). |
 | `components/` | Design-system primitives; barrel export in `components/index.ts`. |
 | `pages/` | One module per screen (spec §10). |
-| `test/` | MSW `server.ts` + `handlers.ts` (happy path per `docs/spec.md` §5) + `errorHandlers.ts` (one per `docs/frontend/spec.md` §6 row). |
+| `test/` | MSW `server.ts` + `handlers.ts` (happy path per `.scratch/backend-v1/spec.md` §5) + `errorHandlers.ts` (one per `docs/frontend/spec.md` §6 row). |
 | `styles/` | `tokens.css` + `global.css`. |
 
 ## Invariants agents keep re-deriving
@@ -72,7 +72,8 @@ markers: `.scratch/frontend-v1/issues/`.
 - Tests run with `onUnhandledRequest: "error"` — every request needs an MSW
   handler in `test/handlers.ts` or a per-test override.
 - Mock-first: build against MSW; the `integrate-*` tickets (15–18) wire each
-  resource to the real backend and re-diff `types.ts` against `docs/spec.md` §5.
+  resource to the real backend and re-diff `types.ts` against
+  `.scratch/backend-v1/spec.md` §5.
 
 ## Commands
 
