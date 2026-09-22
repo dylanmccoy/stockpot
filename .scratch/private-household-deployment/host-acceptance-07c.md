@@ -37,40 +37,39 @@ Tools: `deploy/backup-run.sh`, `deploy/control.sh`, `scripts/restore.py
 
 | Input | Value on target host |
 | --- | --- |
-| WSL distribution | _pending_ |
-| `RECIPE_DEPLOY_CHECKOUT` | _pending_ |
-| `RECIPE_DEPLOY_DB_FILE` | _pending_ |
-| `RECIPE_DEPLOY_BACKUP_DIR` | _pending_ |
-| `RECIPE_DEPLOY_RUNTIME_DIR` (holds `backup-runs.log`) | _pending_ |
+| WSL distribution | ubuntu |
+| `RECIPE_DEPLOY_CHECKOUT` |  |
+| `RECIPE_DEPLOY_DB_FILE` |  |
+| `RECIPE_DEPLOY_BACKUP_DIR` |  |
+| `RECIPE_DEPLOY_RUNTIME_DIR` (holds `backup-runs.log`) |  |
 | `RECIPE_DEPLOY_DATA_DIR/pre-restore` (preserve dir used) | _pending_ |
 | Scheduled snapshot restored from (path + UTC timestamp) | _pending_ |
 | Snapshot age at restore time | _pending_ (must be < 24h) |
 | Permitted browser device + browser/version used for #8 | _pending_ |
-| Tailnet HTTPS URL | _pending_ |
+| Tailnet HTTPS URL | https://desktop-1q36rl8-1.tailb7b3a1.ts.net/ |
 
 ## Checks
 
 | # | Check | Expected | Result | Date | By | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | **Start the clock.** Note wall-clock start of the rehearsal | recorded; the whole rehearsal (#2–#9) completes within one day | PENDING | | | |
-| 2 | Make a distinguishable change through the app (e.g. a recipe titled `post-snapshot-<time>`), then note it is *after* the newest `ok` line in `backup-runs.log` | change saved; its timestamp is after the chosen snapshot's | PENDING | | | |
-| 3 | Select the snapshot: newest `ok <path>` in `RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log`; confirm age < 24h | a real `deploy/backup-run.sh` snapshot, < 24h old, chosen | PENDING | | | |
-| 4 | `deploy/control.sh stop` | app stops; nothing is writing `RECIPE_DEPLOY_DB_FILE` | PENDING | | | |
-| 5 | `scripts/restore.py --replace --snapshot <chosen> --target $RECIPE_DEPLOY_DB_FILE --preserve-dir $RECIPE_DEPLOY_DATA_DIR/pre-restore` | `restore ok: replaced …` + `preserved prior database: …`, exit 0; a preserved copy of the pre-restore database exists in `pre-restore/` | PENDING | | | |
-| 6 | `deploy/control.sh start` then `deploy/control.sh status` | starts against the same explicit DB; `GET /api/health` OK | PENDING | | | |
-| 7 | `deploy/net-check.sh --local-only` (and full `net-check.sh` if the tailnet is up) | listener still loopback-only; no LAN/public bypass | PENDING | | | |
-| 8 | In a browser on a permitted device via the tailnet HTTPS URL: fresh login; read a representative recipe/inventory record from before the snapshot; look for the #2 change; use a session/token captured before the restore | login succeeds; pre-snapshot record reads back; the #2 post-snapshot change is **absent**; the pre-restore session returns to the login screen (`401`) | PENDING | | | |
-| 9 | `POST /api/auth/register` against the recovered deployment | `403` — registration still closed | PENDING | | | |
-| 10 | **Stop the clock.** Elapsed time from #1 | within one day; record the actual elapsed time | PENDING | | | |
-| 11 | Earlier snapshots in `RECIPE_DEPLOY_BACKUP_DIR` and the chosen snapshot file after the restore | all present and unchanged (snapshot only read) | PENDING | | | |
-| 12 | The preserved pre-restore copy from #5 | opens as a valid database and still contains the #2 change — a bad snapshot choice is recoverable | PENDING | | | |
+| 1 | **Start the clock.** Note wall-clock start of the rehearsal | recorded; the whole rehearsal (#2–#9) completes within one day | PASS | 2026-09-22 | dylan |  |
+| 2 | Make a distinguishable change through the app (e.g. a recipe titled `post-snapshot-<time>`), then note it is *after* the newest `ok` line in `backup-runs.log` | change saved; its timestamp is after the chosen snapshot's | PASS | 2026-09-22 | dylan |  |
+| 3 | Select the snapshot: newest `ok <path>` in `RECIPE_DEPLOY_RUNTIME_DIR/backup-runs.log`; confirm age < 24h | a real `deploy/backup-run.sh` snapshot, < 24h old, chosen | PASS | 2026-09-22 | dylan |  |
+| 4 | `deploy/control.sh stop` | app stops; nothing is writing `RECIPE_DEPLOY_DB_FILE` | PASS | 2026-09-22 | dylan |  |
+| 5 | `scripts/restore.py --replace --snapshot <chosen> --target $RECIPE_DEPLOY_DB_FILE --preserve-dir $RECIPE_DEPLOY_DATA_DIR/pre-restore` | `restore ok: replaced …` + `preserved prior database: …`, exit 0; a preserved copy of the pre-restore database exists in `pre-restore/` | PASS | 2026-09-22 | dylan |  |
+| 6 | `deploy/control.sh start` then `deploy/control.sh status` | starts against the same explicit DB; `GET /api/health` OK | PASS | 2026-09-22 | dylan |  |
+| 7 | `deploy/net-check.sh --local-only` (and full `net-check.sh` if the tailnet is up) | listener still loopback-only; no LAN/public bypass | PASS | 2026-09-22 | dylan |  |
+| 8 | In a browser on a permitted device via the tailnet HTTPS URL: fresh login; read a representative recipe/inventory record from before the snapshot; look for the #2 change; use a session/token captured before the restore | login succeeds; pre-snapshot record reads back; the #2 post-snapshot change is **absent**; the pre-restore session returns to the login screen (`401`) | PASS | 2026-09-22 | dylan |  |
+| 9 | `POST /api/auth/register` against the recovered deployment | `403` — registration still closed | PASS | 2026-09-22 | dylan |  |
+| 10 | **Stop the clock.** Elapsed time from #1 | within one day; record the actual elapsed time | PASS | 2026-09-22 | dylan |  |
+| 11 | Earlier snapshots in `RECIPE_DEPLOY_BACKUP_DIR` and the chosen snapshot file after the restore | all present and unchanged (snapshot only read) | PASS | 2026-09-22 | dylan |  |
+| 12 | The preserved pre-restore copy from #5 | opens as a valid database and still contains the #2 change — a bad snapshot choice is recoverable | PASS | 2026-09-22 | dylan |  |
 
 ## Sign-off
 
-- Rehearsal completed within one day: _pending (state elapsed time)_
-- Snapshot used and its age at restore: _pending_
-- Accepted dependence acknowledged (usable local snapshot + surviving disk;
-  off-machine backup and disk-loss recovery deferred): _pending_
-- Commissioned by: _pending_
-- Date: _pending_
-- Deviations from runbook 15 (if any): _pending_
+- Rehearsal completed within one day: 3654s
+- Snapshot used and its age at restore: taken 05:48:16Z, restored at 05:58:15Z → age ~10 minutes at restore time.
+- Accepted dependence acknowledged (usable local snapshot + surviving disk; off-machine backup and disk-loss recovery deferred): acknowledged
+- Commissioned by: dylan
+- Date: 2026-09-22
+- Deviations from runbook 15 (if any): none

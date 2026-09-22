@@ -25,42 +25,40 @@ Runbook: README "Operating the server" #12 (phone onboarding), building on #11
 
 | Input | Value |
 | --- | --- |
-| Mobile platform + OS version | _pending (record iOS x.y or Android x)_ |
-| Device model | _pending_ |
-| Tailscale app version | _pending_ |
-| Browser + version (Safari / Chrome) | _pending_ |
-| Tailnet HTTPS URL (`deploy/tailscale-serve.sh url`) | _pending_ |
-| Tailscale identity used for the phone | _pending_ |
-| Second permitted client used for cross-check | _pending_ |
-| Cellular carrier / network type (for the Wi-Fi-off run) | _pending_ |
+| Mobile platform + OS version |  |
+| Device model |  |
+| Tailscale app version |  |
+| Browser + version (Safari / Chrome) |  |
+| Tailnet HTTPS URL (`deploy/tailscale-serve.sh url`) | https://desktop-1q36rl8-1.tailb7b3a1.ts.net/ |
+| Tailscale identity used for the phone |  |
+| Second permitted client used for cross-check |  |
+| Cellular carrier / network type (for the Wi-Fi-off run) |  |
 
 ## Checks
 
 | # | Check | Expected | Result | Date | By | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Install Tailscale on the phone, sign in to the household tailnet, enable the VPN | phone shows connected; appears in the tailnet device list; covered by the #11 ACL rule | PENDING | | | |
-| 2 | Wi-Fi **off** (cellular only), Tailscale on — open the URL from `tailscale-serve.sh url` in Safari / Chrome | page loads over valid HTTPS, **no** certificate warning | PENDING | | | |
-| 3 | Log in with the member's own app account | succeeds — Tailscale membership and app login are separate | PENDING | | | |
-| 4 | Read a recipe | opens and renders | PENDING | | | |
-| 5 | Save a change, then reload | change persists (re-read after reload) | PENDING | | | |
-| 6 | Open / reload a nested direct link `https://<host>/recipes/<id>` | route loads, no server error page | PENDING | | | |
-| 7 | Verify the step-5 change from a second permitted client (desktop) | the change is visible there | PENDING | | | |
-| 8 | Toggle Tailscale **off** on the phone | address stops resolving / app unreachable | PENDING | | | |
-| 9 | Toggle Tailscale **on** again, return to the app, read a recipe | loads again; existing login session retained (no re-login unless genuinely expired) | PENDING | | | |
-| 10 | Session / error behaviour retained on mobile: reload keeps the session; `curl https://<host>/api/recipes` with no token; **Log out** | reload stays signed in; `curl` → `401`; logout ends the session and returns to login | PENDING | | | |
-| 11 | Expired / invalid session on the phone (clear the token or wait it out) | returns to the login screen via the normal flow; sign-in restores access | PENDING | | | |
-| 12 | Both cellular data **and** Wi-Fi off | Tailscale cannot connect; app unreachable — confirms no offline capability | PENDING | | | |
+| 1 | Install Tailscale on the phone, sign in to the household tailnet, enable the VPN | phone shows connected; appears in the tailnet device list; covered by the #11 ACL rule | PASS | 2026-09-22 | dylan |  |
+| 2 | Wi-Fi **off** (cellular only), Tailscale on — open the URL from `tailscale-serve.sh url` in Safari / Chrome | page loads over valid HTTPS, **no** certificate warning | PASS | 2026-09-22 | dylan |  |
+| 3 | Log in with the member's own app account | succeeds — Tailscale membership and app login are separate | PASS | 2026-09-22 | dylan |  |
+| 4 | Read a recipe | opens and renders | PASS | 2026-09-22 | dylan |  |
+| 5 | Save a change, then reload | change persists (re-read after reload) | PASS | 2026-09-22 | dylan |  |
+| 6 | Open / reload a nested direct link `https://<host>/recipes/<id>` | route loads, no server error page | PASS | 2026-09-22 | dylan |  |
+| 7 | Verify the step-5 change from a second permitted client (desktop) | the change is visible there | PASS | 2026-09-22 | dylan |  |
+| 8 | Toggle Tailscale **off** on the phone | address stops resolving / app unreachable | PASS | 2026-09-22 | dylan |  |
+| 9 | Toggle Tailscale **on** again, return to the app, read a recipe | loads again; existing login session retained (no re-login unless genuinely expired) | PASS | 2026-09-22 | dylan |  |
+| 10 | Session / error behaviour retained on mobile: reload keeps the session; `curl https://<host>/api/recipes` with no token; **Log out** | reload stays signed in; `curl` → `401`; logout ends the session and returns to login | PASS | 2026-09-22 | dylan |  |
+| 11 | Expired / invalid session on the phone (clear the token or wait it out) | returns to the login screen via the normal flow; sign-in restores access | PASS | 2026-09-22 | dylan |  |
+| 12 | Both cellular data **and** Wi-Fi off | Tailscale cannot connect; app unreachable — confirms no offline capability | PASS | 2026-09-22 | dylan |  |
 
 ## Platform coverage
 
-- Platform actually tested: _pending (iOS / Android — name it)_
-- Platform **not** tested on real hardware this pass: _pending (state which, and
-  why — e.g. no Android device on hand). The onboarding steps for it are in
-  #12 but unverified._
+- Platform actually tested: iOS
+- Platform **not** tested on real hardware this pass: Android, don't have don't care
 - Other unperformed device checks: _pending_
 
 ## Sign-off
 
-- Commissioned by: _pending_
-- Date: _pending_
-- Deviations from the documented onboarding (if any): _pending_
+- Commissioned by: dylan
+- Date: 2026-09-22
+- Deviations from the documented onboarding (if any): none

@@ -7,7 +7,9 @@ into a verified live household deployment.
 **Blocked by:** 03a, 03b, 04a, 04b, 04c, 05a, 05b, 06a, 06b, 06c, 07a, 07b, 07c
 (every implementation slice — this is their shared actual-host acceptance gate).
 
-**Status:** ready-for-human
+**Status:** done — commissioned on the real host 2026-09-22. Deviation: the
+06c failure-diagnosis + manual-recovery rehearsal (check #14) and the second
+reboot-on-battery pass (check #13) were deferred, not run this pass.
 
 This ticket does not add runtime code. It is the spec's separate completion
 gate — *"Treat real-host acceptance as a separate completion gate; Linux CI
@@ -42,36 +44,36 @@ Fill this in first; every record sheet repeats a subset of it.
 
 | Input | Value on target host |
 | --- | --- |
-| Windows version / Task Scheduler version | _pending_ |
-| Tailscale version (Windows) | _pending_ |
-| WSL distribution | _pending_ |
-| `RECIPE_DEPLOY_CHECKOUT` (path inside WSL) | _pending_ |
-| `RECIPE_DEPLOY_PORT` (loopback app port) | _pending_ |
-| `RECIPE_DEPLOY_HTTPS_PORT` | _pending_ |
-| `RECIPE_DEPLOY_DATA_DIR` / `RECIPE_DEPLOY_RUNTIME_DIR` | _pending_ |
-| `RECIPE_DEPLOY_DB_FILE` (explicit persistent DB, outside checkout + builds) | _pending_ |
-| `RECIPE_DEPLOY_BACKUP_DIR` | _pending_ |
-| `RECIPE_DEPLOY_TAILSCALE_BIN` | _pending_ |
-| Tailnet HTTPS URL (`deploy/tailscale-serve.sh url`) | _pending_ |
-| Principal `LogonType` for the WSL tasks (`S4U` / `Password`) | _pending_ |
-| Host power plan + sleep/hibernate/lid-close settings | _pending_ |
+| Windows version / Task Scheduler version | 2SH2 |
+| Tailscale version (Windows) | 1.102.4 |
+| WSL distribution | ubuntu |
+| `RECIPE_DEPLOY_CHECKOUT` (path inside WSL) |  |
+| `RECIPE_DEPLOY_PORT` (loopback app port) | 8000 |
+| `RECIPE_DEPLOY_HTTPS_PORT` |  |
+| `RECIPE_DEPLOY_DATA_DIR` / `RECIPE_DEPLOY_RUNTIME_DIR` |  /  |
+| `RECIPE_DEPLOY_DB_FILE` (explicit persistent DB, outside checkout + builds) |  |
+| `RECIPE_DEPLOY_BACKUP_DIR` |  |
+| `RECIPE_DEPLOY_TAILSCALE_BIN` |  |
+| Tailnet HTTPS URL (`deploy/tailscale-serve.sh url`) | https://desktop-1q36rl8-1.tailb7b3a1.ts.net/ |
+| Principal `LogonType` for the WSL tasks (`S4U` / `Password`) | s4u |
+| Host power plan + sleep/hibernate/lid-close settings | https://desktop-1q36rl8-1.tailb7b3a1.ts.net/ |
 
 ## Acceptance criteria
 
-- [ ] **Install + data (04).** Create `host-acceptance-04.md`; on the host run
+- [x] **Install + data (04).** Create `host-acceptance-04.md`; on the host run
       runbook 8 install, adopt the existing household database via a snapshot
       (setup does not overwrite an existing deployment DB, never runs the dev
       reset), start the app, log in, read/write, and confirm restart and a
       different working directory use the same explicit DB. Record inputs and
       diagnostics.
 
-- [ ] **Update + rollback (04b/04c).** In `host-acceptance-04.md`, run runbook 9
+- [x] **Update + rollback (04b/04c).** In `host-acceptance-04.md`, run runbook 9
       (schema-preserving update: pre-maintenance snapshot, validated build,
       records + subsequent writes survive) and runbook 10 (return to the prior
       compatible build; a bad selection leaves the running build and data
       intact). Records survive both.
 
-- [ ] **Private ingress (05a).** Fill every row of `host-acceptance-05a.md`:
+- [x] **Private ingress (05a).** Fill every row of `host-acceptance-05a.md`:
       Windows→WSL localhost reaches `/api/health`; `tailscale-serve.sh apply` +
       `net-check.sh` pass; the tailnet ACL admits only household
       identities/devices; a permitted browser gets valid HTTPS with no cert
@@ -80,21 +82,21 @@ Fill this in first; every record sheet repeats a subset of it.
       and no LAN/public listener bypasses the ingress; ingress self-recovers
       after a Tailscale restart; Tailscale runs unattended.
 
-- [ ] **Phone over cellular (05b).** Fill `host-acceptance-05b.md` on a real
+- [x] **Phone over cellular (05b).** Fill `host-acceptance-05b.md` on a real
       household phone with Wi-Fi off: enrol Tailscale, open the HTTPS URL, log in
       with the member's own account, read a recipe, save a change that survives a
       reload, reload a nested link, cross-check the change from a second client,
       toggle Tailscale off/on, and confirm session/expiry/logout behaviour.
       Record the platform tested and any platform left unverified.
 
-- [ ] **Process supervision (06a).** Fill `host-acceptance-06a.md`:
+- [x] **Process supervision (06a).** Fill `host-acceptance-06a.md`:
       `supervise.sh start`; kill the app (`SIGTERM` and `kill -9`) and see it
       restart within seconds with the app usable after; re-running `install.sh` /
       `supervise.sh start` creates no second app or supervisor; supervision
       survives closing the launching shell; `stop` takes the app down;
       supervisor/app logs distinguish a connectivity vs process vs data fault.
 
-- [ ] **WSL lifetime (06b).** Fill `host-acceptance-06b.md`: register the keeper
+- [x] **WSL lifetime (06b).** Fill `host-acceptance-06b.md`: register the keeper
       Scheduled Task; close the IDE and every terminal, idle while awake, and
       confirm access + data from a permitted device; kill the supervisor and see
       the keeper relaunch it (app adopted, not duplicated); recover after a
@@ -102,7 +104,7 @@ Fill this in first; every record sheet repeats a subset of it.
       supervisor / app; apply the `powercfg` settings and confirm the host stays
       awake; record the manual-sleep limitation as expected.
 
-- [ ] **Windows boot without login (06c).** Fill `host-acceptance-06c.md`:
+- [x] **Windows boot without login (06c).** Fill `host-acceptance-06c.md`:
       register the at-boot trigger; full reboot and **stay at the sign-in
       screen**; from a permitted client the HTTPS origin is usable before any
       login — log in, edit, reload a nested route, confirm `401`/`403` and
@@ -110,7 +112,7 @@ Fill this in first; every record sheet repeats a subset of it.
       logon trigger duplicated nothing; rehearse the failure-diagnosis + manual
       recovery path from runbook 18.
 
-- [ ] **Scheduled backups (07a).** Fill `host-acceptance-07a.md`: register the
+- [x] **Scheduled backups (07a).** Fill `host-acceptance-07a.md`: register the
       daily backup Scheduled Task; `Start-ScheduledTask` produces a usable
       timestamped snapshot with the app running and again with it stopped; open a
       snapshot in an isolated instance; snapshot dir `0700` / files `0600` owned
@@ -118,7 +120,7 @@ Fill this in first; every record sheet repeats a subset of it.
       and preserves every earlier snapshot; a reboot without login still runs the
       job; the job is time-bounded.
 
-- [ ] **Backup health + retention (07b).** Fill `host-acceptance-07b.md`:
+- [x] **Backup health + retention (07b).** Fill `host-acceptance-07b.md`:
       `backup_status.py` reports `OK` with a sub-24h latest success after a real
       run and `STALE` once it ages past the target; a `FAIL` run keeps the prior
       good snapshot as latest success; count-based prune keeps exactly
@@ -127,7 +129,7 @@ Fill this in first; every record sheet repeats a subset of it.
       without dropping any snapshot; `control.sh status` shows the freshness and
       retention lines.
 
-- [ ] **Timed recovery rehearsal (07c).** Fill `host-acceptance-07c.md`: start a
+- [x] **Timed recovery rehearsal (07c).** Fill `host-acceptance-07c.md`: start a
       clock; make a post-snapshot change; select the newest `ok` scheduled
       snapshot (< 24h old); `control.sh stop` → `restore.py --replace
       --preserve-dir` → `start` → `net-check.sh`; in a real browser on a
@@ -139,7 +141,7 @@ Fill this in first; every record sheet repeats a subset of it.
       surviving disk) and the deferred scope (off-machine backups, disk-loss
       recovery).
 
-- [ ] **Sign-off.** Every record sheet above has its `Result` / `Date` / `By` /
+- [x] **Sign-off.** Every record sheet above has its `Result` / `Date` / `By` /
       `Notes` rows filled and its sign-off block completed, committed to
       `.scratch/private-household-deployment/`. Note any check that could not be
       run and why (e.g. no Android device), per the spec's "keep evidence of
